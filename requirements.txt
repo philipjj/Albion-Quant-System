@@ -1,0 +1,38 @@
+# Albion Quant Trading System - Requirements
+# Core Stack
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+pydantic-settings
+python-dotenv
+
+# Data Processing
+pandas
+numpy
+orjson
+
+# Async + HTTP
+httpx
+aiofiles
+
+# Scheduling (in-process for dev)
+apscheduler
+
+# Alerts
+aiohttp
+
+# Utilities
+rich
+tenacity
+loguru
+
+# Database
+aiosqlite
+discord.py
+
+# Machine Learning & AI
+scikit-learn
+xgboost
+lightgbm
+joblib
