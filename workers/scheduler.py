@@ -4,15 +4,15 @@ Handles periodic market collection, arbitrage/crafting computation, and alerts.
 """
 
 import asyncio
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 
+from app.alerts.discord import DiscordAlerter
+from app.arbitrage.scanner import ArbitrageScanner
 from app.core.config import settings
 from app.core.logging import log
-from app.ingestion.collector import MarketCollector
-from app.arbitrage.scanner import ArbitrageScanner
 from app.crafting.engine import CraftingEngine
-from app.alerts.discord import DiscordAlerter
+from app.ingestion.collector import MarketCollector
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 
 class QuantScheduler:
@@ -105,6 +105,14 @@ class QuantScheduler:
     def start(self):
         """Start all scheduled jobs."""
         if self._is_running:
+            return
+
+        # After stop(), jobs stay registered and the scheduler is only paused —
+        # resuming avoids duplicate job IDs on a second start().
+        if self.scheduler.get_jobs():
+            self.scheduler.resume()
+            self._is_running = True
+            log.info("Scheduler resumed (existing jobs)")
             return
 
         log.info("Starting scheduler with intervals:")

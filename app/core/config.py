@@ -3,11 +3,11 @@ Core configuration module.
 Loads environment variables and provides typed settings for the entire system.
 """
 
-import os
 from pathlib import Path
-from pydantic_settings import BaseSettings
-from pydantic import Field
+
 from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 # Load .env file
 load_dotenv()
@@ -75,6 +75,12 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+
+    # When true, API lifespan skips scheduler, Discord bot, and startup collection (used by tests / CI).
+    disable_background_tasks: bool = Field(
+        default=False,
+        alias="DISABLE_BACKGROUND_TASKS",
+    )
 
     @property
     def tax_rate(self) -> float:

@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "albion-quant"
+version = "0.1.0"
+description = "Albion Online market intelligence (FastAPI)"
+readme = "STACKMAP.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "workers*"]
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["app", "workers", "tests", "main.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+ignore = [
+    "E501",
+    "E402",
+    "E702",
+    "E701",
+    "E712",
+    "E722",
+    "F401",
+    "F403",
+    "F541",
+    "F841",
+    "W291",
+    "W293",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/alerts/bot.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+markers = [
+    "integration: multiple HTTP endpoints / app wiring",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+ignore_missing_imports = true
+explicit_package_bases = true
+mypy_path = "."
+files = ["app/core/config.py", "app/db/session.py", "app/meta/patch_diff.py", "workers/scheduler.py"]

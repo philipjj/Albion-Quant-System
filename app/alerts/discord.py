@@ -5,14 +5,12 @@ Sends formatted alerts via Discord webhooks for arbitrage and crafting opportuni
 
 import asyncio
 from datetime import datetime
-from typing import Optional
 
 import httpx
 
 from app.core.config import settings
-from app.core.logging import log
 from app.core.icons import item_icon_url
-
+from app.core.logging import log
 
 RISK_LABELS = {
     (0.0, 0.15): "🟢 LOW",
@@ -52,11 +50,11 @@ class DiscordAlerter:
         if not self.enabled:
             log.info(f"[ALERT] {payload.get('embeds', [{}])[0].get('title', 'Alert')}")
             return False
-            
+
         # Identity override
         payload["username"] = "Albion Quant Bot"
         payload["avatar_url"] = "https://i.imgur.com/rL7t5jT.png"
-        
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(self.webhook_url, json=payload)
@@ -78,12 +76,13 @@ class DiscordAlerter:
             quality=int(opp.get("quality") or 1),
             size=128,
         )
-        
+
         # Color based on margin quality
         color = 0x00FF88 if margin > 30 else 0xFFAA00 if margin > 20 else 0x00AAFF
-        
+
+        display_name = opp.get("item_name") or opp["item_id"]
         embed = {
-            "title": f"⚔️ HIGH VELOCITY ARBITRAGE: {opp.get('item_name', opp['item_id'])}",
+            "title": f"⚔️ HIGH VELOCITY ARBITRAGE: {display_name}",
             "description": f"Targeting **{margin:.1f}%** net margin after taxes and transport.",
             "color": color,
             "thumbnail": {"url": icon},
@@ -125,16 +124,20 @@ class DiscordAlerter:
                 ing_text += f"• {line}\n"
         else:
             for ing in opp.get("ingredients_detail", []):
-                ing_text += f"• **{ing['quantity']}x** {ing['name']} (@{ing['unit_price']:,})\n"
-        
+                qty = ing.get("quantity", 0)
+                name = ing.get("name", "?")
+                unit = ing.get("unit_price", 0)
+                ing_text += f"• **{qty}x** {name} (@{unit:,})\n"
+
         if not ing_text:
             ing_text = "Check in-game recipe."
 
         # Add optimization note
         shopping_list_title = "📜 SHOPPING LIST (Optimized Starting Point)"
 
+        display_name = opp.get("item_name") or opp["item_id"]
         embed = {
-            "title": f"🔨 CRAFTING OPS: {opp.get('item_name', opp['item_id'])}",
+            "title": f"🔨 CRAFTING OPS: {display_name}",
             "description": f"Located in **{opp['crafting_city']}** | Margin: **{opp['profit_margin']:.1f}%**",
             "color": 0xFFCC00,
             "thumbnail": {"url": icon},
@@ -147,16 +150,16 @@ class DiscordAlerter:
                 {"name": "🛡️ SAFE LIMIT", "value": f"**{opp.get('safe_limit', 1):,}** units", "inline": True},
                 {"name": "🛡️ TAX STATUS", "value": "Premium 6.5%", "inline": True},
                 {"name": "🧠 DATA CONF", "value": f"**{confidence*100:.0f}%**", "inline": True},
-                
+
                 {"name": "💰 ECONOMICS", "value": (
                     f"Total Cost: **{opp['craft_cost']:,.0f}**\n"
-                    f"Market Sell: **{opp['sell_price']:,}\n**"
+                    f"Market Sell: **{opp['sell_price']:,.0f}**\n"
                     f"Net Profit: **{opp['profit']:,.0f}**\n"
                     f"🚀 Alpha Score: **{opp.get('ev_score', 0):,.0f}** EV/hr"
                 ), "inline": False},
-                
+
                 {"name": shopping_list_title, "value": ing_text, "inline": False},
-                
+
                 {"name": "✨ FOCUS VALUE", "value": f"**{opp.get('profit_per_focus', 0):,.1f}** silver/focus", "inline": True},
                 {"name": "📚 JOURNAL", "value": f"**+{opp.get('journal_profit', 0):,.0f}** extra", "inline": True},
                 {"name": "\u200b", "value": "\u200b", "inline": True},

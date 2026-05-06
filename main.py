@@ -15,13 +15,11 @@ import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-
 from app.core.config import settings
 from app.core.logging import log
 from app.db.session import init_db
-
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 # ═══════════════════════════════════════════════════════════════
 # FASTAPI APP SETUP
@@ -40,12 +38,19 @@ async def lifespan(app: FastAPI):
     init_db()
     log.info("✅ Database initialized")
 
+    if settings.disable_background_tasks:
+        scheduler_instance = None
+        log.info("⏭️ Background tasks disabled (DISABLE_BACKGROUND_TASKS); API only.")
+        yield
+        log.info("🛑 Albion Quant Trading System shut down")
+        return
+
     # Start scheduler
     from workers.scheduler import QuantScheduler
     scheduler_instance = QuantScheduler()
     scheduler_instance.start()
     log.info("✅ Scheduler started")
-    
+
     # Start Discord Bot
     from app.alerts.bot import start_discord_bot
     bot_task = asyncio.create_task(start_discord_bot())
@@ -62,7 +67,7 @@ async def lifespan(app: FastAPI):
             log.info("Initial run cancelled during shutdown.")
         except Exception as e:
             log.error(f"Error in initial run: {e}")
-        
+
     init_task = asyncio.create_task(initial_run())
 
     yield
@@ -70,10 +75,10 @@ async def lifespan(app: FastAPI):
     # Shutdown
     from app.alerts.bot import stop_discord_bot
     await stop_discord_bot()
-    
+
     if not bot_task.done():
         bot_task.cancel()
-    
+
     if not init_task.done():
         init_task.cancel()
         try:
@@ -97,16 +102,17 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # Browsers reject allow_credentials=True with wildcard origins
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Register API routes
-from app.api.market import router as market_router
 from app.api.arbitrage import router as arbitrage_router
 from app.api.crafting import router as crafting_router
 from app.api.export import router as export_router
+from app.api.market import router as market_router
 from app.api.user import router as user_router
 
 app.include_router(market_router)
@@ -139,10 +145,10 @@ def root():
 @app.get("/status", tags=["System"])
 def system_status():
     """Detailed system status."""
-    from app.db.session import get_db_session
-    from app.db.models import MarketPrice, ArbitrageOpportunity, CraftingOpportunity, Item
     from app.analytics.quality import quality_snapshot
     from app.core.feature_gate import feature_gate
+    from app.db.models import ArbitrageOpportunity, CraftingOpportunity, Item, MarketPrice
+    from app.db.session import get_db_session
     from sqlalchemy import func
 
     with get_db_session() as db:
@@ -213,9 +219,9 @@ async def cmd_collect():
 
 async def cmd_scan():
     """Run one-shot arbitrage + crafting scan."""
+    from app.alerts.discord import DiscordAlerter
     from app.arbitrage.scanner import ArbitrageScanner
     from app.crafting.engine import CraftingEngine
-    from app.alerts.discord import DiscordAlerter
     from rich.console import Console
     from rich.table import Table
 
@@ -274,7 +280,7 @@ async def cmd_scan():
             ing_summary = ", ".join([f"{i['quantity']}x {i['name']}" for i in opp.get("ingredients_detail", [])[:2]])
             if len(opp.get("ingredients_detail", [])) > 2:
                 ing_summary += "..."
-                
+
             table2.add_row(
                 opp["item_name"][:25],
                 opp["crafting_city"],

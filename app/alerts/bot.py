@@ -1,24 +1,27 @@
-import discord
-from discord.ext import commands
 import asyncio
-import json
 import csv
 import io
-from PIL import Image
+import json
+
+import discord
 import httpx
-from app.core.config import PROJECT_ROOT, settings
-from app.core.logging import log
+from discord.ext import commands
+from PIL import Image
+
 from app.arbitrage.scanner import ArbitrageScanner
-from app.crafting.engine import CraftingEngine
-from app.db.models import ArbitrageOpportunity, CraftingOpportunity, UserProfile, Item
-from app.db.session import get_db_session
+from app.core.config import PROJECT_ROOT, settings
 from app.core.icons import item_icon_url
+from app.core.logging import log
+from app.crafting.engine import CraftingEngine
+from app.db.models import ArbitrageOpportunity, CraftingOpportunity, Item, UserProfile
+from app.db.session import get_db_session
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 import os
+
 
 @bot.event
 async def on_ready():
@@ -162,16 +165,16 @@ async def server(ctx, server_name: str = None):
     if not server_name:
         await ctx.send(f"Current server is set to: **{settings.albion_api_server}**")
         return
-    
+
     server_name = server_name.lower()
     if server_name not in ["west", "europe", "east"]:
         await ctx.send("Invalid server. Choose 'west', 'europe', or 'east'.")
         return
-    
+
     # Update runtime settings
     settings.albion_api_server = server_name
     settings.albion_api_base = f"https://{server_name}.albion-online-data.com"
-    
+
     # Update .env file
     import re
     env_path = PROJECT_ROOT / ".env"
@@ -180,51 +183,51 @@ async def server(ctx, server_name: str = None):
         content = re.sub(r"ALBION_API_SERVER=.*", f"ALBION_API_SERVER={server_name}", content)
         content = re.sub(r"ALBION_API_BASE=.*", f"ALBION_API_BASE={settings.albion_api_base}", content)
         env_path.write_text(content)
-        
+
     await ctx.send(f"✅ Server successfully changed to: **{server_name}**")
 
 @bot.command()
 async def scan(ctx):
     """Run a manual arbitrage and crafting scan."""
     await ctx.send("🚀 Starting manual scan for Arbitrage and Crafting opportunities. This may take a minute...")
-    
+
     try:
         await ctx.send("🔍 **Starting High-Precision Scan...** (Analyzing Market Depth & Liquidity)")
-        
+
         from app.db.session import init_db
         init_db()
-        
+
         # Run scanners (now async)
         arb_scanner = ArbitrageScanner()
         craft_engine = CraftingEngine()
-        
+
         arb_opps = await arb_scanner.scan()
         craft_opps = await craft_engine.compute()
-        
+
         # Persist results
         arb_scanner.store_opportunities()
         craft_engine.store_opportunities()
-        
+
         # Pull top opportunities for the webhook alert
-        from app.db.session import get_db_session
-        from app.db.models import ArbitrageOpportunity, CraftingOpportunity
         from app.alerts.discord import DiscordAlerter
-        
+        from app.db.models import ArbitrageOpportunity, CraftingOpportunity
+        from app.db.session import get_db_session
+
         with get_db_session() as db:
             arb_opps = db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True).order_by(ArbitrageOpportunity.estimated_margin.desc()).limit(10).all()
             craft_opps = db.query(CraftingOpportunity).filter(CraftingOpportunity.is_active == True).order_by(CraftingOpportunity.profit_margin.desc()).limit(10).all()
-            
+
             # Convert to dict for alerter
             # Convert to dict for alerter with full 2026 metrics
             arb_list = [{
-                "item_id": opp.item_id, 
-                "item_name": opp.item_name or opp.item_id, 
+                "item_id": opp.item_id,
+                "item_name": opp.item_name or opp.item_id,
                 "quality": 1,
-                "source_city": opp.source_city, 
-                "destination_city": opp.destination_city, 
-                "buy_price": opp.buy_price or 0, 
-                "sell_price": opp.sell_price or 0, 
-                "estimated_profit": opp.estimated_profit or 0.0, 
+                "source_city": opp.source_city,
+                "destination_city": opp.destination_city,
+                "buy_price": opp.buy_price or 0,
+                "sell_price": opp.sell_price or 0,
+                "estimated_profit": opp.estimated_profit or 0.0,
                 "estimated_margin": opp.estimated_margin or 0.0,
                 "daily_volume": opp.daily_volume or 0,
                 "volume_source": opp.volume_source or "EST",
@@ -233,16 +236,16 @@ async def scan(ctx):
                 "volatility": opp.volatility or 0.05,
                 "persistence": opp.persistence or 1
             } for opp in arb_opps]
-            
+
             craft_list = [{
-                "item_id": opp.item_id, 
-                "item_name": opp.item_name or opp.item_id, 
+                "item_id": opp.item_id,
+                "item_name": opp.item_name or opp.item_id,
                 "quality": 1,
-                "crafting_city": opp.crafting_city, 
-                "sell_city": opp.sell_city or "Unknown", 
-                "craft_cost": opp.craft_cost or 0.0, 
-                "sell_price": opp.sell_price or 0.0, 
-                "profit": opp.profit or 0.0, 
+                "crafting_city": opp.crafting_city,
+                "sell_city": opp.sell_city or "Unknown",
+                "craft_cost": opp.craft_cost or 0.0,
+                "sell_price": opp.sell_price or 0.0,
+                "profit": opp.profit or 0.0,
                 "profit_margin": opp.profit_margin or 0.0,
                 "daily_volume": opp.daily_volume or 0,
                 "volume_source": opp.volume_source or "EST",
@@ -250,12 +253,12 @@ async def scan(ctx):
                 "ev_score": opp.ev_score or 0.0,
                 "ingredients_detail": json.loads(opp.ingredients_json) if opp.ingredients_json else []
             } for opp in craft_opps]
-            
+
         alerter = DiscordAlerter()
         await alerter.send_batch_alerts(arb_list, craft_list)
-        
+
         await ctx.send("✅ Scan complete! Check the webhook channel for the top opportunities.")
-        
+
     except Exception as e:
         log.error(f"Scan error: {e}")
         await ctx.send(f"❌ Error during scan: {e}")
@@ -264,7 +267,7 @@ async def scan(ctx):
 async def history(ctx):
     """Manually trigger real market volume history collection."""
     await ctx.send("📊 Starting manual Market History collection... (Verifying Real Demand)")
-    
+
     try:
         from main import scheduler_instance
         if scheduler_instance:
@@ -284,7 +287,7 @@ async def pin_help(ctx):
         description="Here is the list of available commands you can use to control the trading system:",
         color=discord.Color.blue()
     )
-    
+
     embed.add_field(name="`!ping`", value="Check if the bot is online and responding.", inline=False)
     embed.add_field(name="`!status`", value="Check the health, database stats, and background task status of the system.", inline=False)
     embed.add_field(name="`!start`", value="Turn ON the background trading engine and market collection.", inline=False)
@@ -297,9 +300,9 @@ async def pin_help(ctx):
     embed.add_field(name="`!meta`", value="Find out the current meta items based on volume, killboard usage, and price momentum.", inline=False)
     embed.add_field(name="`!bm`", value="Analyze Black Market shortages, refill timing, and predict the highest ROI transport opportunities.", inline=False)
     embed.add_field(name="`!pin_help`", value="Send this help message and pin it to the channel.", inline=False)
-    
+
     embed.set_footer(text="Albion Quant Trading System")
-    
+
     # Send the message and pin it
     msg = await ctx.send(embed=embed)
     try:
@@ -332,7 +335,7 @@ async def stop(ctx):
 async def fastscan(ctx):
     """Run an instant-sell arbitrage scan."""
     await ctx.send("🚀 Starting **Fast-Sell** Arbitrage scan. Looking for items with big payoffs that sell instantly to buy orders...")
-    
+
     try:
         from app.db.session import init_db
         init_db()
@@ -340,22 +343,22 @@ async def fastscan(ctx):
         arb_scanner = ArbitrageScanner()
         await arb_scanner.scan(fast_sell=True)
         arb_scanner.store_opportunities()
-        
-        from app.db.session import get_db_session
-        from app.db.models import ArbitrageOpportunity
+
         from app.alerts.discord import DiscordAlerter
-        
+        from app.db.models import ArbitrageOpportunity
+        from app.db.session import get_db_session
+
         with get_db_session() as db:
             arb_opps = db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True).order_by(ArbitrageOpportunity.estimated_margin.desc()).limit(10).all()
             arb_list = [{
-                "item_id": opp.item_id, 
-                "item_name": opp.item_name, 
+                "item_id": opp.item_id,
+                "item_name": opp.item_name or opp.item_id,
                 "quality": 1,
-                "source_city": opp.source_city, 
-                "destination_city": opp.destination_city, 
-                "buy_price": opp.buy_price, 
-                "sell_price": opp.sell_price, 
-                "estimated_profit": opp.estimated_profit, 
+                "source_city": opp.source_city,
+                "destination_city": opp.destination_city,
+                "buy_price": opp.buy_price,
+                "sell_price": opp.sell_price,
+                "estimated_profit": opp.estimated_profit,
                 "estimated_margin": opp.estimated_margin,
                 "daily_volume": opp.daily_volume or 0,
                 "volume_source": opp.volume_source or "ESTIMATED",
@@ -364,13 +367,13 @@ async def fastscan(ctx):
                 "volatility": opp.volatility or 0.05,
                 "persistence": opp.persistence or 1
             } for opp in arb_opps]
-            
+
         alerter = DiscordAlerter()
         # Pass empty crafting list
         await alerter.send_batch_alerts(arb_list, [])
-        
+
         await ctx.send("✅ Fast Scan complete! Check the webhook channel for the top instant-sell opportunities.")
-        
+
     except Exception as e:
         log.error(f"FastScan error: {e}")
         await ctx.send(f"❌ Error during scan: {e}")
@@ -425,7 +428,7 @@ async def meta(ctx, top_n: int = 10, category: str = None):
         async def generate_loadout_image(slots: dict):
             # Create a 3x4 grid canvas (390x520) with dark background
             canvas = Image.new('RGBA', (390, 520), (35, 39, 42, 255))
-            
+
             # (col, row) grid positions
             pos_map = {
                 "Bag": (0, 0), "Head": (1, 0), "Cape": (2, 0),
@@ -433,7 +436,7 @@ async def meta(ctx, top_n: int = 10, category: str = None):
                 "Food": (0, 2), "Shoes": (1, 2), "Potion": (2, 2),
                 "Mount": (1, 3)
             }
-            
+
             async with httpx.AsyncClient(timeout=5.0) as client:
                 tasks = []
                 for slot, (col, row) in pos_map.items():
@@ -443,7 +446,7 @@ async def meta(ctx, top_n: int = 10, category: str = None):
                         qual = item_data.get("Quality", 1)
                         if i_id:
                             tasks.append((col, row, item_icon_url(i_id, quality=qual, size=128)))
-                
+
                 async def fetch_and_paste(c, r, url):
                     try:
                         r_img = await client.get(url)
@@ -453,7 +456,7 @@ async def meta(ctx, top_n: int = 10, category: str = None):
                     except: pass
 
                 await asyncio.gather(*(fetch_and_paste(c, r, u) for c, r, u in tasks))
-            
+
             buf = io.BytesIO()
             canvas.save(buf, format='PNG')
             buf.seek(0)
@@ -463,7 +466,7 @@ async def meta(ctx, top_n: int = 10, category: str = None):
             title = f"🔥 TOP META BUILD: T{tier}" if tier else "🔥 TOP META BUILDS"
             if index > 0 and not tier:
                 title += f" (Part {index + 1})"
-            
+
             emb = discord.Embed(
                 title=title,
                 description=f"Official Render Grid. Server: {server.upper()}",
@@ -478,7 +481,7 @@ async def meta(ctx, top_n: int = 10, category: str = None):
                 # If old format (string), handle it; otherwise use dict
                 i_id = item_data if isinstance(item_data, str) else item_data.get("Type")
                 if not i_id: return "      -       "
-                
+
                 name = names.get(i_id, i_id.replace("T", "").replace("_", " "))
                 return name[:14].center(14)
 
@@ -504,23 +507,23 @@ async def meta(ctx, top_n: int = 10, category: str = None):
         for tier in tiers[:8]: # Limit to top 8 tiers for speed/rate limits
             builds = meta.tier_to_builds[tier]
             if not builds: continue
-            
+
             top_build = builds[0]
             img_buf = await generate_loadout_image(top_build.get("slots") or {})
             filename = f"meta_t{tier}.png"
             file = discord.File(fp=img_buf, filename=filename)
-            
+
             emb = create_meta_embed(0, meta.sample_events, server, tier=tier)
             emb.set_image(url=f"attachment://{filename}")
-            
+
             # Rank info in text
             sections = []
             for i, b in enumerate(builds[:2]):
                 grid = format_visual_build(b.get("slots") or {}, item_names_map)
                 sections.append(f"Rank #{i+1} ({b['count']}x uses):\n{grid}")
-            
+
             emb.add_field(name="🛡️ Equipment Grid", value="```\n" + "\n\n".join(sections) + "\n```", inline=False)
-            
+
             await ctx.send(file=file, embed=emb)
             await asyncio.sleep(0.5)
 
@@ -542,7 +545,7 @@ async def meta(ctx, top_n: int = 10, category: str = None):
 async def patch(ctx):
     """Analyze patch buffs and nerfs."""
     await ctx.send("⚙️ Initializing Patch Diff Engine... Analyzing spell coefficients, cooldowns, damage, and energy costs...")
-    
+
     try:
         def run_diff():
             from app.meta.patch_diff import PatchDiffEngine
@@ -561,27 +564,27 @@ async def patch(ctx):
             engine = PatchDiffEngine()
             diffs = engine.diff_spells(old_patch, new_patch)
             return engine.generate_item_meta_scores(diffs)
-            
+
         item_scores = await asyncio.to_thread(run_diff)
-        
+
         async def send_impact_embed(title, subtitle, rows):
             current_emb = discord.Embed(
                 title=title,
                 description=subtitle,
                 color=discord.Color.purple()
             )
-            
+
             # Set thumbnail to the top impacted item
             if not rows.empty:
                 current_emb.set_thumbnail(url=item_icon_url(rows.iloc[0]['item_id']))
-            
+
             def add_line(emb, name, line):
                 # If adding this line would exceed field limit (1024)
                 # or adding a new field would exceed embed limit (6000)
                 if not emb.fields:
                     emb.add_field(name=name, value=line, inline=False)
                     return emb
-                
+
                 last_field = emb.fields[-1]
                 if len(last_field.value) + len(line) < 1000:
                     last_field.value += line
@@ -600,7 +603,7 @@ async def patch(ctx):
                     add_line(current_emb, "📈 BUFFS/NERFS", line)
                 else:
                     current_emb = res
-            
+
             if current_emb.fields:
                 await ctx.send(embed=current_emb)
 
@@ -609,7 +612,7 @@ async def patch(ctx):
             await send_impact_embed("📜 LATEST PATCH ANALYSIS", "Concise summary of meta-shifting buffs and nerfs.", item_scores)
         else:
             await ctx.send("No significant meta shifts detected in this patch.")
-        
+
     except Exception as e:
         log.error(f"Patch command error: {e}")
         await ctx.send(f"❌ Error analyzing patch: {e}")
@@ -618,7 +621,7 @@ async def patch(ctx):
 async def bm(ctx):
     """Analyze Black Market opportunities."""
     await ctx.send("💀 Scanning the Caerleon Black Market for shortages, refill timings, and Royal City arbitrage ROI...")
-    
+
     try:
         def run_bm_prediction():
             from app.db.session import init_db
@@ -626,33 +629,33 @@ async def bm(ctx):
             from app.blackmarket.predictor import BlackMarketPredictor
             predictor = BlackMarketPredictor()
             return predictor.find_highest_roi(top_n=10)
-            
+
         roi_df = await asyncio.to_thread(run_bm_prediction)
-        
+
         if roi_df.empty:
             await ctx.send("❌ Not enough Royal City and Black Market data overlap to predict ROI right now.")
             return
-            
+
         current_embed = discord.Embed(
             title="💀 BLACK MARKET: TOP ROI",
             description="Highest Return on Investment for transporting to Caerleon BM.",
             color=discord.Color.dark_red()
         )
-        
+
         # Set thumbnail to the top ROI item
         if not roi_df.empty:
             current_embed.set_thumbnail(url=item_icon_url(roi_df.iloc[0]['item_id']))
-        
+
         for _, row in roi_df.iterrows():
             shortage_str = "🔴 High Shortage" if row['shortage_level'] > 0.7 else "🟡 Med Shortage" if row['shortage_level'] > 0.3 else "🟢 Low Shortage"
-            
+
             value_text = (
                 f"**Buy:** {row['buy_city']} at {row['buy_price']:,.0f}\n"
                 f"**Sell:** BM at {row['bm_price']:,.0f}\n"
                 f"**Profit:** {row['profit']:,.0f} (**{row['roi_margin']}% ROI**)\n"
                 f"**Status:** {shortage_str} (Safety: {row['safety_score']:.1f})"
             )
-            
+
             if len(current_embed) + len(value_text) + len(row['item_id']) > 5500:
                 await ctx.send(embed=current_embed)
                 current_embed = discord.Embed(
@@ -661,9 +664,9 @@ async def bm(ctx):
                 )
 
             current_embed.add_field(name=f"📦 {row['item_id'][:25]}", value=value_text, inline=False)
-            
+
         await ctx.send(embed=current_embed)
-        
+
     except Exception as e:
         log.error(f"BM command error: {e}")
         await ctx.send(f"❌ Error analyzing Black Market: {e}")
@@ -671,10 +674,11 @@ async def bm(ctx):
 @bot.command()
 async def status(ctx):
     """Check the overall health and status of the system."""
-    from app.db.session import get_db_session
-    from app.db.models import MarketPrice, ArbitrageOpportunity, CraftingOpportunity, Item
+    import main  # to check scheduler status
     from sqlalchemy import func
-    import main # to check scheduler status
+
+    from app.db.models import ArbitrageOpportunity, CraftingOpportunity, Item, MarketPrice
+    from app.db.session import get_db_session
 
     try:
         with get_db_session() as db:
@@ -682,19 +686,19 @@ async def status(ctx):
             price_count = db.query(func.count(MarketPrice.id)).scalar()
             arb_count = db.query(func.count(ArbitrageOpportunity.id)).filter(ArbitrageOpportunity.is_active == True).scalar()
             craft_count = db.query(func.count(CraftingOpportunity.id)).filter(CraftingOpportunity.is_active == True).scalar()
-            
+
         scheduler_status = "🟢 RUNNING" if main.scheduler_instance and main.scheduler_instance._is_running else "🔴 STOPPED"
 
         embed = discord.Embed(title="📊 System Status", color=discord.Color.green())
         embed.add_field(name="Background Scheduler", value=scheduler_status, inline=False)
         embed.add_field(name="Target Server", value=f"**{settings.albion_api_server.upper()}**", inline=False)
-        
+
         db_stats = f"Items Tracked: {item_count:,}\n"
         db_stats += f"Prices Stored: {price_count:,}\n"
         db_stats += f"Active Arbitrage Opps: {arb_count:,}\n"
         db_stats += f"Active Crafting Opps: {craft_count:,}"
         embed.add_field(name="Database Stats", value=f"```\n{db_stats}\n```", inline=False)
-        
+
         await ctx.send(embed=embed)
     except Exception as e:
         log.error(f"Status command error: {e}")
@@ -708,7 +712,7 @@ async def broadcast_patch_update(channel_id: int = None):
     if bot.is_closed() or not bot.guilds:
         log.warning("Bot is offline or not in any guilds. Cannot broadcast patch.")
         return
-        
+
     try:
         def run_diff():
             from app.meta.patch_diff import PatchDiffEngine
@@ -725,21 +729,21 @@ async def broadcast_patch_update(channel_id: int = None):
             engine = PatchDiffEngine()
             diffs = engine.diff_spells(old_patch, new_patch)
             return engine.generate_item_meta_scores(diffs)
-            
+
         item_scores = await asyncio.to_thread(run_diff)
-        
+
         async def send_impact_broadcast(title, subtitle, rows, channel):
             current_emb = discord.Embed(
                 title=title,
                 description=subtitle,
                 color=discord.Color.red()
             )
-            
+
             def add_line(emb, name, line):
                 if not emb.fields:
                     emb.add_field(name=name, value=line, inline=False)
                     return emb
-                
+
                 last_field = emb.fields[-1]
                 if len(last_field.value) + len(line) < 1000:
                     last_field.value += line
@@ -757,7 +761,7 @@ async def broadcast_patch_update(channel_id: int = None):
                             channel = ch
                             break
                     if channel: break
-            
+
             if not channel: return
 
             await channel.send(content="@everyone 📢 **New Patch Analysis is live!**")
@@ -771,7 +775,7 @@ async def broadcast_patch_update(channel_id: int = None):
                     add_line(current_emb, "📊 META SHIFTS", line)
                 else:
                     current_emb = res
-            
+
             if current_emb.fields:
                 msg = await channel.send(embed=current_emb)
                 try:
@@ -781,7 +785,7 @@ async def broadcast_patch_update(channel_id: int = None):
         if not item_scores.empty:
             target_channel = bot.get_channel(channel_id) if channel_id else None
             await send_impact_broadcast("🚨 NEW PATCH DETECTED", "Automated analysis of all buffs and nerfs.", item_scores, target_channel)
-            
+
     except Exception as e:
         log.error(f"Error broadcasting patch: {e}")
 
@@ -791,7 +795,7 @@ async def start_discord_bot():
     if not token:
         log.warning("No Discord Bot Token found. Bot listener will not start.")
         return
-        
+
     log.info("Starting Discord Bot listener...")
     try:
         await bot.start(token)
