@@ -26,6 +26,7 @@ import os
 async def _render_loadout_layout(slots: dict) -> io.BytesIO:
     """Render an Albion-like equipment layout using official item icons."""
     canvas = Image.new("RGBA", (640, 760), (24, 26, 30, 255))
+    from PIL import ImageDraw
 
     # Visual arrangement mirrors the in-game character equipment panel.
     pos_map = {
@@ -41,8 +42,13 @@ async def _render_loadout_layout(slots: dict) -> io.BytesIO:
         "Mount": (270, 610),
     }
     box_size = 128
+    draw = ImageDraw.Draw(canvas)
 
-    async with httpx.AsyncClient(timeout=8.0) as client:
+    # Pre-draw empty boxes for better visual structure
+    for x, y in pos_map.values():
+        draw.rectangle([x, y, x + box_size, y + box_size], fill=(40, 42, 48), outline=(60, 62, 70), width=2)
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
         tasks = []
         for slot, (x, y) in pos_map.items():
             item_data = slots.get(slot)
@@ -57,12 +63,15 @@ async def _render_loadout_layout(slots: dict) -> io.BytesIO:
             try:
                 r_img = await client.get(url)
                 if r_img.status_code != 200:
+                    log.warning(f"Failed to fetch icon: {url} (Status: {r_img.status_code})")
                     return
                 icon = Image.open(io.BytesIO(r_img.content)).convert("RGBA")
                 if icon.size != (box_size, box_size):
                     icon = icon.resize((box_size, box_size))
                 canvas.paste(icon, (x, y), icon)
-            except Exception:
+            except Exception as e:
+                # Include more info for debugging (e.g. status code, content snippet)
+                log.error(f"Error rendering slot icon: {type(e).__name__}: {e} | URL: {url}")
                 return
 
         await asyncio.gather(*(fetch_and_paste(x, y, u) for x, y, u in tasks))
@@ -96,6 +105,33 @@ def _get_or_create_profile(discord_user_id: str) -> UserProfile:
             db.commit()
             db.refresh(profile)
         return profile
+
+
+def _normalize_city_name(name: str) -> str:
+    """Normalize user input to official city names."""
+    if not name:
+        return None
+    name = name.lower().strip()
+    mapping = {
+        "bw": "Bridgewatch",
+        "bridgewatch": "Bridgewatch",
+        "ml": "Martlock",
+        "martlock": "Martlock",
+        "lh": "Lymhurst",
+        "lymhurst": "Lymhurst",
+        "lemhurst": "Lymhurst",  # User's typo
+        "fs": "Fort Sterling",
+        "fortsterling": "Fort Sterling",
+        "fort sterling": "Fort Sterling",
+        "tf": "Thetford",
+        "thetford": "Thetford",
+        "cl": "Caerleon",
+        "caerleon": "Caerleon",
+        "bm": "Black Market",
+        "blackmarket": "Black Market",
+        "black market": "Black Market",
+    }
+    return mapping.get(name)
 
 
 @bot.group(invoke_without_command=True)
@@ -237,38 +273,58 @@ async def server(ctx, server_name: str = None):
     await ctx.send(f"✅ Server successfully changed to: **{server_name}**")
 
 @bot.command()
-async def scan(ctx):
-    """Run a manual arbitrage and crafting scan."""
-    await ctx.send("🚀 Starting manual scan for Arbitrage and Crafting opportunities. This may take a minute...")
+async def scan(ctx, town: str = None):
+    """
+    Run an arbitrage and crafting scan. 
+    Usage: !scan [town|any]
+    Example: !scan lymhurst
+    """
+    if town and town.lower() == "any":
+        town = None
+
+    target_city = _normalize_city_name(town) if town else None
+    
+    if town and not target_city:
+        await ctx.send(f"⚠️ Unknown city: `{town}`. Try: `lymhurst`, `fort sterling`, etc., or `any`.")
+        return
+
+    city_label = f" for **{target_city}**" if target_city else " across **all cities**"
+    await ctx.send(f"🚀 Starting manual scan{city_label}. Analyzing market depth and liquidity...")
 
     try:
-        await ctx.send("🔍 **Starting High-Precision Scan...** (Analyzing Market Depth & Liquidity)")
-
         from app.db.session import init_db
         init_db()
 
-        # Run scanners (now async)
+        # Run scanners with filters
         arb_scanner = ArbitrageScanner()
         craft_engine = CraftingEngine()
 
-        arb_opps = await arb_scanner.scan()
-        craft_opps = await craft_engine.compute()
+        # We pass target_city as the filter
+        arb_opps = await arb_scanner.scan(source_city_filter=target_city)
+        craft_opps = await craft_engine.compute(crafting_city_filter=target_city)
 
         # Persist results
         arb_scanner.store_opportunities()
         craft_engine.store_opportunities()
 
-        # Pull top opportunities for the webhook alert
+        # Pull top opportunities for the direct response and webhook
         from app.alerts.discord import DiscordAlerter
         from app.db.models import ArbitrageOpportunity, CraftingOpportunity
         from app.db.session import get_db_session
 
         with get_db_session() as db:
-            arb_opps = db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True).order_by(ArbitrageOpportunity.estimated_margin.desc()).limit(10).all()
-            craft_opps = db.query(CraftingOpportunity).filter(CraftingOpportunity.is_active == True).order_by(CraftingOpportunity.profit_margin.desc()).limit(10).all()
+            # Query top active opportunities
+            query_arb = db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True)
+            query_craft = db.query(CraftingOpportunity).filter(CraftingOpportunity.is_active == True)
+            
+            if target_city:
+                query_arb = query_arb.filter(ArbitrageOpportunity.source_city == target_city)
+                query_craft = query_craft.filter(CraftingOpportunity.crafting_city == target_city)
+                
+            arb_results = query_arb.order_by(ArbitrageOpportunity.ev_score.desc()).limit(10).all()
+            craft_results = query_craft.order_by(CraftingOpportunity.ev_score.desc()).limit(10).all()
 
-            # Convert to dict for alerter
-            # Convert to dict for alerter with full 2026 metrics
+            # Prepare data for the Alerter (webhook)
             arb_list = [{
                 "item_id": opp.item_id,
                 "item_name": opp.item_name or opp.item_id,
@@ -285,7 +341,7 @@ async def scan(ctx):
                 "ev_score": opp.ev_score or 0.0,
                 "volatility": opp.volatility or 0.05,
                 "persistence": opp.persistence or 1
-            } for opp in arb_opps]
+            } for opp in arb_results]
 
             craft_list = [{
                 "item_id": opp.item_id,
@@ -302,12 +358,38 @@ async def scan(ctx):
                 "journal_profit": opp.journal_profit or 0.0,
                 "ev_score": opp.ev_score or 0.0,
                 "ingredients_detail": json.loads(opp.ingredients_json) if opp.ingredients_json else []
-            } for opp in craft_opps]
+            } for opp in craft_results]
 
+        # Send batch alerts to webhook
         alerter = DiscordAlerter()
         await alerter.send_batch_alerts(arb_list, craft_list)
 
-        await ctx.send("✅ Scan complete! Check the webhook channel for the top opportunities.")
+        # --- Direct Response Embed for targeted scan ---
+        if target_city:
+            embed = discord.Embed(
+                title=f"🎯 Target Scan: {target_city}",
+                description=f"Found **{len(arb_results)}** transport and **{len(craft_results)}** crafting ops.",
+                color=discord.Color.blue()
+            )
+            
+            # Transport Section
+            if arb_results:
+                lines = []
+                for o in arb_results[:5]:
+                    lines.append(f"📦 **{o.item_id[:15]}** → {o.destination_city}: **{o.estimated_profit:,.0f}** silver ({o.estimated_margin:.1f}%)")
+                embed.add_field(name="🚚 Top Transport Routes", value="\n".join(lines), inline=False)
+            
+            # Crafting Section
+            if craft_results:
+                lines = []
+                for o in craft_results[:5]:
+                    lines.append(f"⚒️ **{o.item_id[:15]}** @ {o.sell_city}: **{o.profit:,.0f}** silver ({o.profit_margin:.1f}%)")
+                embed.add_field(name="⚒️ Top Crafting Ops", value="\n".join(lines), inline=False)
+                
+            embed.set_footer(text="Check the webhook channel for full details and ingredient lists.")
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send(f"✅ Full scan complete! Found {len(arb_results)} transport and {len(craft_results)} crafting opportunities. Results pushed to webhook.")
 
     except Exception as e:
         log.error(f"Scan error: {e}")
@@ -344,7 +426,7 @@ async def pin_help(ctx):
     embed.add_field(name="`!stop`", value="Turn OFF the background trading engine and pause alerts.", inline=False)
     embed.add_field(name="`!server`", value="Check which Albion server the system is currently using.", inline=False)
     embed.add_field(name="`!server [west|europe|east]`", value="Change the Albion API server and update the configuration on the fly.", inline=False)
-    embed.add_field(name="`!scan`", value="Force a manual arbitrage and crafting scan immediately and push top results to the webhook.", inline=False)
+    embed.add_field(name="`!scan [town]`", value="Force a scan for arbitrage and crafting. Optionally target a city (e.g. `!scan lymhurst`).", inline=False)
     embed.add_field(name="`!fastscan`", value="Force a manual scan for 'instant sell' arbitrage (sell directly to buy orders).", inline=False)
     embed.add_field(name="`!patch`", value="Analyze the latest patch notes to immediately see concise meta buffs and nerfs.", inline=False)
     embed.add_field(name="`!meta`", value="Find out the current meta items based on volume, killboard usage, and price momentum.", inline=False)
@@ -490,23 +572,19 @@ async def meta(ctx, top_n: int = 10, category: str = None):
             for idx, b in enumerate(builds[:max_lines], start=1):
                 slots = b.get("slots") or {}
                 mh = _slot_item_name(slots, "MainHand")
+                oh = _slot_item_name(slots, "OffHand")
+                head = _slot_item_name(slots, "Head")
                 armor = _slot_item_name(slots, "Armor")
                 shoes = _slot_item_name(slots, "Shoes")
-                lines.append(f"#{idx} ({b['count']}): {mh} | {armor} | {shoes}")
-            text = "\n".join(lines) if lines else "No build data."
+                cape = _slot_item_name(slots, "Cape")
+                
+                weapon = mh
+                if oh != "-":
+                    weapon = f"{mh} + {oh}"
+                
+                lines.append(f"**#{idx}** ({b['count']}): {weapon} | {head} | {armor} | {shoes} | {cape}")
+            text = "\n".join(lines) if lines else "No build data available."
             return text[:1000]
-
-        def _top_item_links_for_tier(tier_prefix: str, limit: int = 8) -> str:
-            links = []
-            for item_id, count in meta.item_counts:
-                if not item_id.startswith(f"T{tier_prefix}"):
-                    continue
-                display = item_names_map.get(item_id, item_id)
-                links.append(f"[{display}]({item_icon_url(item_id, size=64)}) ({count})")
-                if len(links) >= limit:
-                    break
-            return "\n".join(links)[:1000] if links else "No tier-matched item data."
-
         # Send one message per tier with in-game style icon arrangement.
         tier_limit = max(1, min(int(top_n or 8), 8))
         for tier in tiers[:tier_limit]:
@@ -532,11 +610,51 @@ async def meta(ctx, top_n: int = 10, category: str = None):
                 emb.set_thumbnail(url=item_icon_url(mainhand_id, quality=mainhand_q, size=217))
             emb.set_image(url=f"attachment://{image_name}")
 
-            emb.add_field(name="🏆 Top Builds", value=_build_summary_text(builds), inline=False)
+            def _top_item_links_filtered(tier_prefix: str, exclude_types: tuple, limit: int = 6) -> str:
+                links = []
+                for item_id, count in meta.item_counts:
+                    if not item_id.startswith(f"T{tier_prefix}"):
+                        continue
+                    
+                    # Basic category filtering based on ID patterns
+                    is_excluded = any(t in item_id for t in exclude_types)
+                    if is_excluded:
+                        continue
+
+                    display = item_names_map.get(item_id, item_id)
+                    links.append(f"[{display}]({item_icon_url(item_id, size=64)}) ({count})")
+                    if len(links) >= limit:
+                        break
+                return "\n".join(links)[:1000] if links else "None found."
+
+            def _top_accessories_links(tier_prefix: str, limit: int = 4) -> str:
+                links = []
+                acc_types = ("_BAG", "_MOUNT_", "_CAPE", "_FOOD", "_POTION")
+                for item_id, count in meta.item_counts:
+                    if not item_id.startswith(f"T{tier_prefix}"):
+                        continue
+                    
+                    if not any(t in item_id for t in acc_types):
+                        continue
+
+                    display = item_names_map.get(item_id, item_id)
+                    links.append(f"[{display}]({item_icon_url(item_id, size=64)}) ({count})")
+                    if len(links) >= limit:
+                        break
+                return "\n".join(links)[:1000] if links else "None found."
+
+            emb.add_field(name="🏆 Top Builds (Weapon | Head | Armor | Shoes | Cape)", value=_build_summary_text(builds), inline=False)
+            
+            gear_exclude = ("_BAG", "_MOUNT_", "_CAPE", "_FOOD", "_POTION")
             emb.add_field(
-                name="🧩 Top Tier Items",
-                value=_top_item_links_for_tier(tier.split(".", 1)[0]),
-                inline=False,
+                name="⚔️ Top Gear (Weapons/Armor)",
+                value=_top_item_links_filtered(tier.split(".", 1)[0], gear_exclude),
+                inline=True,
+            )
+            emb.add_field(
+                name="📦 Top Acc/Mounts",
+                value=_top_accessories_links(tier.split(".", 1)[0]),
+                inline=True,
             )
 
             await ctx.send(file=image_file, embed=emb)

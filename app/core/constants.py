@@ -60,6 +60,25 @@ CITY_CRAFTING_BONUSES = {
 }
 
 # ═══════════════════════════════════════════════════════════════
+# RESOURCE RETURN RATES (RRR)
+# ═══════════════════════════════════════════════════════════════
+
+# Royal City RRR
+RRR_ROYAL_BASE = 0.152
+RRR_ROYAL_BONUS = 0.248
+RRR_ROYAL_FOCUS = 0.435  # Base + Focus (Royal)
+RRR_ROYAL_BONUS_FOCUS = 0.479  # Bonus + Focus (Royal)
+
+# Refining RRR
+RRR_REFINING_BASE = 0.152
+RRR_REFINING_BONUS = 0.367
+RRR_REFINING_BONUS_FOCUS = 0.539
+
+# Islands & Hideouts (Varies by tier and quality)
+RRR_ISLAND_BASE = 0.00
+RRR_ISLAND_FOCUS = 0.37
+
+# ═══════════════════════════════════════════════════════════════
 # TRANSPORT DISTANCES (relative units, higher = more dangerous)
 # ═══════════════════════════════════════════════════════════════
 
@@ -122,17 +141,17 @@ PREMIUM_SALES_TAX = 0.04  # 4% with premium
 NON_PREMIUM_SALES_TAX = 0.08  # 8% without premium
 
 # Resource return rate (base, without focus)
-BASE_RESOURCE_RETURN_RATE = 0.152
+BASE_RESOURCE_RETURN_RATE = RRR_ROYAL_BASE
 
 # City Bonus RRR (without focus)
-CITY_BONUS_RESOURCE_RETURN_RATE = 0.248
+CITY_BONUS_RESOURCE_RETURN_RATE = RRR_ROYAL_BONUS
 
 # With focus (City Bonus + Focus)
-FOCUS_RESOURCE_RETURN_RATE = 0.479
+FOCUS_RESOURCE_RETURN_RATE = RRR_ROYAL_BONUS_FOCUS
 
 # Refining Specific RRR
-REFINING_BONUS_RESOURCE_RETURN_RATE = 0.367
-REFINING_FOCUS_RESOURCE_RETURN_RATE = 0.539
+REFINING_BONUS_RESOURCE_RETURN_RATE = RRR_REFINING_BONUS
+REFINING_FOCUS_RESOURCE_RETURN_RATE = RRR_REFINING_BONUS_FOCUS
 
 # Default crafting station fee per 100 nutrition
 DEFAULT_STATION_FEE = 1200  # silver per 100 nutrition (2026 average)
@@ -172,6 +191,57 @@ QUALITY_NAMES = {
     4: "Excellent",
     5: "Masterpiece",
 }
+
+# ═══════════════════════════════════════════════════════════════
+# JOURNALS
+# ═══════════════════════════════════════════════════════════════
+
+JOURNAL_MAPPING = {
+    "armor": "BLACKSMITH",
+    "helmet": "BLACKSMITH",
+    "shoes": "BLACKSMITH",
+    "weapon": "BLACKSMITH",  # Simplification, some are fletcher/imbuer
+    "sword": "BLACKSMITH",
+    "axe": "BLACKSMITH",
+    "mace": "BLACKSMITH",
+    "hammer": "BLACKSMITH",
+    "crossbow": "BLACKSMITH",
+    "shield": "BLACKSMITH",
+    "bow": "FLETCHER",
+    "dagger": "FLETCHER",
+    "spear": "FLETCHER",
+    "nature_staff": "FLETCHER",
+    "torch": "FLETCHER",
+    "fire_staff": "IMBUER",
+    "holy_staff": "IMBUER",
+    "arcane_staff": "IMBUER",
+    "frost_staff": "IMBUER",
+    "curse_staff": "IMBUER",
+    "off_hand": "IMBUER",
+    "furniture": "TINKER",
+    "tool": "TINKER",
+    "cape": "TINKER",
+    "bag": "TINKER",
+}
+
+def get_journal_id(item_category: str, tier: int) -> str | None:
+    """Get the specific journal item ID (e.g., T4_JOURNAL_BLACKSMITH_EMPTY)."""
+    base = JOURNAL_MAPPING.get(item_category.lower())
+    if not base:
+        return None
+    return f"T{tier}_JOURNAL_{base}_EMPTY"
+
+# ═══════════════════════════════════════════════════════════════
+# GAME MECHANICS HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+def calculate_station_fee(item_value: float, station_tax: float) -> float:
+    """
+    Calculate the silver fee at a crafting station.
+    The formula is: (ItemValue * 0.11 * StationTax) / 100
+    Note: 0.11 is a game constant for nutrition to silver conversion.
+    """
+    return (item_value * 0.11 * station_tax) / 100.0
 
 # ═══════════════════════════════════════════════════════════════
 # TIERS

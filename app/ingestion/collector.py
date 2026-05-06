@@ -67,35 +67,57 @@ class MarketCollector:
 
     @staticmethod
     def _get_default_items() -> list[str]:
-        """Fallback list of high-value tradeable items."""
+        """Comprehensive fallback list of tradeable items across all categories."""
         items = []
-        categories = [
-            "BAG", "HEAD_CLOTH_SET1", "ARMOR_CLOTH_SET1", "SHOES_CLOTH_SET1",
+        # Core Equipment Groups
+        base_items = [
+            "BAG", "CAPE", "MOUNT_HORSE", "MOUNT_OX",
+            "HEAD_CLOTH_SET1", "ARMOR_CLOTH_SET1", "SHOES_CLOTH_SET1",
             "HEAD_LEATHER_SET1", "ARMOR_LEATHER_SET1", "SHOES_LEATHER_SET1",
             "HEAD_PLATE_SET1", "ARMOR_PLATE_SET1", "SHOES_PLATE_SET1",
+            "MAIN_SWORD", "2H_CLAYMORE", "2H_DUALSWORD",
+            "MAIN_AXE", "2H_HALBERD", "2H_AXE",
+            "MAIN_MACE", "2H_POLEHAMMER", "2H_MACE",
+            "MAIN_HAMMER", "2H_HAMMER", "2H_POLEHAMMER",
+            "MAIN_SPEAR", "2H_SPEAR", "2H_GLAIVE",
+            "MAIN_DAGGER", "2H_DAGGERPAIR", "2H_CLAW",
             "MAIN_BOW", "2H_BOW", "2H_LONGBOW",
+            "MAIN_CROSSBOW", "2H_CROSSBOW", "2H_REPEATINGCROSSBOW",
             "MAIN_FIRESTAFF", "2H_FIRESTAFF", "2H_INFERNOSTAFF",
-            "MAIN_CURSEDSTAFF", "2H_CURSEDSTAFF",
-            "MAIN_ARCANESTAFF", "2H_ARCANESTAFF",
-            "MAIN_FROSTSTAFF", "2H_FROSTSTAFF",
-            "MAIN_HOLYSTAFF", "2H_HOLYSTAFF",
-            "MAIN_NATURESTAFF", "2H_NATURESTAFF",
-            "MAIN_SWORD", "2H_CLAYMORE",
-            "MAIN_AXE", "2H_HALBERD",
-            "MAIN_MACE", "2H_POLEHAMMER",
-            "MAIN_HAMMER", "2H_HAMMER",
-            "MAIN_SPEAR", "2H_SPEAR",
-            "MAIN_DAGGER", "2H_DAGGERPAIR",
-            "MAIN_CROSSBOW", "2H_CROSSBOW",
-            "MAIN_QUARTERSTAFF", "2H_QUARTERSTAFF",
-            "OFF_SHIELD", "OFF_TOWERSHIELD",
-            "CAPE", "2H_TOOL_SIEGEHAMMER",
+            "MAIN_HOLYSTAFF", "2H_HOLYSTAFF", "2H_DIVINESTAFF",
+            "MAIN_ARCANESTAFF", "2H_ARCANESTAFF", "2H_ENIGMATICSTAFF",
+            "MAIN_FROSTSTAFF", "2H_FROSTSTAFF", "2H_GLACIALSTAFF",
+            "MAIN_CURSEDSTAFF", "2H_CURSEDSTAFF", "2H_DEMONICSTAFF",
+            "MAIN_NATURESTAFF", "2H_NATURESTAFF", "2H_WILDSTAFF",
+            "MAIN_QUARTERSTAFF", "2H_QUARTERSTAFF", "2H_IRONCLADSTAFF",
+            "OFF_SHIELD", "OFF_TOWERSHIELD", "OFF_BOOK", "OFF_ORB", "OFF_TOTEM",
         ]
+        
+        # Resources (Raw and Refined)
+        resources = ["WOOD", "ORE", "FIBER", "HIDE", "ROCK", "PLANKS", "METALBAR", "CLOTH", "LEATHER", "STONEBLOCK"]
+        
+        # Artifacts & Consumables
+        misc = ["POTION_HEAL", "POTION_ENERGY", "POTION_REGEN", "FOOD_SOUP", "FOOD_STEW", "FOOD_SANDWICH"]
+
         for tier in [4, 5, 6, 7, 8]:
-            for cat in categories:
+            # Add base equipment with enchantments
+            for cat in base_items:
                 items.append(f"T{tier}_{cat}")
-                for ench in [1, 2, 3]:
-                    items.append(f"T{tier}_{cat}@{ench}")
+                if tier >= 4:
+                    for ench in [1, 2, 3, 4]:
+                        items.append(f"T{tier}_{cat}@{ench}")
+            
+            # Add resources
+            for res in resources:
+                items.append(f"T{tier}_{res}")
+                if tier >= 4:
+                    for ench in [1, 2, 3, 4]:
+                        items.append(f"T{tier}_{res}_LEVEL{ench}")
+
+            # Add misc
+            for m in misc:
+                items.append(f"T{tier}_{m}")
+
         return items
 
     def _batch_items(self, item_ids: list[str]) -> list[list[str]]:

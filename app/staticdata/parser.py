@@ -174,6 +174,7 @@ class StaticDataParser:
                 "shop_subcategory": raw_item.get("@shopsubcategory1", ""),
                 "weight": float(raw_item.get("@weight", 0) or 0),
                 "max_stack": int(raw_item.get("@maxstacksize", 999) or 999),
+                "item_value": float(raw_item.get("@itemvalue", 0) or 0),
                 "is_craftable": False,
             }
 
@@ -227,7 +228,7 @@ class StaticDataParser:
         if isinstance(resources, dict):
             resources = [resources]
 
-        crafting_station = craft_req.get("@craftingfocus", "")
+        crafting_station = craft_req.get("@craftingstation", "")
         nutrition = float(craft_req.get("@amountofnutrition", 0) or 0)
         focus = float(craft_req.get("@craftingfocus", 0) or 0)
         fame = float(craft_req.get("@craftingfame", 0) or 0)

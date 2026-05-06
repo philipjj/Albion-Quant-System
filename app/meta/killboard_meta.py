@@ -110,6 +110,9 @@ def compute_meta(events: list[dict[str, Any]], *, top_builds_per_tier: int = 3) 
         if not bucket:
             return
         sig, normalized = _equipment_signature(eq)
+        # Filter out sparse/naked builds to keep meta results high quality
+        if len(normalized) < 3:
+            return
 
         tier_bucket = tier_build_counts.setdefault(bucket, {})
         entry = tier_bucket.get(sig)

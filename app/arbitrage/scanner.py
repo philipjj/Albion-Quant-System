@@ -202,12 +202,13 @@ class ArbitrageScanner:
         return stats
 
 
-    async def scan(self, fast_sell: bool = False) -> list[dict]:
+    async def scan(self, fast_sell: bool = False, source_city_filter: str = None) -> list[dict]:
         """
         Run the full arbitrage scan.
         
         Iterates through all items × all city pairs to find profitable routes.
         If fast_sell is True, it evaluates selling instantly to the destination's highest buy order.
+        If source_city_filter is provided, it only evaluates routes starting from that city.
         """
         log.info("=" * 60)
         log.info(f"ARBITRAGE SCAN - START (fast_sell={fast_sell})")
@@ -227,13 +228,18 @@ class ArbitrageScanner:
             return []
 
         # Generate all city pairs (directional)
-        city_pairs = list(permutations(ALL_MARKET_CITIES, 2))
+        from app.core.constants import ALL_CITIES_WITH_BM
+        city_pairs = list(permutations(ALL_CITIES_WITH_BM, 2))
 
         for (item_id, quality), city_prices in prices.items():
             self.stats["items_scanned"] += 1
 
             for source, dest in city_pairs:
                 self.stats["pairs_evaluated"] += 1
+
+                # If filter is provided, skip routes not starting from the filtered city
+                if source_city_filter and source.lower() != source_city_filter.lower():
+                    continue
 
                 source_data = city_prices.get(source)
                 dest_data = city_prices.get(dest)

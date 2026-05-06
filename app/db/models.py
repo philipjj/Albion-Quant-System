@@ -38,6 +38,7 @@ class Item(Base):
     shop_subcategory = Column(String(64), nullable=True)
     weight = Column(Float, default=0.0)
     max_stack = Column(Integer, default=999)
+    item_value = Column(Float, default=0.0) # Game internal value for tax/fees
     is_craftable = Column(Boolean, default=False)
 
     # Relationships

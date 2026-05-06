@@ -148,7 +148,7 @@ class DiscordAlerter:
                 {"name": "📦 CURRENT SUPPLY", "value": "N/A (Europe API)", "inline": True},
                 {"name": "🔓 MARKET GAP", "value": "N/A (Europe API)", "inline": True},
                 {"name": "🛡️ SAFE LIMIT", "value": f"**{opp.get('safe_limit', 1):,}** units", "inline": True},
-                {"name": "🛡️ TAX STATUS", "value": "Premium 6.5%", "inline": True},
+                {"name": "🛡️ TAX STATUS", "value": f"{'Premium' if settings.is_premium else 'Non-Premium'} {(settings.tax_rate + settings.setup_fee_rate)*100:.1f}%", "inline": True},
                 {"name": "🧠 DATA CONF", "value": f"**{confidence*100:.0f}%**", "inline": True},
 
                 {"name": "💰 ECONOMICS", "value": (
