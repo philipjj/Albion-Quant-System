@@ -174,6 +174,17 @@ class QuantScheduler:
             self._is_running = False
             log.info("Scheduler paused")
 
+    def shutdown(self):
+        """Fully stop scheduler and signal running jobs to exit quickly."""
+        self.collector.request_stop()
+        if self.scheduler.running:
+            try:
+                self.scheduler.shutdown(wait=False)
+            except Exception as e:
+                log.warning(f"Scheduler shutdown warning: {e}")
+        self._is_running = False
+        log.info("Scheduler shut down")
+
     def resume(self):
         """Resume the scheduler if paused."""
         if not self._is_running:

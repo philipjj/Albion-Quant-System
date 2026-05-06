@@ -40,12 +40,17 @@ class MarketCollector:
     def __init__(self):
         self.base_url = settings.albion_api_base
         self.cities = ",".join(CITY_API_NAMES.values())
+        self._stop_requested = False
         self.stats = {
             "total_fetched": 0,
             "total_stored": 0,
             "errors": 0,
             "batches": 0,
         }
+
+    def request_stop(self) -> None:
+        """Signal long-running collectors to stop as soon as possible."""
+        self._stop_requested = True
 
     def _get_tradeable_items(self, db: Session) -> list[str]:
         """Get all item IDs that should be tracked for market prices."""
@@ -257,6 +262,9 @@ class MarketCollector:
             },
         ) as client:
             for i, batch in enumerate(batches):
+                if self._stop_requested:
+                    log.info("Price collection stop requested.")
+                    return self.stats
                 try:
                     log.debug(f"Fetching batch {i + 1}/{len(batches)} ({len(batch)} items)")
                     prices = await self._fetch_batch(client, batch)
@@ -308,6 +316,9 @@ class MarketCollector:
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             for i, batch in enumerate(batches):
+                if self._stop_requested:
+                    log.info("History collection stop requested.")
+                    return stats
                 try:
                     if feature_gate.is_rate_limited:
                         await asyncio.sleep(10.0) # Emergency backoff

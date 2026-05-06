@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
             pass
 
     if scheduler_instance:
-        scheduler_instance.stop()
+        scheduler_instance.shutdown()
     log.info("🛑 Albion Quant Trading System shut down")
 
 

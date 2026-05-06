@@ -23,6 +23,56 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 import os
 
 
+async def _render_loadout_layout(slots: dict) -> io.BytesIO:
+    """Render an Albion-like equipment layout using official item icons."""
+    canvas = Image.new("RGBA", (640, 760), (24, 26, 30, 255))
+
+    # Visual arrangement mirrors the in-game character equipment panel.
+    pos_map = {
+        "Head": (270, 60),
+        "Cape": (450, 60),
+        "Bag": (90, 60),
+        "MainHand": (90, 250),
+        "Armor": (270, 250),
+        "OffHand": (450, 250),
+        "Food": (90, 440),
+        "Shoes": (270, 440),
+        "Potion": (450, 440),
+        "Mount": (270, 610),
+    }
+    box_size = 128
+
+    async with httpx.AsyncClient(timeout=8.0) as client:
+        tasks = []
+        for slot, (x, y) in pos_map.items():
+            item_data = slots.get(slot)
+            if not item_data:
+                continue
+            i_id = item_data if isinstance(item_data, str) else item_data.get("Type")
+            qual = 1 if isinstance(item_data, str) else item_data.get("Quality", 1)
+            if i_id:
+                tasks.append((x, y, item_icon_url(i_id, quality=qual, size=128)))
+
+        async def fetch_and_paste(x: int, y: int, url: str) -> None:
+            try:
+                r_img = await client.get(url)
+                if r_img.status_code != 200:
+                    return
+                icon = Image.open(io.BytesIO(r_img.content)).convert("RGBA")
+                if icon.size != (box_size, box_size):
+                    icon = icon.resize((box_size, box_size))
+                canvas.paste(icon, (x, y), icon)
+            except Exception:
+                return
+
+        await asyncio.gather(*(fetch_and_paste(x, y, u) for x, y, u in tasks))
+
+    out = io.BytesIO()
+    canvas.save(out, format="PNG")
+    out.seek(0)
+    return out
+
+
 @bot.event
 async def on_ready():
     log.info(f"Discord Bot logged in as {bot.user} (PID: {os.getpid()})")
@@ -380,7 +430,7 @@ async def fastscan(ctx):
 
 @bot.command()
 async def meta(ctx, top_n: int = 10, category: str = None):
-    """Show meta builds by tier (4.0+) plus a detailed item usage list."""
+    """Show killboard-derived meta loadouts with in-game style visuals."""
     await ctx.send("🔍 Scanning killboard events for the most-used builds by tier (4.0+) ...")
 
     try:
@@ -406,17 +456,18 @@ async def meta(ctx, top_n: int = 10, category: str = None):
 
         tiers = sorted(meta.tier_to_builds.keys(), key=tier_key)
 
-        # Fetch names from DB to make it readable "just like in game"
+        # Fetch names once for all items we may display.
         all_item_ids = set()
         for builds in meta.tier_to_builds.values():
             for b in builds:
                 slots = b.get("slots") or {}
                 for val in slots.values():
                     if isinstance(val, dict):
-                        if val.get("Type"): all_item_ids.add(val["Type"])
+                        if val.get("Type"):
+                            all_item_ids.add(val["Type"])
                     elif isinstance(val, str):
                         all_item_ids.add(val)
-        for i_id, _ in meta.item_counts[:100]:
+        for i_id, _ in meta.item_counts[:200]:
             all_item_ids.add(i_id)
 
         item_names_map = {}
@@ -425,117 +476,71 @@ async def meta(ctx, top_n: int = 10, category: str = None):
             for it in db_items:
                 item_names_map[it.item_id] = it.name
 
-        async def generate_loadout_image(slots: dict):
-            # Create a 3x4 grid canvas (390x520) with dark background
-            canvas = Image.new('RGBA', (390, 520), (35, 39, 42, 255))
+        def _slot_item_name(slots: dict, slot: str) -> str:
+            item_data = slots.get(slot)
+            if not item_data:
+                return "-"
+            item_id = item_data if isinstance(item_data, str) else item_data.get("Type")
+            if not item_id:
+                return "-"
+            return item_names_map.get(item_id, item_id)
 
-            # (col, row) grid positions
-            pos_map = {
-                "Bag": (0, 0), "Head": (1, 0), "Cape": (2, 0),
-                "MainHand": (0, 1), "Armor": (1, 1), "OffHand": (2, 1),
-                "Food": (0, 2), "Shoes": (1, 2), "Potion": (2, 2),
-                "Mount": (1, 3)
-            }
+        def _build_summary_text(builds: list[dict], max_lines: int = 3) -> str:
+            lines = []
+            for idx, b in enumerate(builds[:max_lines], start=1):
+                slots = b.get("slots") or {}
+                mh = _slot_item_name(slots, "MainHand")
+                armor = _slot_item_name(slots, "Armor")
+                shoes = _slot_item_name(slots, "Shoes")
+                lines.append(f"#{idx} ({b['count']}): {mh} | {armor} | {shoes}")
+            text = "\n".join(lines) if lines else "No build data."
+            return text[:1000]
 
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                tasks = []
-                for slot, (col, row) in pos_map.items():
-                    item_data = slots.get(slot)
-                    if item_data and isinstance(item_data, dict):
-                        i_id = item_data.get("Type")
-                        qual = item_data.get("Quality", 1)
-                        if i_id:
-                            tasks.append((col, row, item_icon_url(i_id, quality=qual, size=128)))
+        def _top_item_links_for_tier(tier_prefix: str, limit: int = 8) -> str:
+            links = []
+            for item_id, count in meta.item_counts:
+                if not item_id.startswith(f"T{tier_prefix}"):
+                    continue
+                display = item_names_map.get(item_id, item_id)
+                links.append(f"[{display}]({item_icon_url(item_id, size=64)}) ({count})")
+                if len(links) >= limit:
+                    break
+            return "\n".join(links)[:1000] if links else "No tier-matched item data."
 
-                async def fetch_and_paste(c, r, url):
-                    try:
-                        r_img = await client.get(url)
-                        if r_img.status_code == 200:
-                            icon = Image.open(io.BytesIO(r_img.content)).convert("RGBA")
-                            canvas.paste(icon, (c*130, r*130), icon)
-                    except: pass
-
-                await asyncio.gather(*(fetch_and_paste(c, r, u) for c, r, u in tasks))
-
-            buf = io.BytesIO()
-            canvas.save(buf, format='PNG')
-            buf.seek(0)
-            return buf
-
-        def create_meta_embed(index: int, total_samples: int, server: str, tier: str = None):
-            title = f"🔥 TOP META BUILD: T{tier}" if tier else "🔥 TOP META BUILDS"
-            if index > 0 and not tier:
-                title += f" (Part {index + 1})"
-
-            emb = discord.Embed(
-                title=title,
-                description=f"Official Render Grid. Server: {server.upper()}",
-                color=discord.Color.gold(),
-            )
-            return emb
-
-        def format_visual_build(slots: dict, names: dict):
-            def pick(slot: str) -> str:
-                item_data = slots.get(slot)
-                if not item_data: return "      -       "
-                # If old format (string), handle it; otherwise use dict
-                i_id = item_data if isinstance(item_data, str) else item_data.get("Type")
-                if not i_id: return "      -       "
-
-                name = names.get(i_id, i_id.replace("T", "").replace("_", " "))
-                return name[:14].center(14)
-
-            h = pick("Head")
-            c = pick("Cape")
-            a = pick("Armor")
-            b = pick("Bag")
-            mh = pick("MainHand")
-            oh = pick("OffHand")
-            s = pick("Shoes")
-            f = pick("Food")
-            p = pick("Potion")
-            mt = pick("Mount")
-
-            return (
-                f"[{b}] [{h}] [{c}]\n"
-                f"[{mh}] [{a}] [{oh}]\n"
-                f"[{f}] [{s}] [{p}]\n"
-                f"                [{mt}]"
-            )
-
-        # We will now send one message per tier with its image
-        for tier in tiers[:8]: # Limit to top 8 tiers for speed/rate limits
+        # Send one message per tier with in-game style icon arrangement.
+        tier_limit = max(1, min(int(top_n or 8), 8))
+        for tier in tiers[:tier_limit]:
             builds = meta.tier_to_builds[tier]
-            if not builds: continue
+            if not builds:
+                continue
 
             top_build = builds[0]
-            img_buf = await generate_loadout_image(top_build.get("slots") or {})
-            filename = f"meta_t{tier}.png"
-            file = discord.File(fp=img_buf, filename=filename)
+            top_slots = top_build.get("slots") or {}
+            loadout_buf = await _render_loadout_layout(top_slots)
+            image_name = f"meta_loadout_t{tier}.png"
+            image_file = discord.File(fp=loadout_buf, filename=image_name)
 
-            emb = create_meta_embed(0, meta.sample_events, server, tier=tier)
-            emb.set_image(url=f"attachment://{filename}")
+            emb = discord.Embed(
+                title=f"🔥 META LOADOUTS T{tier}",
+                description=f"Server: **{server.upper()}** | Samples: **{meta.sample_events}**",
+                color=discord.Color.gold(),
+            )
+            mainhand = top_slots.get("MainHand") if isinstance(top_slots, dict) else None
+            mainhand_id = mainhand.get("Type") if isinstance(mainhand, dict) else None
+            mainhand_q = mainhand.get("Quality", 1) if isinstance(mainhand, dict) else 1
+            if mainhand_id:
+                emb.set_thumbnail(url=item_icon_url(mainhand_id, quality=mainhand_q, size=217))
+            emb.set_image(url=f"attachment://{image_name}")
 
-            # Rank info in text
-            sections = []
-            for i, b in enumerate(builds[:2]):
-                grid = format_visual_build(b.get("slots") or {}, item_names_map)
-                sections.append(f"Rank #{i+1} ({b['count']}x uses):\n{grid}")
+            emb.add_field(name="🏆 Top Builds", value=_build_summary_text(builds), inline=False)
+            emb.add_field(
+                name="🧩 Top Tier Items",
+                value=_top_item_links_for_tier(tier.split(".", 1)[0]),
+                inline=False,
+            )
 
-            emb.add_field(name="🛡️ Equipment Grid", value="```\n" + "\n\n".join(sections) + "\n```", inline=False)
-
-            await ctx.send(file=file, embed=emb)
+            await ctx.send(file=image_file, embed=emb)
             await asyncio.sleep(0.5)
-
-        # Finally send the CSV
-
-        out = io.StringIO()
-        w = csv.writer(out)
-        w.writerow(["item_id", "count"])
-        for item_id, count in meta.item_counts[:2000]:
-            w.writerow([item_id, count])
-        data = out.getvalue().encode("utf-8")
-        await ctx.send(file=discord.File(fp=io.BytesIO(data), filename="meta_items.csv"))
 
     except Exception as e:
         log.error(f"Meta command error: {e}")
@@ -648,12 +653,14 @@ async def bm(ctx):
 
         for _, row in roi_df.iterrows():
             shortage_str = "🔴 High Shortage" if row['shortage_level'] > 0.7 else "🟡 Med Shortage" if row['shortage_level'] > 0.3 else "🟢 Low Shortage"
+            icon_link = item_icon_url(row["item_id"])
 
             value_text = (
                 f"**Buy:** {row['buy_city']} at {row['buy_price']:,.0f}\n"
                 f"**Sell:** BM at {row['bm_price']:,.0f}\n"
                 f"**Profit:** {row['profit']:,.0f} (**{row['roi_margin']}% ROI**)\n"
-                f"**Status:** {shortage_str} (Safety: {row['safety_score']:.1f})"
+                f"**Status:** {shortage_str} (Safety: {row['safety_score']:.1f})\n"
+                f"[Official Icon]({icon_link})"
             )
 
             if len(current_embed) + len(value_text) + len(row['item_id']) > 5500:
@@ -662,6 +669,7 @@ async def bm(ctx):
                     title="💀 BLACK MARKET: TOP ROI (cont.)",
                     color=discord.Color.dark_red()
                 )
+                current_embed.set_thumbnail(url=icon_link)
 
             current_embed.add_field(name=f"📦 {row['item_id'][:25]}", value=value_text, inline=False)
 
@@ -738,6 +746,8 @@ async def broadcast_patch_update(channel_id: int = None):
                 description=subtitle,
                 color=discord.Color.red()
             )
+            if not rows.empty:
+                current_emb.set_thumbnail(url=item_icon_url(rows.iloc[0]["item_id"]))
 
             def add_line(emb, name, line):
                 if not emb.fields:
