@@ -6,17 +6,14 @@ Creates canonical item identifiers and populates the database.
 
 import json
 import re
-from pathlib import Path
-from typing import Optional
 
 import httpx
 from sqlalchemy.orm import Session
 
-from app.core.config import DATA_DIR, PARSED_DIR, RAW_DIR
+from app.core.config import PARSED_DIR, RAW_DIR
 from app.core.logging import log
 from app.db.models import Item, Recipe
 from app.db.session import get_db_session
-
 
 # ao-bin-dumps GitHub raw URLs
 AO_BIN_DUMPS_BASE = "https://raw.githubusercontent.com/ao-data/ao-bin-dumps/master"
@@ -68,7 +65,7 @@ class StaticDataParser:
                 f"items.json not found at {items_path}. Run download_static_data() first."
             )
 
-        with open(items_path, "r", encoding="utf-8") as f:
+        with open(items_path, encoding="utf-8") as f:
             data = json.load(f)
 
         # The items.json structure can vary — handle both list and dict formats
@@ -98,7 +95,7 @@ class StaticDataParser:
         # Load formatted items for name lookup
         formatted_path = RAW_DIR / "items_formatted.json"
         if formatted_path.exists():
-            with open(formatted_path, "r", encoding="utf-8") as f:
+            with open(formatted_path, encoding="utf-8") as f:
                 formatted_data = json.load(f)
             # Build lookup by UniqueName
             if isinstance(formatted_data, list):

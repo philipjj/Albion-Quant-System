@@ -6,42 +6,40 @@ This is intentionally minimal: a single profile record keyed by Discord user id.
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
 from app.db.models import UserProfile
+from app.db.session import get_db
 
 router = APIRouter(prefix="/user", tags=["User"])
 
 
 class UserProfileIn(BaseModel):
     discord_user_id: str = Field(min_length=1, max_length=32)
-    is_premium: Optional[bool] = None
-    home_city: Optional[str] = None
-    api_server: Optional[str] = None
+    is_premium: bool | None = None
+    home_city: str | None = None
+    api_server: str | None = None
 
-    max_capital_per_trade: Optional[int] = None
-    target_exit_hours: Optional[float] = None
-    min_arbitrage_margin: Optional[float] = None
-    min_arbitrage_profit: Optional[int] = None
-    min_crafting_profit: Optional[int] = None
+    max_capital_per_trade: int | None = None
+    target_exit_hours: float | None = None
+    min_arbitrage_margin: float | None = None
+    min_arbitrage_profit: int | None = None
+    min_crafting_profit: int | None = None
 
 
 class UserProfileOut(BaseModel):
     discord_user_id: str
     is_premium: bool
-    home_city: Optional[str] = None
-    api_server: Optional[str] = None
+    home_city: str | None = None
+    api_server: str | None = None
 
-    max_capital_per_trade: Optional[int] = None
-    target_exit_hours: Optional[float] = None
-    min_arbitrage_margin: Optional[float] = None
-    min_arbitrage_profit: Optional[int] = None
-    min_crafting_profit: Optional[int] = None
+    max_capital_per_trade: int | None = None
+    target_exit_hours: float | None = None
+    min_arbitrage_margin: float | None = None
+    min_arbitrage_profit: int | None = None
+    min_crafting_profit: int | None = None
 
 
 @router.get("/profile/{discord_user_id}", response_model=UserProfileOut)

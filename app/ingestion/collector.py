@@ -6,18 +6,18 @@ Stores snapshots for live analysis and historical tracking.
 
 import asyncio
 from datetime import datetime
-from typing import Optional
+from typing import cast
 
 import httpx
 from sqlalchemy.orm import Session
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
-from app.core.constants import ALL_MARKET_CITIES, CITY_API_NAMES
+from app.core.constants import CITY_API_NAMES
+from app.core.feature_gate import feature_gate
 from app.core.logging import log
 from app.db.models import Item, MarketPrice, MarketSnapshot
 from app.db.session import get_db_session
-from app.core.feature_gate import feature_gate
 
 
 class MarketCollector:
@@ -131,13 +131,13 @@ class MarketCollector:
         """Fetch historical sales data for a batch of items."""
         items_str = ",".join(item_ids)
         url = f"{self.base_url}{self.API_HISTORY_ENDPOINT.format(item_ids=items_str)}"
-        
+
         # Use 24h time scale for daily volume verification
         params = {
             "locations": self.cities,
             "time-scale": 24
         }
-        
+
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()
@@ -153,18 +153,18 @@ class MarketCollector:
         """Store historical sales data in the database."""
         stored = 0
         from app.db.models import MarketHistory
-        
+
         for entry in history_data:
             item_id = entry.get("item_id", "")
             location = entry.get("location", "")
             data_points = entry.get("data", [])
-            
+
             if not item_id or not location or not data_points:
                 continue
-                
+
             # We usually only care about the most recent 24h block
             latest = data_points[-1]
-            
+
             history = MarketHistory(
                 item_id=item_id,
                 city=location,
@@ -175,7 +175,7 @@ class MarketCollector:
             )
             db.add(history)
             stored += 1
-            
+
         return stored
 
     def _store_prices(self, db: Session, prices: list[dict]) -> int:
@@ -217,7 +217,7 @@ class MarketCollector:
         return stored
 
     @staticmethod
-    def _parse_date(date_str: str) -> Optional[datetime]:
+    def _parse_date(date_str: str) -> datetime | None:
         """Parse ISO date string from API."""
         if not date_str or date_str == "0001-01-01T00:00:00":
             return None
@@ -243,6 +243,7 @@ class MarketCollector:
         self.stats = {"total_fetched": 0, "total_stored": 0, "errors": 0, "batches": 0}
 
         with get_db_session() as db:
+            db = cast(Session, db)
             item_ids = self._get_tradeable_items(db)
 
         batches = self._batch_items(item_ids)
@@ -264,6 +265,7 @@ class MarketCollector:
 
                     # Store in DB
                     with get_db_session() as db:
+                        db = cast(Session, db)
                         stored = self._store_prices(db, prices)
                         self.stats["total_stored"] += stored
 
@@ -297,32 +299,34 @@ class MarketCollector:
         """
         log.info("📊 FETCHING MARKET HISTORY (REAL VOLUME)...")
         stats = {"total_history": 0, "errors": 0}
-        
+
         with get_db_session() as db:
+            db = cast(Session, db)
             item_ids = self._get_tradeable_items(db)
-            
+
         batches = self._batch_items(item_ids)
-        
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             for i, batch in enumerate(batches):
                 try:
                     if feature_gate.is_rate_limited:
                         await asyncio.sleep(10.0) # Emergency backoff
-                    
+
                     data = await self._fetch_history_batch(client, batch)
                     with get_db_session() as db:
+                        db = cast(Session, db)
                         stored = self._store_history(db, data)
                         stats["total_history"] += stored
-                    
+
                     await asyncio.sleep(self.REQUEST_DELAY)
-                    
+
                 except asyncio.CancelledError:
                     log.info("History collection stopped (system shutdown).")
                     return stats
                 except Exception as e:
                     log.error(f"History batch {i+1} error: {e}")
                     stats["errors"] += 1
-                    
+
         log.info(f"MARKET HISTORY COMPLETE: {stats}")
         return stats
 
@@ -333,19 +337,19 @@ class MarketCollector:
         """
         url = f"{self.base_url}{self.API_ORDERS_ENDPOINT.format(item_ids=item_id)}"
         params = {"locations": city}
-        
+
         try:
             response = await client.get(url, params=params)
             response.raise_for_status()
             orders = response.json()
-            
+
             if not isinstance(orders, list):
                 return 0
-                
+
             # Sum up all 'offer' (sell order) quantities
             total_supply = sum(
-                order.get("Amount", 0) 
-                for order in orders 
+                order.get("Amount", 0)
+                for order in orders
                 if order.get("AuctionType") == "offer"
             )
             return total_supply
@@ -363,15 +367,16 @@ class MarketCollector:
         cutoff = datetime.utcnow() - timedelta(hours=2)
 
         with get_db_session() as db:
+            db = cast(Session, db)
             # Fetch recent prices and group in memory to avoid slow SQLite GROUP BY
             recent_prices = db.query(MarketPrice).filter(MarketPrice.fetched_at >= cutoff).all()
-            
-            prices_map = {}
+
+            prices_map: dict[tuple[str, str, int], MarketPrice] = {}
             for p in recent_prices:
-                key = (p.item_id, p.city, p.quality)
+                key = (cast(str, p.item_id), cast(str, p.city), cast(int, p.quality))
                 if key not in prices_map or p.fetched_at > prices_map[key].fetched_at:
                     prices_map[key] = p
-            
+
             now = datetime.utcnow()
             count = 0
             for price in prices_map.values():
@@ -396,6 +401,7 @@ class MarketCollector:
         cutoff = datetime.utcnow() - timedelta(hours=keep_hours)
 
         with get_db_session() as db:
+            db = cast(Session, db)
             deleted = (
                 db.query(MarketPrice)
                 .filter(MarketPrice.fetched_at < cutoff)

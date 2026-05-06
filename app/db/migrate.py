@@ -2,9 +2,10 @@ import sqlite3
 
 from app.core.config import DATA_DIR
 
+
 def migrate():
     db_path = DATA_DIR / "albion_quant.db"
-    
+
     if not db_path.exists():
         print(f"Database not found at {db_path.absolute()}. Please run 'python main.py --init' first.")
         return
@@ -12,7 +13,7 @@ def migrate():
     print(f"Migrating database: {db_path.absolute()}")
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    
+
     new_columns = [
         ("journal_profit", "FLOAT DEFAULT 0.0"),
         ("daily_volume", "INTEGER DEFAULT 0"),
@@ -26,14 +27,14 @@ def migrate():
         ("volatility", "FLOAT DEFAULT 0.0"),
         ("persistence", "INTEGER DEFAULT 1"),
     ]
-    
+
     tables = ["arbitrage_opportunities", "crafting_opportunities"]
-    
+
     for table in tables:
         print(f"Checking table: {table}")
         cursor.execute(f"PRAGMA table_info({table})")
         columns = [col[1] for col in cursor.fetchall()]
-        
+
         for col_name, col_type in new_columns:
             if col_name not in columns:
                 print(f"Adding column '{col_name}' to {table}...")

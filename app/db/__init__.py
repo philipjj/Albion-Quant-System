@@ -1,4 +1,4 @@
 """Database module."""
 
-from app.db.session import get_db, engine, SessionLocal, init_db
-from app.db.models import Base, Item, Recipe, MarketPrice, ArbitrageOpportunity, CraftingOpportunity
+from app.db.models import ArbitrageOpportunity, Base, CraftingOpportunity, Item, MarketPrice, Recipe
+from app.db.session import SessionLocal, engine, get_db, init_db

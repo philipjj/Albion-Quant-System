@@ -6,6 +6,7 @@ Includes risk scoring based on route danger and item value density.
 
 from datetime import datetime
 from itertools import permutations
+from typing import Any, cast
 
 from sqlalchemy.orm import Session
 
@@ -138,18 +139,21 @@ class ArbitrageScanner:
         recent_prices = db.query(MarketPrice).filter(MarketPrice.fetched_at >= cutoff).all()
 
         # 3. Group in memory (O(N) single pass, vastly faster than unindexed SQLite GROUP BY)
-        prices = {}
+        prices: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
         for p in recent_prices:
-            if p.item_id not in valid_items:
+            item_id = cast(str, p.item_id)
+            quality = cast(int, p.quality)
+            city = cast(str, p.city)
+            if item_id not in valid_items:
                 continue
 
-            key = (p.item_id, p.quality)
+            key = (item_id, quality)
             if key not in prices:
                 prices[key] = {}
 
-            city_data = prices[key].get(p.city)
+            city_data = prices[key].get(city)
             if not city_data or p.fetched_at > city_data["fetched_at"]:
-                prices[key][p.city] = {
+                prices[key][city] = {
                     "sell_price_min": p.sell_price_min or 0,
                     "buy_price_max": p.buy_price_max or 0,
                     "quality": p.quality,
@@ -165,9 +169,10 @@ class ArbitrageScanner:
 
     def _get_market_stats_map(self, db: Session) -> dict[tuple[str, str], dict]:
         """Build 24h volume and volatility stats for all item/city pairs in one query."""
-        from app.db.models import MarketHistory
-        from datetime import timedelta
         import math
+        from datetime import timedelta
+
+        from app.db.models import MarketHistory
 
         cutoff = datetime.utcnow() - timedelta(hours=24)
         records = db.query(
@@ -212,6 +217,7 @@ class ArbitrageScanner:
         self.stats = {"items_scanned": 0, "pairs_evaluated": 0, "opportunities_found": 0}
 
         with get_db_session() as db:
+            db = cast(Session, db)
             prices = self._get_latest_prices(db)
             item_names = self._get_item_names(db)
             market_stats = self._get_market_stats_map(db)
@@ -236,7 +242,7 @@ class ArbitrageScanner:
                     continue
 
                 buy_price = source_data.get("sell_price_min", 0) or 0
-                
+
                 if fast_sell:
                     sell_price = dest_data.get("buy_price_max", 0) or 0
                 else:
@@ -262,11 +268,11 @@ class ArbitrageScanner:
                     # 1. Buy at sell_price_min (Source): No setup fee
                     # 2. Create sell order at sell_price_min (Destination): Setup fee + Sales tax
                     market_fees = (sell_price * settings.setup_fee_rate) + (sell_price * settings.tax_rate)
-                    
+
                 transport_cost = self._calculate_transport_cost(source, dest, buy_price)
                 base_risk = self._calculate_risk_score(source, dest, buy_price)
                 liquidity_risk = self._calculate_liquidity_score(buy_price, sell_price)
-                
+
                 # Composite risk score
                 risk_score = (base_risk * 0.6) + (liquidity_risk * 0.4)
 
@@ -288,7 +294,7 @@ class ArbitrageScanner:
                     continue
                 if net_profit < min_profit:
                     continue
-                
+
                 # Sanity Check: If margin is > 1000%, it's a dead market troll listing or RMT.
                 # No legitimate, high-volume item generates 10x profit instantly.
                 if margin > 1000:
@@ -306,10 +312,10 @@ class ArbitrageScanner:
                 real_volume = stats["volume"]
                 volatility = stats["volatility"]
                 sim_volume = simulate_daily_volume(item_id)
-                
+
                 final_volume = real_volume if real_volume > 0 else sim_volume
                 volume_source = "VERIFIED 24H" if real_volume > 0 else "ESTIMATED"
-                
+
                 # Persistence Tracking
                 p_key = f"{item_id}:{source}:{dest}"
                 persistence = self._persistence_cache.get(p_key, 0) + 1
@@ -332,7 +338,7 @@ class ArbitrageScanner:
                 # Apply Stage 2: EV Scoring
                 from app.core.scoring import scorer
                 opportunity["ev_score"] = scorer.score_arbitrage(opportunity)
-                
+
                 if opportunity["ev_score"] > 0:
                     self.opportunities.append(opportunity)
                     self.stats["opportunities_found"] += 1
@@ -348,6 +354,7 @@ class ArbitrageScanner:
             return 0
 
         with get_db_session() as db:
+            db = cast(Session, db)
             # Mark old opportunities as inactive
             db.query(ArbitrageOpportunity).filter(
                 ArbitrageOpportunity.is_active == True
@@ -355,7 +362,7 @@ class ArbitrageScanner:
 
             now = datetime.utcnow()
             mappings = []
-            
+
             for opp in self.opportunities:
                 mappings.append({
                     "item_id": opp["item_id"],
@@ -379,7 +386,7 @@ class ArbitrageScanner:
                     "detected_at": now,
                     "is_active": True,
                 })
-                
+
             if mappings:
                 from sqlalchemy import insert
                 db.execute(insert(ArbitrageOpportunity), mappings)

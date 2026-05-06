@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from app.db.session import get_db
 from app.db.models import ArbitrageOpportunity
+from app.db.session import get_db
 
 router = APIRouter(prefix="/arbitrage", tags=["Arbitrage"])
 

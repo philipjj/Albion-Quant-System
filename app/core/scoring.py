@@ -1,20 +1,21 @@
 import math
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
-from app.core.logging import log
-from app.core.feature_gate import feature_gate
+from datetime import datetime
+from typing import Any
+
 from app.core.config import settings
+from app.core.feature_gate import feature_gate
+
 
 class ExpectedValueScorer:
     """
     Unifies profitability, execution feasibility, and data trust into 
     a single Expected Value (EV) per hour signal.
     """
-    
+
     A_VELOCITY = 0.5
     B_PERSISTENCE = 0.3
     C_VOLATILITY = 0.8
-    
+
     LOSS_RATE = 1.0  # Cargo value lost on death
     COST_PER_TILE = 100  # Silver per unit per distance tile
 
@@ -22,13 +23,13 @@ class ExpectedValueScorer:
     def sigmoid(x: float) -> float:
         return 1 / (1 + math.exp(-x))
 
-    def calculate_data_confidence(self, op: Dict[str, Any]) -> float:
+    def calculate_data_confidence(self, op: dict[str, Any]) -> float:
         """
         C_data model: Reliability + Freshness + Completeness
         """
         # 1. Endpoint Reliability (0.30)
         reliability = 0.30 if feature_gate.prices_supported else 0.0
-        
+
         # 2. Data Freshness (0.25)
         # Assuming detected_at is ISO format string
         try:
@@ -37,14 +38,14 @@ class ExpectedValueScorer:
             freshness = 0.25 * math.exp(-0.01 * age_mins) # Decay over time
         except:
             freshness = 0.1
-            
+
         # 3. Sample Size / Consistency (0.35)
         # If volume_source is VERIFIED, we trust it more
         sample_size = 0.35 if op.get("volume_source") == "VERIFIED 24H" else 0.15
-        
+
         # 4. Feature Completeness (0.10)
         completeness = 0.10 if feature_gate.orders_supported else 0.02 # Europe API penalty
-        
+
         return reliability + freshness + sample_size + completeness
 
     def calculate_p_exec(self, sales_velocity: float, persistence: int, volatility: float) -> float:
@@ -54,11 +55,11 @@ class ExpectedValueScorer:
         # Normalize inputs
         log_vel = math.log(max(1, sales_velocity))
         norm_persistence = min(1.0, persistence / 10.0) # 10 scans = max persistence
-        
+
         raw_score = (self.A_VELOCITY * log_vel) + (self.B_PERSISTENCE * norm_persistence) - (self.C_VOLATILITY * volatility)
         return self.sigmoid(raw_score)
 
-    def score_arbitrage(self, op: Dict[str, Any]) -> float:
+    def score_arbitrage(self, op: dict[str, Any]) -> float:
         """
         Full Scoring Formula for Arbitrage.
         Handles NoneType safety for all inputs.
@@ -69,17 +70,17 @@ class ExpectedValueScorer:
         daily_vol = op.get("daily_volume") or 0.0
         volatility = op.get("volatility") or 0.05
         persistence = op.get("persistence") or 1
-        
+
         if buy_p <= 0 or sell_p <= 0:
             return 0.0
 
         # 1. Quantity (Q)
-        max_capital = settings.max_capital_per_trade 
+        max_capital = settings.max_capital_per_trade
         q_max_capital = max_capital // max(1, buy_p)
-        
+
         sales_velocity = daily_vol / 24.0
         q_max_liquidity = sales_velocity * settings.target_exit_hours
-        
+
         Q = max(1, min(q_max_capital, q_max_liquidity))
 
         # 2. Effective Prices (Slippage Approximation)
@@ -89,7 +90,7 @@ class ExpectedValueScorer:
         # 3. Costs
         gross_profit = (p_sell_eff - p_buy_eff) * Q
         fees = (op.get("market_fees") or 0.0) * (Q / 1)
-        
+
         # Transport & Risk
         transport = ((op.get("transport_cost") or 0.0) / 1) * Q
         p_death = (op.get("risk_score") or 0.1) * 0.05

@@ -4,16 +4,17 @@ Covers items, recipes, market prices, and opportunity tracking.
 """
 
 from datetime import datetime
+
 from sqlalchemy import (
+    Boolean,
     Column,
-    Integer,
+    DateTime,
     Float,
+    ForeignKey,
+    Index,
+    Integer,
     String,
     Text,
-    DateTime,
-    Index,
-    ForeignKey,
-    Boolean,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -63,7 +64,7 @@ class Recipe(Base):
     )
     ingredient_item_id = Column(String(128), nullable=False, index=True)
     quantity = Column(Float, nullable=False)
-    
+
     # Crafting metadata
     crafting_station = Column(String(64), nullable=True)
     nutrition_cost = Column(Float, default=0.0)

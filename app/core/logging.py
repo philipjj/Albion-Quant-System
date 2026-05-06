@@ -4,8 +4,10 @@ Provides structured, colorful logging with file rotation.
 """
 
 import sys
+
 from loguru import logger
-from app.core.config import settings, PROJECT_ROOT
+
+from app.core.config import PROJECT_ROOT, settings
 
 # Remove default handler
 logger.remove()

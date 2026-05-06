@@ -20,7 +20,7 @@ def simulate_daily_volume(item_id: str) -> int:
         base_vol = 80
     elif "T8" in item_id:
         base_vol = 15
-        
+
     # Category Multipliers
     multiplier = 1.0
     id_upper = item_id.upper()
@@ -34,9 +34,9 @@ def simulate_daily_volume(item_id: str) -> int:
         multiplier = 4.0
     elif any(res in id_upper for res in ["WOOD", "ORE", "FIBER", "HIDE", "ROCK", "BAR", "PLANK", "CLOTH", "LEATHER"]):
         multiplier = 15.0 # High volume for raw/refined materials
-        
+
     final_vol = int(base_vol * multiplier)
-    
+
     # Enchantment penalty
     if "@" in item_id:
         enchant_parts = item_id.split("@")
@@ -47,5 +47,5 @@ def simulate_daily_volume(item_id: str) -> int:
                 final_vol = int(final_vol / (2 ** enchant))
             except ValueError:
                 pass
-        
+
     return max(1, final_vol)

@@ -1,7 +1,6 @@
-import json
+
 import pandas as pd
-from typing import Dict, List, Optional
-import os
+
 
 class PatchDiffEngine:
     """
@@ -12,7 +11,7 @@ class PatchDiffEngine:
     - damage
     - energy costs
     """
-    
+
     def __init__(self):
         # Weights for calculating impact
         self.weights = {
@@ -31,14 +30,14 @@ class PatchDiffEngine:
             if new_val == 0:
                 return 0.0
             return self.weights[stat_type] if new_val > 0 else -self.weights[stat_type]
-            
+
         pct_change = (new_val - old_val) / abs(old_val)
-        
-        # Multiply by the weight. 
+
+        # Multiply by the weight.
         # Example: cooldown drops by 10% (-0.10). Weight is -2.0. Impact = (-0.10) * (-2.0) = +0.20 (Buff)
         return pct_change * self.weights.get(stat_type, 1.0)
 
-    def diff_spells(self, old_patch: Dict[str, dict], new_patch: Dict[str, dict]) -> pd.DataFrame:
+    def diff_spells(self, old_patch: dict[str, dict], new_patch: dict[str, dict]) -> pd.DataFrame:
         """
         Compares two dictionaries of spell data and calculates the meta_score impact.
         
@@ -55,7 +54,7 @@ class PatchDiffEngine:
         }
         """
         impacts = []
-        
+
         for spell_id, new_data in new_patch.items():
             if spell_id not in old_patch:
                 # New spell added
@@ -71,16 +70,16 @@ class PatchDiffEngine:
                     "meta_score_impact": 1.0 # Base positive impact for new ability
                 })
                 continue
-                
+
             old_data = old_patch[spell_id]
-            
+
             d_dmg = self.compute_stat_diff(old_data.get('damage', 0), new_data.get('damage', 0), 'damage')
             d_cd = self.compute_stat_diff(old_data.get('cooldown', 0), new_data.get('cooldown', 0), 'cooldown')
             d_nrg = self.compute_stat_diff(old_data.get('energy_cost', 0), new_data.get('energy_cost', 0), 'energy_cost')
             d_coef = self.compute_stat_diff(old_data.get('coefficient', 0), new_data.get('coefficient', 0), 'coefficient')
-            
+
             total_impact = d_dmg + d_cd + d_nrg + d_coef
-            
+
             if total_impact != 0:
                 impacts.append({
                     "spell_id": spell_id,
@@ -103,11 +102,11 @@ class PatchDiffEngine:
         """
         if spell_diff_df.empty:
             return pd.DataFrame()
-            
+
         # Group by item_id and sum the impacts
         item_impacts = spell_diff_df.groupby('item_id')['meta_score_impact'].sum().reset_index()
         item_impacts = item_impacts.sort_values(by='meta_score_impact', ascending=False)
-        
+
         # Add a readable classification
         def classify(score):
             if score > 0.5: return "MASSIVE BUFF"
@@ -115,7 +114,7 @@ class PatchDiffEngine:
             if score < -0.5: return "MASSIVE NERF"
             if score < -0.1: return "NERF"
             return "MINOR TWEAK"
-            
+
         item_impacts['classification'] = item_impacts['meta_score_impact'].apply(classify)
         return item_impacts
 
@@ -165,7 +164,7 @@ if __name__ == "__main__":
     diffs = engine.diff_spells(old_patch, new_patch)
     print("--- SPELL DIFFS ---")
     print(diffs.to_string())
-    
+
     print("\n--- ITEM META SCORES ---")
     item_scores = engine.generate_item_meta_scores(diffs)
     print(item_scores.to_string())

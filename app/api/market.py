@@ -3,11 +3,11 @@ FastAPI routes for Market data.
 """
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, desc
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
+from app.db.models import Item, MarketPrice
 from app.db.session import get_db
-from app.db.models import MarketPrice, Item
 
 router = APIRouter(prefix="/market", tags=["Market"])
 

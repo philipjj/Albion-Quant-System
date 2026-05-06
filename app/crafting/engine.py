@@ -5,22 +5,22 @@ Identifies best silver/focus crafting opportunities with recursive optimization.
 
 import json
 from datetime import datetime
+from typing import Any, cast
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import (
     ALL_MARKET_CITIES,
-    CITY_CRAFTING_BONUSES,
     BASE_RESOURCE_RETURN_RATE,
     CITY_BONUS_RESOURCE_RETURN_RATE,
+    CITY_CRAFTING_BONUSES,
+    DEFAULT_STATION_FEE,
     FOCUS_RESOURCE_RETURN_RATE,
     REFINING_BONUS_RESOURCE_RETURN_RATE,
     REFINING_FOCUS_RESOURCE_RETURN_RATE,
-    DEFAULT_STATION_FEE,
 )
 from app.core.logging import log
-from app.core.market_utils import simulate_daily_volume
 from app.db.models import CraftingOpportunity, Item, MarketHistory, MarketPrice, Recipe
 from app.db.session import get_db_session
 
@@ -39,29 +39,32 @@ class CraftingEngine:
         from datetime import timedelta
         cutoff = datetime.utcnow() - timedelta(hours=24)
         recent_prices = db.query(MarketPrice).filter(MarketPrice.quality == 1, MarketPrice.fetched_at >= cutoff).all()
-        prices = {}
+        prices: dict[str, dict[str, dict[str, Any]]] = {}
         for p in recent_prices:
-            if p.item_id not in prices: prices[p.item_id] = {}
-            city_data = prices[p.item_id].get(p.city)
+            item_id = cast(str, p.item_id)
+            city = cast(str, p.city)
+            if item_id not in prices:
+                prices[item_id] = {}
+            city_data = prices[item_id].get(city)
             if not city_data or p.fetched_at > city_data["fetched_at"]:
-                prices[p.item_id][p.city] = {"sell_price_min": p.sell_price_min, "buy_price_max": p.buy_price_max, "fetched_at": p.fetched_at}
+                prices[item_id][city] = {"sell_price_min": p.sell_price_min, "buy_price_max": p.buy_price_max, "fetched_at": p.fetched_at}
         return prices
 
     def _get_recipes(self, db: Session) -> dict:
         recipes = db.query(Recipe).join(Item, Recipe.crafted_item_id == Item.item_id).filter(Item.category != "vanity").all()
         valid_items = set([i[0] for i in db.query(Item.item_id).all()])
-        recipe_map = {}
+        recipe_map: dict[str, dict[str, Any]] = {}
         for r in recipes:
-            crafted_id = r.crafted_item_id
-            ing_id = r.ingredient_item_id
+            crafted_id = cast(str, r.crafted_item_id)
+            ing_id = cast(str, r.ingredient_item_id)
             if "@" in crafted_id:
                 level = crafted_id.split("@")[1]
                 if f"{ing_id}@{level}" in valid_items: ing_id = f"{ing_id}@{level}"
             if crafted_id not in recipe_map:
                 recipe_map[crafted_id] = {
-                    "ingredients": [], 
-                    "nutrition": r.nutrition_cost or 0.0, 
-                    "focus": r.focus_cost or 0.0, 
+                    "ingredients": [],
+                    "nutrition": r.nutrition_cost or 0.0,
+                    "focus": r.focus_cost or 0.0,
                     "fame": r.crafting_fame or 0.0
                 }
             recipe_map[crafted_id]["ingredients"].append({"item_id": ing_id, "quantity": r.quantity})
@@ -138,7 +141,7 @@ class CraftingEngine:
                     valid_sub = False; break
                 ing_total += res["total_cost"]
                 temp_details.extend(res["details"])
-            
+
             if valid_sub:
                 rrr = self._get_rrr(item_id, city, use_focus=False)
                 # Station fee (scaled by qty)
@@ -177,6 +180,7 @@ class CraftingEngine:
         log.info("🚀 Starting Recursive Crafting Tree Analysis...")
         self.opportunities = []
         with get_db_session() as db:
+            db = cast(Session, db)
             prices = self._get_latest_prices_map(db)
             recipes = self._get_recipes(db)
             item_names = {i[0]: i[1] for i in db.query(Item.item_id, Item.name).all()}
@@ -188,7 +192,7 @@ class CraftingEngine:
                 final_shopping_list = []
                 decision_lines = []
                 rrr = self._get_rrr(item_id, city, use_focus=True)
-                
+
                 # Find optimal starting materials for each top-level ingredient
                 for ing in recipe_data["ingredients"]:
                     res = self._resolve_optimal_procurement(ing["item_id"], ing["quantity"], prices, recipes, city, item_names)
@@ -196,7 +200,7 @@ class CraftingEngine:
                     total_ing_cost += res["total_cost"]
                     final_shopping_list.extend(res["details"])
                     decision_lines.extend(res.get("lines", []))
-                
+
                 if total_ing_cost == 0: continue
 
                 # 1. Group duplicate materials for a clean starting point
@@ -260,7 +264,7 @@ class CraftingEngine:
                     opp_data = self.opportunities[-1]
                     opp_data["buy_price"] = craft_cost
                     opp_data["ev_score"] = scorer.score_arbitrage(opp_data)
-                    
+
                     if opp_data["ev_score"] <= 0:
                         self.opportunities.pop()
 
@@ -271,6 +275,7 @@ class CraftingEngine:
     def store_opportunities(self) -> int:
         if not self.opportunities: return 0
         with get_db_session() as db:
+            db = cast(Session, db)
             db.query(CraftingOpportunity).filter(CraftingOpportunity.is_active == True).update({"is_active": False})
             mappings = []
             for o in self.opportunities:

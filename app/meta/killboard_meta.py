@@ -7,12 +7,10 @@ This is separate from market/crafting "meta" and answers the Discord use-case:
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import httpx
-
 
 SLOT_ORDER = [
     "MainHand",
@@ -28,7 +26,7 @@ SLOT_ORDER = [
 ]
 
 
-def _parse_tier_enchant(item_type: Optional[str]) -> Optional[tuple[int, int]]:
+def _parse_tier_enchant(item_type: str | None) -> tuple[int, int] | None:
     if not item_type:
         return None
     if not item_type.startswith("T"):
@@ -46,7 +44,7 @@ def _parse_tier_enchant(item_type: Optional[str]) -> Optional[tuple[int, int]]:
     return tier, enchant
 
 
-def _tier_bucket_from_equipment(equipment: dict[str, Any]) -> Optional[str]:
+def _tier_bucket_from_equipment(equipment: dict[str, Any]) -> str | None:
     """
     Bucket builds by weapon tier.enchant (e.g. 4.0, 6.2).
     If weapon missing, fall back to armor.

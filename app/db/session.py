@@ -3,16 +3,20 @@ Database session management.
 Supports SQLite (dev) and PostgreSQL (prod) via SQLAlchemy.
 """
 
+from collections.abc import Generator, Iterator
+from contextlib import contextmanager
+from typing import Any
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import sessionmaker, Session
-from contextlib import contextmanager
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 from app.db.models import Base
 
+
 @event.listens_for(Engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
+def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
     if settings.database_url.startswith("sqlite"):
         try:
             cursor = dbapi_connection.cursor()
@@ -40,12 +44,12 @@ engine = create_engine(
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-def init_db():
+def init_db() -> None:
     """Create all tables if they don't exist."""
     Base.metadata.create_all(bind=engine)
 
 
-def get_db():
+def get_db() -> Generator[Session, None, None]:
     """FastAPI dependency - yields a database session."""
     db = SessionLocal()
     try:
@@ -55,7 +59,7 @@ def get_db():
 
 
 @contextmanager
-def get_db_session() -> Session:
+def get_db_session() -> Iterator[Session]:
     """Context manager for database sessions (for workers/scripts)."""
     db = SessionLocal()
     try:
