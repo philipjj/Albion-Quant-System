@@ -14,17 +14,20 @@ env/
 # Environment
 .env
 
-# Database
-*.db
+# Database & Data
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.sqlite3
+albion_quant.db
 *.db-shm
 *.db-wal
-*.sqlite3
 
-# Data
-data/raw/
-data/parsed/
-data/snapshots/
-data/cache/
+# AQS Specific
+scratch/
+brain/
+metrics/
+.gemini/
 
 # IDE
 .vscode/
