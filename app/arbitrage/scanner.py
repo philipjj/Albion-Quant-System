@@ -165,7 +165,12 @@ class ArbitrageScanner:
                 )
 
                 if margin_pct < settings.min_arbitrage_margin: continue
-                if d_data.get("volume_24h", 0) <= 0 and not d_data.get("is_black_market"): continue
+                
+                # Sanitize 999 Volume Fallbacks
+                raw_vol = d_data.get("volume_24h", 0)
+                daily_vol = 1 if raw_vol == 999 or raw_vol == 0 else raw_vol
+                
+                if daily_vol <= 0 and not d_data.get("is_black_market"): continue
 
                 risk_score = self._calculate_risk_score(cheapest_source_city, dest_city, s_data["item_value"])
                 p_key = f"{item_id}:{cheapest_source_city}:{dest_city}"
@@ -180,17 +185,19 @@ class ArbitrageScanner:
                     "destination_city": dest_city,
                     "buy_price": buy_price,
                     "sell_price": sell_price,
-                    "estimated_profit": round(net_profit, 2),
+                    "estimated_profit": round(net_profit, 2), # strictly unit math
                     "estimated_margin": round(margin_pct, 2),
                     "risk_score": risk_score,
-                    "daily_volume": d_data.get("volume_24h", 0),
+                    "daily_volume": daily_vol,
                     "volatility": 0.05, 
                     "persistence": persistence,
                     "data_age_seconds": d_data.get("data_age_seconds", 0),
                     "confidence_score": d_data.get("confidence_score", 1.0),
                     "detected_at": datetime.utcnow().isoformat()
                 }
-                opportunity["ev_score"] = scorer.score_arbitrage(opportunity)
+                
+                # Protect core metrics from mutation
+                opportunity["ev_score"] = scorer.score_arbitrage(opportunity.copy())
                 if opportunity["ev_score"] > 0:
                     self.opportunities.append(opportunity)
                     self.stats["opportunities_found"] += 1

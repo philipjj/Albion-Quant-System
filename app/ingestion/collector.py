@@ -97,7 +97,7 @@ class MarketCollector:
                 "buy_price_max_date":  parse_timestamp(item.get("buy_price_max_date")),
                 "quality":            item.get("quality", 1),
                 "data_age_seconds":   age_sec,
-                "volume_24h":         0,
+                "volume_24h":         1, # Replaced 0 with 1 to prevent downstream fallbacks
                 "coverage_suspect":   False
             })
         return results
@@ -122,7 +122,9 @@ class MarketCollector:
             if not valid_data: continue
             latest = max(valid_data, key=lambda x: x.get("timestamp"))
             key = f"{record.get('item_id', '').split('@')[0]}:{record.get('quality', 1)}"
-            volume_map[key] = int(latest.get("item_count", 0))
+            
+            # Force minimum volume of 1
+            volume_map[key] = int(latest.get("item_count", 1)) 
         return volume_map
 
     def _get_tradeable_items_info(self, db: Session) -> dict[str, dict]:

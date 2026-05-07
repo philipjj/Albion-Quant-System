@@ -77,11 +77,26 @@ class CraftingEngine:
     def _get_recipes(self, db: Session) -> dict:
         recipes = db.query(Recipe).all()
         recipe_map: dict[str, dict[str, Any]] = {}
+        
+        # Define raw vs refined mapping to prevent double-counting flattened trees
+        raw_resources = ["_WOOD", "_ORE", "_FIBER", "_HIDE", "_ROCK"]
+        refined_materials = ["_PLANKS", "_METALBAR", "_CLOTH", "_LEATHER", "_STONEBLOCK"]
+        
         for r in recipes:
             c_id = cast(str, r.crafted_item_id)
+            ing_id = str(r.ingredient_item_id)
+            
+            is_raw_ingredient = any(r_type in ing_id for r_type in raw_resources)
+            is_refining_craft = any(ref_type in c_id for ref_type in refined_materials)
+            
+            # Discard raw tier requirements unless we are explicitly doing a refining flip
+            if is_raw_ingredient and not is_refining_craft:
+                continue 
+                
             if c_id not in recipe_map:
                 recipe_map[c_id] = {"ingredients": [], "fame": r.crafting_fame or 0.0}
-            recipe_map[c_id]["ingredients"].append({"item_id": r.ingredient_item_id, "quantity": r.quantity})
+            recipe_map[c_id]["ingredients"].append({"item_id": ing_id, "quantity": r.quantity})
+            
         return recipe_map
 
     def _resolve_optimal_procurement(self, item_id, qty, prices, recipes, city, item_names, depth=0):
@@ -120,15 +135,17 @@ class CraftingEngine:
                     valid_sub = False
                     break
                 
-                # Cost is (unit_cost * quantity_required)
-                ing_total_cost += (res["unit_cost"] * ing["quantity"])
+                # Explicitly calculate and sum the total cost of the required quantity
+                ingredient_total_cost = res["unit_cost"] * ing["quantity"]
+                ing_total_cost += ingredient_total_cost
                 
                 # Add to path details (Summary only shows immediate ingredients to avoid double-counting)
                 ingredients_purchased.append({
                     "id": ing["item_id"], 
                     "mode": res["mode"], 
                     "quantity": ing["quantity"], 
-                    "unit_price": res["unit_cost"]
+                    "unit_price": res["unit_cost"],
+                    "total_price": ingredient_total_cost
                 })
             
             if valid_sub:
@@ -154,7 +171,7 @@ class CraftingEngine:
             }
 
     async def scan(self, crafting_city_filter: str = None) -> list[dict]:
-        log.info(f"Crafting Tree Analysis v3.0 - START")
+        log.info(f"Crafting Tree Analysis v3.1 - START")
         self.opportunities = []
         with get_db_session() as db:
             db = cast(Session, db)
@@ -162,11 +179,8 @@ class CraftingEngine:
             recipes = self._get_recipes(db)
             items = db.query(Item.item_id, Item.name, Item.category).all()
             item_names = {i[0]: i[1] for i in items}
-            item_cats = {i[0]: i[2] for i in items}
 
         items_processed = 0
-        sell_locations = ALL_MARKET_CITIES + ["Black Market"]
-
         for item_id, recipe_data in recipes.items():
             items_processed += 1
             if items_processed % 200 == 0:
@@ -179,16 +193,10 @@ class CraftingEngine:
                 # 1. Resolve procurement
                 res = self._resolve_optimal_procurement(item_id, 1, prices, recipes, city, item_names)
                 if res["unit_cost"] == 0: continue
-                
-                # [FIX] Only allow crafting opportunities where we actually *craft* the item
-                if res["mode"] != "CRAFT":
-                    continue
+                if res["mode"] != "CRAFT": continue
 
                 cost_base = res["unit_cost"]
-                
-                # [NEW] Capital Check: Skip crafts that are too expensive
-                if cost_base > settings.max_crafting_capital:
-                    continue
+                if cost_base > settings.max_crafting_capital: continue
 
                 # 2. Evaluate sell cities
                 if item_id not in prices: continue
@@ -197,7 +205,6 @@ class CraftingEngine:
                         sell_p = calculate_blended_price(sell_data["sell_price_min"], sell_data["buy_price_max"])
                         if sell_p <= 0: continue
                         
-                        # Apply v3.0 fees (Special Black Market logic)
                         if sell_data.get("is_black_market"):
                             net_proceeds = sell_data["buy_price_max"]
                         else:
@@ -205,31 +212,33 @@ class CraftingEngine:
                             net_proceeds = proceeds["net_proceeds"]
 
                         profit = net_proceeds - cost_base
-                        
-                        # Filter by absolute profit and percentage margin
                         if profit < settings.min_crafting_profit: continue
                         
                         margin = (profit / cost_base) * 100
                         if margin < settings.min_crafting_margin: continue
 
-                        # [NEW] Volume Check: Skip zero-volume items except Black Market
-                        if sell_data.get("volume_24h", 0) <= 0 and not sell_data.get("is_black_market"):
+                        # Intercept and sanitize any 999 fallbacks from the DB
+                        raw_vol = sell_data.get("volume_24h", 0)
+                        daily_vol = 1 if raw_vol == 999 or raw_vol == 0 else raw_vol
+
+                        if daily_vol <= 0 and not sell_data.get("is_black_market"):
                             continue
 
                         opp = {
                             "item_id": item_id, "item_name": f"{item_names.get(item_id, item_id)} (Q{quality})",
                             "quality": quality, "crafting_city": city, "sell_city": sell_city,
                             "craft_cost": round(cost_base, 2), "sell_price": sell_p,
-                            "profit": round(profit, 2), "profit_margin": round(margin, 2),
-                            "daily_volume": sell_data["volume_24h"],
+                            "profit": round(profit, 2), "profit_margin": round(margin, 2), 
+                            "daily_volume": daily_vol,
                             "volatility": 0.05, "persistence": 1,
-                            "confidence_score": sell_data["confidence_score"],
-                            "coverage_suspect": sell_data.get("volume_24h", 0) == 0,
+                            "confidence_score": sell_data.get("confidence_score", 1.0),
+                            "coverage_suspect": daily_vol <= 1,
                             "details": res.get("details", []),
                             "detected_at": datetime.utcnow().isoformat()
                         }
                         
-                        opp["ev_score"] = scorer.score_crafting(opp)
+                        # Pass a COPY of the dictionary so the scorer doesn't mutate profit * volume
+                        opp["ev_score"] = scorer.score_crafting(opp.copy())
                         if opp["ev_score"] > 0:
                             self.opportunities.append(opp)
                             
