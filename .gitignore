@@ -10,24 +10,40 @@ build/
 venv/
 .venv/
 env/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Environment
 .env
+.env.*
+!.env.example
 
 # Database & Data
 data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.sqlite3
+data/**/*.json
 albion_quant.db
 *.db-shm
 *.db-wal
+*.db
+*.json
 
 # AQS Specific
 scratch/
 brain/
 metrics/
 .gemini/
+.agents/
+.antigravity/
+.agent_scratch/
+
+# Planning Files (Agent Memory)
+task_plan.md
+findings.md
+progress.md
 
 # IDE
 .vscode/
@@ -42,3 +58,4 @@ Thumbs.db
 # Logs
 logs/
 *.log
+
