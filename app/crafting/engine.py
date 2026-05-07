@@ -58,10 +58,15 @@ class CraftingEngine:
             if item_id not in prices: prices[item_id] = {}
             if "Black Market" not in prices[item_id]: prices[item_id]["Black Market"] = {}
             
+        for bm in bm_snapshots:
+            item_id, quality = bm.item_id, bm.quality
+            if item_id not in prices: prices[item_id] = {}
+            if "Black Market" not in prices[item_id]: prices[item_id]["Black Market"] = {}
+            
             prices[item_id]["Black Market"][quality] = {
                 "sell_price_min": 0,
                 "buy_price_max": bm.buy_price_max or 0,
-                "volume_24h": 999,
+                "volume_24h": 1, # [v3.1] Corrected fallback to 1 to avoid Alpha hallucinations
                 "confidence_score": 1.0,
                 "captured_at": bm.captured_at,
                 "is_black_market": True
@@ -80,49 +85,71 @@ class CraftingEngine:
         return recipe_map
 
     def _resolve_optimal_procurement(self, item_id, qty, prices, recipes, city, item_names, depth=0):
-        """cheapest way to get an item (Buy vs Craft)."""
+        """Calculates the most efficient way to acquire an item (Buy vs. Craft)."""
         p_data = prices.get(item_id, {}).get(city, {}).get(1, {})
         market_price = p_data.get("sell_price_min") or 0.0
         
-        # Add 2.5% setup fee to market purchase cost (BUY mode)
-        buy_cost = market_price * (1 + settings.market_setup_fee_pct) if market_price > 0 else 0
+        # BUY mode cost (including market setup fee)
+        buy_unit_cost = market_price * (1 + settings.market_setup_fee_pct) if market_price > 0 else 0
         
-        craft_cost = None
-        sub_details = []
+        craft_unit_cost = None
+        ingredients_purchased = []
         
-        if depth < 3 and item_id in recipes:
+        # Attempt to craft if within depth limits and recipe exists
+        if depth < 2 and item_id in recipes:
             recipe = recipes[item_id]
-            ing_total = 0.0
+            ing_total_cost = 0.0
             valid_sub = True
-            temp_details = []
             
-            # Simplified RRR check for sub-crafts
+            # Determine RRR for current city/item
             try:
                 tier = int(item_id.split("_")[0].replace("T", "")) if "T" in item_id else 4
-            except (ValueError, IndexError):
-                tier = 4 # Default for special items
+            except: tier = 4
             category = item_id.split("_")[1].lower() if "_" in item_id else "other"
             rrr = calculate_rrr(city, category, tier)
 
             for ing in recipe["ingredients"]:
-                res = self._resolve_optimal_procurement(ing["item_id"], ing["quantity"] * qty, prices, recipes, city, item_names, depth + 1)
-                if res["unit_cost"] == 0: valid_sub = False; break
-                ing_total += res["total_cost"]
-                temp_details.extend(res["details"])
+                # Recursive call to find cheapest sub-procurement
+                res = self._resolve_optimal_procurement(
+                    ing["item_id"], 
+                    ing["quantity"], # Resolve unit cost first
+                    prices, recipes, city, item_names, depth + 1
+                )
+                
+                if res["unit_cost"] <= 0:
+                    valid_sub = False
+                    break
+                
+                # Cost is (unit_cost * quantity_required)
+                ing_total_cost += (res["unit_cost"] * ing["quantity"])
+                
+                # Add to path details (Summary only shows immediate ingredients to avoid double-counting)
+                ingredients_purchased.append({
+                    "id": ing["item_id"], 
+                    "mode": res["mode"], 
+                    "quantity": ing["quantity"], 
+                    "unit_price": res["unit_cost"]
+                })
             
             if valid_sub:
-                # Apply RRR to ingredient total (simplified)
-                craft_cost = (ing_total * (1.0 - rrr)) / qty
-                sub_details = temp_details
+                # Crafting unit cost = (Ingredient sum * (1 - RRR))
+                craft_unit_cost = ing_total_cost * (1.0 - rrr)
 
-        should_craft = craft_cost is not None and (buy_cost <= 0 or craft_cost < buy_cost)
+        # Decision: Craft if cheaper than buying
+        should_craft = craft_unit_cost is not None and (buy_unit_cost <= 0 or craft_unit_cost < buy_unit_cost)
         
         if should_craft:
-            return {"unit_cost": craft_cost, "total_cost": craft_cost * qty, "details": sub_details, "mode": "CRAFT"}
+            return {
+                "unit_cost": craft_unit_cost, 
+                "total_cost": craft_unit_cost * qty, 
+                "details": ingredients_purchased, 
+                "mode": "CRAFT"
+            }
         else:
             return {
-                "unit_cost": buy_cost, "total_cost": buy_cost * qty, 
-                "details": [{"id": item_id, "mode": "BUY", "quantity": qty, "unit_price": buy_cost}], 
+                "unit_cost": buy_unit_cost, 
+                "total_cost": buy_unit_cost * qty, 
+                "details": [{"id": item_id, "mode": "BUY", "quantity": 1, "unit_price": buy_unit_cost}], 
                 "mode": "BUY"
             }
 

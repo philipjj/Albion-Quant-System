@@ -102,7 +102,7 @@ class ArbitrageScanner:
                 "buy_price_max": bm.buy_price_max or 0,
                 "quality": bm.quality,
                 "data_age_seconds": bm.data_age_seconds,
-                "volume_24h": 999,
+                "volume_24h": 1,
                 "confidence_score": 1.0,
                 "item_value": item_meta.get(bm.item_id, 0.0),
                 "is_black_market": True

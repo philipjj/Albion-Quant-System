@@ -59,7 +59,8 @@ class Scorer:
         risk_multiplier = 1.5 if is_dangerous else 1.0
         transport_cost = (dist * 1000) * risk_multiplier
         
-        hourly_volume = max(1, volume / 24)
+        # [v3.1] Cap hourly volume to prevent Alpha hallucinations
+        hourly_volume = min(25, max(1, volume / 24))
         erph = (net_profit * hourly_volume * fill_prob * confidence) - transport_cost
         
         opp["fill_prob"] = fill_prob
@@ -78,7 +79,8 @@ class Scorer:
         confidence = self.calculate_data_confidence(opp)
         
         craft_overhead = 1500 
-        hourly_volume = max(1, volume / 24)
+        # [v3.1] Cap hourly volume to prevent Alpha hallucinations
+        hourly_volume = min(25, max(1, volume / 24))
         erph = (net_profit * hourly_volume * fill_prob * confidence) - craft_overhead
         
         opp["fill_prob"] = fill_prob
