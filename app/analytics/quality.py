@@ -14,6 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models import MarketPrice
+from app.core.config import settings
 
 
 def quality_snapshot(db: Session, lookback_hours: int = 2) -> dict[str, Any]:
@@ -24,18 +25,19 @@ def quality_snapshot(db: Session, lookback_hours: int = 2) -> dict[str, Any]:
     operational metrics with decision logic.
     """
     cutoff = datetime.utcnow() - timedelta(hours=lookback_hours)
+    server = settings.active_server.value
 
-    last_fetch = db.query(func.max(MarketPrice.fetched_at)).scalar()
+    last_fetch = db.query(func.max(MarketPrice.captured_at)).filter(MarketPrice.server == server).scalar()
     recent_points = (
         db.query(func.count(MarketPrice.id))
-        .filter(MarketPrice.fetched_at >= cutoff)
+        .filter(MarketPrice.captured_at >= cutoff, MarketPrice.server == server)
         .scalar()
         or 0
     )
 
     by_city = (
         db.query(MarketPrice.city, func.count(MarketPrice.id).label("points"))
-        .filter(MarketPrice.fetched_at >= cutoff)
+        .filter(MarketPrice.captured_at >= cutoff, MarketPrice.server == server)
         .group_by(MarketPrice.city)
         .all()
     )
@@ -49,9 +51,9 @@ def quality_snapshot(db: Session, lookback_hours: int = 2) -> dict[str, Any]:
 
     return {
         "window_hours": lookback_hours,
+        "server": server,
         "last_fetched_at": last_fetch.isoformat() if last_fetch else None,
         "age_minutes": age_minutes,
         "recent_points": int(recent_points),
         "points_by_city": city_points,
     }
-

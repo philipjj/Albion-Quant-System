@@ -1,105 +1,134 @@
 """
 Market utility functions for Albion Online.
-Volume simulation and liquidity scoring.
+Volume simulation, liquidity scoring, and RRR calculation.
 """
+from datetime import datetime
 
-def simulate_daily_volume(item_id: str) -> int:
+# [CONFIRMED] City specialization bonuses
+CITY_BONUS: dict[str, dict[str, list[str]]] = {
+    "Martlock":    {"refining": ["hide"],  "crafting": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "offhand"]},
+    "Bridgewatch": {"refining": ["rock"],  "crafting": ["crossbow", "dagger", "cursed_staff", "plate_helmet", "leather_shoes"]},
+    "Thetford":    {"refining": ["ore"],   "crafting": ["mace", "nature_staff", "fire_staff", "leather_armor", "cloth_headgear"]},
+    "Lymhurst":    {"refining": ["fiber"], "crafting": ["sword", "bow", "arcane_staff", "leather_helmet", "cloth_armor"]},
+    "Fort Sterling":{"refining": ["wood"], "crafting": ["spear", "holy_staff", "plate_armor", "cloth_shoes", "offhand"]},
+    # Caerleon: 18% base only, no specialization bonus
+}
+
+# [CONFIRMED] Production bonus constants
+BASE_CITY_PRODUCTION_BONUS   = 18.0
+REFINING_SPECIALIZATION_BONUS = 40.0
+CRAFTING_SPECIALIZATION_BONUS = 15.0
+FOCUS_PRODUCTION_BONUS        = 59.0
+
+def calculate_rrr(
+    location:     str,
+    item_category: str,
+    tier:          int,
+    use_focus:     bool = False,
+    daily_bonus:   int  = 0,
+) -> float:
     """
-    Simulate daily trade volume based on item tier, category, and enchantment.
-    Includes high-velocity multipliers for consumables (Potions/Food).
+    Calculates Resource Return Rate (RRR) using the verified formula:
+    RRR = 1 - 1 / (1 + production_bonus / 100)
     """
-    # Base volume by tier
-    base_vol = 50
-    if "T4" in item_id:
-        base_vol = 2500
-    elif "T5" in item_id:
-        base_vol = 1200
-    elif "T6" in item_id:
-        base_vol = 400
-    elif "T7" in item_id:
-        base_vol = 80
-    elif "T8" in item_id:
-        base_vol = 15
+    if daily_bonus not in (0, 10, 20):
+        # Fallback for old callers passing bool
+        if isinstance(daily_bonus, bool):
+            daily_bonus = 10 if daily_bonus else 0
+        else:
+            daily_bonus = 0
 
-    # Category Multipliers
-    multiplier = 1.0
-    id_upper = item_id.upper()
-    if "POTION" in id_upper:
-        multiplier = 10.0
-    elif "FOOD" in id_upper or "MEAL" in id_upper or "SOUP" in id_upper or "STEW" in id_upper:
-        multiplier = 8.0
-    elif "MOUNT" in id_upper or "HORSE" in id_upper or "OX" in id_upper:
-        multiplier = 3.0
-    elif "BAG" in id_upper or "CAPE" in id_upper:
-        multiplier = 4.0
-    elif any(res in id_upper for res in ["WOOD", "ORE", "FIBER", "HIDE", "ROCK", "BAR", "PLANK", "CLOTH", "LEATHER"]):
-        multiplier = 15.0 # High volume for raw/refined materials
+    production_bonus = BASE_CITY_PRODUCTION_BONUS
 
-    final_vol = int(base_vol * multiplier)
+    city_data = CITY_BONUS.get(location, {})
+    if item_category in city_data.get("refining", []):
+        production_bonus += REFINING_SPECIALIZATION_BONUS
+    elif item_category in city_data.get("crafting", []):
+        production_bonus += CRAFTING_SPECIALIZATION_BONUS
 
-    # Enchantment penalty
-    if "@" in item_id:
-        enchant_parts = item_id.split("@")
-        if len(enchant_parts) > 1:
-            try:
-                enchant = int(enchant_parts[1])
-                # .1 = 50%, .2 = 25%, .3 = 10% volume of base
-                final_vol = int(final_vol / (2 ** enchant))
-            except ValueError:
-                pass
+    if use_focus:
+        production_bonus += FOCUS_PRODUCTION_BONUS
 
-def calculate_blended_price(sell_min: float, buy_max: float, item_value: float = 0) -> float:
+    production_bonus += daily_bonus
+
+    rrr = 1.0 - (1.0 / (1.0 + production_bonus / 100.0))
+    return min(0.99, round(rrr, 4))
+
+def calculate_liquidity_confidence(
+    update_freq_h:   float,
+    age_sec:         float,
+    spread_pct:      float | None,
+    volume_24h:      int,
+    stability_7d:    float | None,
+    zero_volume_gap: bool = False,
+) -> tuple[float, bool]:
     """
-    Calculates a realistic execution price by blending Sell Orders and Buy Orders.
-    Prevents relying solely on outliers or thin market listings.
+    Returns (confidence_score, encryption_penalised).
     """
+    freq_score      = min(1.0, 24.0 / max(update_freq_h, 0.1))
+    age_score       = max(0.0, 1.0 - (age_sec / 3600))
+    spread_score    = 1.0 if spread_pct is None else max(0.0, 1.0 - (spread_pct / 0.5))
+    volume_score    = min(1.0, volume_24h / 10000)
+    stability_score = 1.0 if stability_7d is None else max(0.0, 1.0 - (stability_7d / 0.3))
+
+    confidence = (
+        0.25 * freq_score    +
+        0.30 * age_score     +
+        0.20 * spread_score  +
+        0.15 * volume_score  +
+        0.10 * stability_score
+    )
+
+    encryption_penalised = False
+    if zero_volume_gap:
+        confidence *= 0.5
+        encryption_penalised = True
+
+    return round(confidence, 3), encryption_penalised
+
+def calculate_net_material_cost(
+    material_price: int,
+    quantity:       int,
+    location:       str,
+    item_category:  str,
+    tier:           int,
+    use_focus:      bool = False,
+    daily_bonus:    int  = 0,
+) -> dict:
+    """Effective material cost after resource returns."""
+    rrr          = calculate_rrr(location, item_category, tier, use_focus, daily_bonus)
+    net_quantity = quantity * (1.0 - rrr)
+    net_cost     = round(material_price * net_quantity)
+
+    return {
+        "gross_quantity":  quantity,
+        "rrr":             rrr,
+        "net_quantity":    round(net_quantity, 4),
+        "material_price":  material_price,
+        "net_cost":        net_cost,
+    }
+
+def calculate_blended_price(sell_min: float, buy_max: float) -> float:
+    """Calculates a realistic execution price by blending Sell Orders and Buy Orders."""
     if sell_min <= 0 and buy_max <= 0:
         return 0.0
-    
-    # If one is missing, use the other but with a liquidity penalty
     if buy_max <= 0: return sell_min * 0.95
     if sell_min <= 0: return buy_max * 1.05
 
-    # Albion Economics: 
-    # Sell Orders are the 'Ask' (highest potential)
-    # Buy Orders are the 'Bid' (guaranteed liquidity)
-    # We use a 70/30 blend to favor the sell price but respect the bid floor.
     blended = (sell_min * 0.7) + (buy_max * 0.3)
-    
-    # If the spread is insane (> 50%), the market is too thin to trust SellMin.
-    # We pull the price closer to the Buy Order floor.
-    spread = (sell_min - buy_max) / sell_min
+    spread = (sell_min - buy_max) / sell_min if sell_min > 0 else 0
     if spread > 0.50:
         blended = (sell_min * 0.4) + (buy_max * 0.6)
-        
     return round(blended, 2)
 
 def calculate_z_score(current_price: float, historical_prices: list[float]) -> float:
-    """
-    Calculates the Z-Score of the current price relative to history.
-    Z = (P - Mean) / StdDev
-    
-    Z > 2.5 indicates a probable price spike/manipulation.
-    """
+    """Calculates the Z-Score of the current price relative to history."""
     if not historical_prices or len(historical_prices) < 3:
         return 0.0
-        
     import math
     mean = sum(historical_prices) / len(historical_prices)
     variance = sum((p - mean) ** 2 for p in historical_prices) / len(historical_prices)
     std_dev = math.sqrt(variance)
-    
     if std_dev == 0:
         return 0.0
-        
     return (current_price - mean) / std_dev
-
-def calculate_absorption_coefficient(target_quantity: float, buy_side_depth: float) -> float:
-    """
-    Order Book Absorption Coefficient (OAC).
-    Estimates what percentage of your inventory can be absorbed without a price collapse.
-    """
-    if target_quantity <= 0: return 1.0
-    if buy_side_depth <= 0: return 0.01 # Extremely thin
-    
-    return min(1.0, buy_side_depth / target_quantity)

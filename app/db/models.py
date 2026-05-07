@@ -6,6 +6,7 @@ Covers items, recipes, market prices, and opportunity tracking.
 from datetime import datetime
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Column,
     DateTime,
@@ -93,17 +94,34 @@ class MarketPrice(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     item_id = Column(String(128), nullable=False, index=True)
-    city = Column(String(32), nullable=False, index=True)
-    sell_price_min = Column(Integer, default=0)
-    sell_price_min_date = Column(DateTime, nullable=True)
-    buy_price_max = Column(Integer, default=0)
-    buy_price_max_date = Column(DateTime, nullable=True)
+    city = Column(String, nullable=False)
+    server = Column(String, nullable=False, default="west")
+    sell_price_min = Column(BigInteger)
+    sell_price_max = Column(BigInteger)
+    buy_price_min = Column(BigInteger)
+    buy_price_max = Column(BigInteger)
+    sell_price_min_date = Column(DateTime)
+    sell_price_max_date = Column(DateTime)
+    buy_price_min_date = Column(DateTime)
+    buy_price_max_date = Column(DateTime)
+    
+    # [NEW] Derived from history endpoint
+    volume_24h = Column(Integer, default=0)
+    
+    data_age_seconds = Column(Float)
+    confidence_score = Column(Float, default=1.0)
+    
+    # [NEW] Coverage suspect flag
+    coverage_suspect = Column(Boolean, default=False)
+    
     quality = Column(Integer, default=1)
-    fetched_at = Column(DateTime, default=datetime.utcnow, index=True)
+    captured_at = Column(DateTime, default=datetime.utcnow, index=True)
+    captured_at_bucket = Column(DateTime, index=True)
 
     __table_args__ = (
         Index("ix_market_item_city", "item_id", "city"),
-        Index("ix_market_fetched", "fetched_at"),
+        Index("ix_market_fetched", "captured_at"),
+        Index("ix_market_upsert", "item_id", "city", "quality", "captured_at_bucket", unique=True),
     )
 
     def __repr__(self):
@@ -153,7 +171,6 @@ class ArbitrageOpportunity(Base):
     ev_score = Column(Float, default=0.0, index=True)
     volatility = Column(Float, default=0.0)
     z_score = Column(Float, default=0.0)
-    oac = Column(Float, default=1.0)
     persistence = Column(Integer, default=1)
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
     is_active = Column(Boolean, default=True)
@@ -216,17 +233,66 @@ class MarketSnapshot(Base):
     """Hourly market state snapshots for historical analysis."""
     __tablename__ = "market_snapshots"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    item_id = Column(String(128), nullable=False, index=True)
-    city = Column(String(32), nullable=False)
-    sell_price_min = Column(Integer, default=0)
-    buy_price_max = Column(Integer, default=0)
+    id = Column(Integer, primary_key=True)
+    item_id = Column(String, nullable=False, index=True)
+    enchantment = Column(Integer, default=0)
     quality = Column(Integer, default=1)
-    snapshot_at = Column(DateTime, default=datetime.utcnow, index=True)
+    city = Column(String, nullable=False)
+    server = Column(String, nullable=False)
+
+    sell_price_min = Column(BigInteger, nullable=True)
+    sell_price_max = Column(BigInteger, nullable=True)
+    buy_price_min = Column(BigInteger, nullable=True)
+    buy_price_max = Column(BigInteger, nullable=True)
+
+    sell_price_min_date = Column(DateTime, nullable=True)
+    sell_price_max_date = Column(DateTime, nullable=True)
+    buy_price_min_date  = Column(DateTime, nullable=True)
+    buy_price_max_date  = Column(DateTime, nullable=True)
+
+    volume_24h = Column(Integer, nullable=True)
+    data_age_seconds = Column(Float, nullable=True)
+    confidence_score = Column(Float, nullable=True)
+    coverage_suspect = Column(Boolean, default=False)
+
+    quality = Column(Integer, default=1)
+    captured_at = Column(DateTime, default=datetime.utcnow)
+
+class BlackMarketSnapshot(Base):
+    """Snapshot of Black Market buy orders."""
+    __tablename__ = "black_market_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(String, nullable=False)
+    enchantment = Column(Integer, default=0)
+    quality = Column(Integer, default=1)
+    
+    buy_price_min = Column(BigInteger)
+    buy_price_max = Column(BigInteger)
+    buy_price_min_date = Column(DateTime)
+    buy_price_max_date = Column(DateTime)
+    
+    data_age_seconds = Column(Float)
+    confidence_score = Column(Float, default=1.0)
+    captured_at = Column(DateTime, default=datetime.utcnow)
+    captured_at_bucket = Column(DateTime, index=True)
 
     __table_args__ = (
-        Index("ix_snapshot_item_city_time", "item_id", "city", "snapshot_at"),
+        Index("ix_bm_upsert", "item_id", "quality", "captured_at_bucket", unique=True),
     )
+
+class LiquidityConfidence(Base):
+    """Historical liquidity confidence tracking."""
+    __tablename__ = "liquidity_confidence"
+
+    id = Column(Integer, primary_key=True)
+    item_id = Column(String, nullable=False)
+    city = Column(String, nullable=False)
+    quality = Column(Integer, default=1)
+    enchantment = Column(Integer, default=0)
+    score = Column(Float, nullable=False)
+    encryption_penalised = Column(Boolean, default=False)
+    computed_at = Column(DateTime, default=datetime.utcnow)
 
 
 class UserProfile(Base):

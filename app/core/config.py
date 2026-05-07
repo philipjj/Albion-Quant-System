@@ -3,6 +3,7 @@ Core configuration module.
 Loads environment variables and provides typed settings for the entire system.
 """
 
+from enum import Enum
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,11 @@ from pydantic_settings import BaseSettings
 
 # Load .env file
 load_dotenv()
+
+class AlbionServer(str, Enum):
+    AMERICAS = "west"
+    ASIA     = "east"
+    EUROPE   = "europe"
 
 # Project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -36,28 +42,50 @@ class Settings(BaseSettings):
 
     # Albion API
     albion_api_base: str = Field(
-        default="https://west.albion-online-data.com",
+        default="https://europe.albion-online-data.com",
         alias="ALBION_API_BASE",
     )
-    albion_api_server: str = Field(default="west", alias="ALBION_API_SERVER")
+    albion_api_server: str = Field(default="europe", alias="ALBION_API_SERVER")
+    active_server: AlbionServer = Field(default=AlbionServer.EUROPE, alias="ACTIVE_SERVER")
+
+    # AODP Regional Hosts
+    aodp_base_urls: dict = {
+        AlbionServer.AMERICAS: "https://west.albion-online-data.com",
+        AlbionServer.ASIA:     "https://east.albion-online-data.com",
+        AlbionServer.EUROPE:   "https://europe.albion-online-data.com",
+    }
+
+    # AODP Rate Limits
+    aodp_rate_limit_per_minute: int = 180
+    aodp_rate_limit_per_5_min: int = 750
+    aodp_use_gzip: bool = True
 
     # Discord
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
     discord_bot_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")
 
     # Trading Parameters
-    min_arbitrage_margin: float = Field(default=12.0, alias="MIN_ARBITRAGE_MARGIN")
-    min_arbitrage_profit: int = Field(default=10000, alias="MIN_ARBITRAGE_PROFIT")
-    min_crafting_profit: int = Field(default=5000, alias="MIN_CRAFTING_PROFIT")
+    min_arbitrage_margin: float = Field(default=5.0, alias="MIN_ARBITRAGE_MARGIN")
+    min_arbitrage_profit: int = Field(default=2000, alias="MIN_ARBITRAGE_PROFIT")
+    min_crafting_profit: int = Field(default=500, alias="MIN_CRAFTING_PROFIT")
+    min_crafting_margin: float = Field(default=3.0, alias="MIN_CRAFTING_MARGIN")
     min_volume: int = Field(default=5, alias="MIN_VOLUME")
     target_exit_hours: float = Field(default=4.0, alias="TARGET_EXIT_HOURS")
-    max_capital_per_trade: int = Field(default=5000000, alias="MAX_CAPITAL_PER_TRADE")
+    max_capital_per_trade: int = Field(default=2000000, alias="MAX_CAPITAL_PER_TRADE")
+    max_crafting_capital: int = Field(default=2000000, alias="MAX_CRAFTING_CAPITAL")
 
     # Market Constants
     premium_tax_rate: float = Field(default=0.04, alias="PREMIUM_TAX_RATE")
     non_premium_tax_rate: float = Field(default=0.08, alias="NON_PREMIUM_TAX_RATE")
     setup_fee_rate: float = Field(default=0.025, alias="SETUP_FEE_RATE")
     is_premium: bool = Field(default=True, alias="IS_PREMIUM")
+
+    # [NEW] Market fee constants (Albion Online Wiki — Marketplace, 2026)
+    market_setup_fee_pct: float = 0.025
+    market_tax_premium_pct: float = 0.04
+    market_tax_non_premium_pct: float = 0.08
+    crafting_station_fee_default: float = 0.03
+    confidence_floor: float = 0.20
 
     # Scheduler Intervals (minutes)
     market_poll_interval: int = Field(
@@ -71,6 +99,15 @@ class Settings(BaseSettings):
     )
     snapshot_interval: int = Field(
         default=60, alias="SNAPSHOT_INTERVAL_MINUTES"
+    )
+    volume_refresh_interval: int = Field(
+        default=60, alias="VOLUME_REFRESH_INTERVAL_MINUTES"
+    )
+    market_data_retention_days: int = Field(
+        default=7, alias="MARKET_DATA_RETENTION_DAYS"
+    )
+    alert_limit_per_cycle: int = Field(
+        default=5, alias="ALERT_LIMIT_PER_CYCLE"
     )
 
     # Logging

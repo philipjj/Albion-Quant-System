@@ -25,7 +25,7 @@ def get_top_arbitrage(
             ArbitrageOpportunity.is_active == True,
             ArbitrageOpportunity.estimated_margin >= min_margin,
         )
-        .order_by(desc(ArbitrageOpportunity.estimated_margin))
+        .order_by(desc(ArbitrageOpportunity.ev_score))
         .limit(limit)
         .all()
     )

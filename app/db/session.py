@@ -2,18 +2,16 @@
 Database session management.
 Supports SQLite (dev) and PostgreSQL (prod) via SQLAlchemy.
 """
-
 from collections.abc import Generator, Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 from app.db.models import Base
-
 
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
@@ -24,71 +22,117 @@ def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
             cursor.execute("PRAGMA synchronous=NORMAL")
             cursor.close()
         except Exception as e:
-            print(f"Failed to set SQLite pragma (likely already WAL or locked): {e}")
+            print(f"Failed to set SQLite pragma: {e}")
 
-# Create engine
 engine_kwargs = {}
 if settings.database_url.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {
-        "check_same_thread": False,
-        "timeout": 30.0  # Wait up to 30s for write locks to clear
-    }
+    engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30.0}
 
-engine = create_engine(
-    settings.database_url,
-    echo=False,
-    pool_pre_ping=True,
-    **engine_kwargs,
-)
-
+engine = create_engine(settings.database_url, echo=False, pool_pre_ping=True, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
 def init_db() -> None:
-    """Create all tables and run simple migrations for schema changes."""
+    """Create all tables and run migrations for AQS v3.0."""
     Base.metadata.create_all(bind=engine)
-
-    # ═══════════════════════════════════════════════════════════════
-    # AUTO-MIGRATIONS (May 2026 Update)
-    # ═══════════════════════════════════════════════════════════════
-    from sqlalchemy import inspect, text
     inspector = inspect(engine)
     
     with engine.connect() as conn:
-        # 1. Update 'items' table
-        items_cols = [c['name'] for c in inspector.get_columns('items')]
-        if 'item_value' not in items_cols:
-            conn.execute(text("ALTER TABLE items ADD COLUMN item_value FLOAT DEFAULT 0.0"))
-        
-        # 2. Update 'arbitrage_opportunities' table
-        arb_cols = [c['name'] for c in inspector.get_columns('arbitrage_opportunities')]
-        if 'ev_score' not in arb_cols:
-            conn.execute(text("ALTER TABLE arbitrage_opportunities ADD COLUMN ev_score FLOAT DEFAULT 0.0"))
-        
-        # 3. Update 'crafting_opportunities' table
-        craft_cols = [c['name'] for c in inspector.get_columns('crafting_opportunities')]
-        if 'ev_score' not in craft_cols:
-            conn.execute(text("ALTER TABLE crafting_opportunities ADD COLUMN ev_score FLOAT DEFAULT 0.0"))
-        if 'ingredients_json' not in craft_cols:
-            conn.execute(text("ALTER TABLE crafting_opportunities ADD COLUMN ingredients_json TEXT"))
-        if 'decision_log' not in craft_cols:
-            conn.execute(text("ALTER TABLE crafting_opportunities ADD COLUMN decision_log TEXT"))
-            
+        # Helper to add column if missing
+        def add_col(table, col, col_type):
+            try:
+                cols = [c['name'] for c in inspector.get_columns(table)]
+                if col not in cols:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
+                    conn.commit()
+                    print(f"✅ Migration: Added {col} to {table}")
+            except Exception as e:
+                print(f"⚠️ Migration Error ({table}.{col}): {e}")
+
+        # 1. Items
+        add_col('items', 'item_value', 'FLOAT DEFAULT 0.0')
+
+        # 2. Market Prices (AQS v3.0 Core)
+        add_col('market_prices', 'server', 'VARCHAR DEFAULT "west"')
+        add_col('market_prices', 'sell_price_min', 'BIGINT')
+        add_col('market_prices', 'sell_price_max', 'BIGINT')
+        add_col('market_prices', 'buy_price_min', 'BIGINT')
+        add_col('market_prices', 'buy_price_max', 'BIGINT')
+        add_col('market_prices', 'sell_price_min_date', 'DATETIME')
+        add_col('market_prices', 'sell_price_max_date', 'DATETIME')
+        add_col('market_prices', 'buy_price_min_date', 'DATETIME')
+        add_col('market_prices', 'buy_price_max_date', 'DATETIME')
+        add_col('market_prices', 'volume_24h', 'INTEGER DEFAULT 0')
+        add_col('market_prices', 'quality', 'INTEGER DEFAULT 1')
+        add_col('market_prices', 'data_age_seconds', 'FLOAT DEFAULT 0.0')
+        add_col('market_prices', 'confidence_score', 'FLOAT DEFAULT 1.0')
+        add_col('market_prices', 'coverage_suspect', 'BOOLEAN DEFAULT 0')
+        add_col('market_prices', 'captured_at', 'DATETIME')
+        add_col('market_prices', 'captured_at_bucket', 'DATETIME')
+
+        # 3. Market Snapshots
+        add_col('market_snapshots', 'server', 'VARCHAR DEFAULT "west"')
+        add_col('market_snapshots', 'sell_price_min', 'BIGINT')
+        add_col('market_snapshots', 'sell_price_max', 'BIGINT')
+        add_col('market_snapshots', 'buy_price_min', 'BIGINT')
+        add_col('market_snapshots', 'buy_price_max', 'BIGINT')
+        add_col('market_snapshots', 'sell_price_min_date', 'DATETIME')
+        add_col('market_snapshots', 'sell_price_max_date', 'DATETIME')
+        add_col('market_snapshots', 'buy_price_min_date', 'DATETIME')
+        add_col('market_snapshots', 'buy_price_max_date', 'DATETIME')
+        add_col('market_snapshots', 'volume_24h', 'INTEGER DEFAULT 0')
+        add_col('market_snapshots', 'quality', 'INTEGER DEFAULT 1')
+        add_col('market_snapshots', 'data_age_seconds', 'FLOAT DEFAULT 0.0')
+        add_col('market_snapshots', 'confidence_score', 'FLOAT DEFAULT 1.0')
+        add_col('market_snapshots', 'coverage_suspect', 'BOOLEAN DEFAULT 0')
+        add_col('market_snapshots', 'captured_at', 'DATETIME')
+
+        # 3.1 Black Market Snapshots
+        add_col('black_market_snapshots', 'captured_at_bucket', 'DATETIME')
+
+        # [CRITICAL] Create Unique Indexes for UPSERT
+        try:
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_market_upsert 
+                ON market_prices (item_id, city, quality, captured_at_bucket)
+            """))
+            conn.execute(text("""
+                CREATE UNIQUE INDEX IF NOT EXISTS ix_bm_upsert 
+                ON black_market_snapshots (item_id, quality, captured_at_bucket)
+            """))
+            conn.commit()
+            print("✅ Migration: Unique UPSERT indexes verified")
+        except Exception as e:
+            print(f"⚠️ Migration Error (Indexes): {e}")
+
+        # 4. Arbitrage
+        add_col('arbitrage_opportunities', 'ev_score', 'FLOAT DEFAULT 0.0')
+        add_col('arbitrage_opportunities', 'volatility', 'FLOAT DEFAULT 0.0')
+        add_col('arbitrage_opportunities', 'z_score', 'FLOAT DEFAULT 0.0')
+        add_col('arbitrage_opportunities', 'persistence', 'INTEGER DEFAULT 1')
+        add_col('arbitrage_opportunities', 'volume_source', 'VARCHAR DEFAULT "ESTIMATED"')
+        add_col('arbitrage_opportunities', 'safe_limit', 'INTEGER DEFAULT 1')
+        add_col('arbitrage_opportunities', 'current_supply', 'INTEGER DEFAULT 0')
+        add_col('arbitrage_opportunities', 'market_gap', 'INTEGER DEFAULT 0')
+        add_col('arbitrage_opportunities', 'expected_hourly_profit', 'FLOAT DEFAULT 0.0')
+
+        # 5. Crafting
+        add_col('crafting_opportunities', 'ev_score', 'FLOAT DEFAULT 0.0')
+        add_col('crafting_opportunities', 'z_score', 'FLOAT DEFAULT 0.0')
+        add_col('crafting_opportunities', 'persistence', 'INTEGER DEFAULT 1')
+        add_col('crafting_opportunities', 'ingredients_json', 'TEXT')
+        add_col('crafting_opportunities', 'decision_log', 'TEXT')
+
         conn.commit()
 
-
 def get_db() -> Generator[Session, None, None]:
-    """FastAPI dependency - yields a database session."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-
 @contextmanager
 def get_db_session() -> Iterator[Session]:
-    """Context manager for database sessions (for workers/scripts)."""
     db = SessionLocal()
     try:
         yield db

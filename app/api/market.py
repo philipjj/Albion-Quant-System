@@ -21,7 +21,7 @@ def get_item_prices(
     subq = (
         db.query(
             MarketPrice.city,
-            func.max(MarketPrice.fetched_at).label("latest"),
+            func.max(MarketPrice.captured_at).label("latest"),
         )
         .filter(MarketPrice.item_id == item_id)
         .group_by(MarketPrice.city)
@@ -30,7 +30,7 @@ def get_item_prices(
 
     prices = (
         db.query(MarketPrice)
-        .join(subq, (MarketPrice.city == subq.c.city) & (MarketPrice.fetched_at == subq.c.latest))
+        .join(subq, (MarketPrice.city == subq.c.city) & (MarketPrice.captured_at == subq.c.latest))
         .filter(MarketPrice.item_id == item_id)
         .all()
     )
@@ -47,77 +47,25 @@ def get_item_prices(
                 "sell_price_min": p.sell_price_min,
                 "buy_price_max": p.buy_price_max,
                 "quality": p.quality,
-                "fetched_at": p.fetched_at.isoformat() if p.fetched_at else None,
+                "volume_24h": p.volume_24h,
+                "captured_at": p.captured_at,
+                "server": p.server,
             }
             for p in prices
         ],
     }
 
 
-@router.get("/top-volume")
-def get_top_volume(
-    limit: int = Query(default=20, le=100),
+@router.get("/latest")
+def get_latest_updates(
+    limit: int = Query(default=50, le=500),
     db: Session = Depends(get_db),
 ):
-    """Get items with the most market activity (price data points)."""
-    results = (
-        db.query(
-            MarketPrice.item_id,
-            func.count(MarketPrice.id).label("data_points"),
-            func.avg(MarketPrice.sell_price_min).label("avg_sell"),
-        )
-        .filter(MarketPrice.sell_price_min > 0)
-        .group_by(MarketPrice.item_id)
-        .order_by(desc("data_points"))
+    """Get most recently captured price records."""
+    prices = (
+        db.query(MarketPrice)
+        .order_by(desc(MarketPrice.captured_at))
         .limit(limit)
         .all()
     )
-
-    items = []
-    for r in results:
-        item = db.query(Item).filter_by(item_id=r[0]).first()
-        items.append({
-            "item_id": r[0],
-            "item_name": item.name if item else r[0],
-            "data_points": r[1],
-            "avg_sell_price": round(r[2], 0) if r[2] else 0,
-        })
-
-    return {"top_volume_items": items}
-
-
-@router.get("/trending")
-def get_trending(
-    limit: int = Query(default=20, le=100),
-    db: Session = Depends(get_db),
-):
-    """Get items with the highest price variance (potential opportunities)."""
-    results = (
-        db.query(
-            MarketPrice.item_id,
-            func.max(MarketPrice.sell_price_min).label("max_sell"),
-            func.min(MarketPrice.sell_price_min).label("min_sell"),
-            func.count(MarketPrice.id).label("count"),
-        )
-        .filter(MarketPrice.sell_price_min > 0)
-        .group_by(MarketPrice.item_id)
-        .having(func.count(MarketPrice.id) >= 2)
-        .all()
-    )
-
-    trending = []
-    for r in results:
-        if r[2] > 0:
-            spread = ((r[1] - r[2]) / r[2]) * 100
-            item = db.query(Item).filter_by(item_id=r[0]).first()
-            trending.append({
-                "item_id": r[0],
-                "item_name": item.name if item else r[0],
-                "max_sell": r[1],
-                "min_sell": r[2],
-                "spread_pct": round(spread, 2),
-                "data_points": r[3],
-            })
-
-    trending.sort(key=lambda x: x["spread_pct"], reverse=True)
-    return {"trending_items": trending[:limit]}
+    return prices
