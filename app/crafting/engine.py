@@ -17,10 +17,12 @@ from app.core.constants import (
     CITY_CRAFTING_BONUSES,
     DEFAULT_STATION_FEE,
     FOCUS_RESOURCE_RETURN_RATE,
-    REFINING_BONUS_RESOURCE_RETURN_RATE,
-    REFINING_FOCUS_RESOURCE_RETURN_RATE,
+    REFINING_BONUS_RRR,
+    REFINING_FOCUS_RRR,
+    is_price_sane,
 )
 from app.core.logging import log
+from app.core.market_utils import calculate_blended_price
 from app.db.models import CraftingOpportunity, Item, MarketHistory, MarketPrice, Recipe
 from app.db.session import get_db_session
 
@@ -121,7 +123,7 @@ class CraftingEngine:
         # 1. Check Refining Bonuses
         if is_refining:
             if any(b in cat for b in city_bonus.get("refining_bonus", [])):
-                return REFINING_FOCUS_RESOURCE_RETURN_RATE if use_focus else REFINING_BONUS_RESOURCE_RETURN_RATE
+                return REFINING_FOCUS_RRR if use_focus else REFINING_BONUS_RRR
             return FOCUS_RESOURCE_RETURN_RATE if use_focus else BASE_RESOURCE_RETURN_RATE
 
         # 2. Check City Crafting Bonuses (Equipment, Capes, etc.)
@@ -141,40 +143,60 @@ class CraftingEngine:
         # 4. Default Royal RRR
         return FOCUS_RESOURCE_RETURN_RATE if use_focus else BASE_RESOURCE_RETURN_RATE
 
+    def _get_best_price_anywhere(self, item_id: str, prices: dict) -> float:
+        """Find the lowest sell price across all known cities as a fallback."""
+        all_prices = []
+        for city_map in prices.get(item_id, {}).values():
+            for q_map in city_map.values():
+                p = q_map.get("sell_price_min", 0)
+                if p > 10: all_prices.append(p)
+        return min(all_prices) if all_prices else 0.0
+
     def _resolve_optimal_procurement(self, item_id, qty, prices, recipes, city, item_names, depth=0):
         """Recursively find the cheapest way to get an item (Buy vs Craft)."""
         display_name = item_names.get(item_id, item_id)
 
-        # 1. Market Price (Baseline)
-        p_data = prices.get(item_id, {}).get(city, {})
+        # 1. Market Price (Baseline with fallback)
+        p_data = prices.get(item_id, {}).get(city, {}).get(1, {})
         market_price = p_data.get("sell_price_min") or 0.0
-        if market_price <= 100:
-            others = [x.get("sell_price_min", 0) or 0 for x in prices.get(item_id, {}).values() if (x.get("sell_price_min") or 0) > 100]
-            market_price = min(others) if others else 0.0
+        if market_price <= 0:
+            market_price = self._get_best_price_anywhere(item_id, prices)
 
         # 2. Crafting Cost (Option)
         craft_cost = None
         sub_details = []
         decision_lines = []
-        if depth < 2 and item_id in recipes:
+        
+        # Increased depth for complex May 2026 paths
+        if depth < 3 and item_id in recipes:
             recipe = recipes[item_id]
             ing_total = 0.0
             temp_details = []
             valid_sub = True
+            
+            # Keep track of resolved unit costs for RRR later
+            resolved_ing_prices = {}
+            
             for ing in recipe["ingredients"]:
                 res = self._resolve_optimal_procurement(ing["item_id"], ing["quantity"] * qty, prices, recipes, city, item_names, depth + 1)
                 if res["unit_cost"] == 0:
                     valid_sub = False; break
                 ing_total += res["total_cost"]
+                resolved_ing_prices[ing["item_id"]] = res["unit_cost"]
                 temp_details.extend(res["details"])
 
             if valid_sub:
                 rrr = self._get_rrr(item_id, city, use_focus=False)
-                # Station fee (scaled by qty)
-                fee = ((recipe.get("nutrition") or 0.0) * DEFAULT_STATION_FEE / 100.0) * qty
-                # Simple return value calculation
-                # Simplified return logic for sub-crafts to avoid recursion bloat
-                returns = ing_total * rrr * 0.8 # conservative estimate
+                # Station fee (simplified for sub-crafts to avoid recursion bloat)
+                fee = 0 
+                
+                # Use resolved prices for a more accurate RRR return
+                returns = 0.0
+                for ing in recipe["ingredients"]:
+                    if not any(x in ing["item_id"].upper() for x in ["_CREST", "_ARTIFACT", "_SOUL", "_RELIC"]):
+                        unit_p = resolved_ing_prices.get(ing["item_id"], 0)
+                        returns += (unit_p * ing["quantity"] * qty * rrr)
+                
                 craft_cost = (ing_total + fee - returns) / qty
                 sub_details = temp_details
 
@@ -201,19 +223,52 @@ class CraftingEngine:
                 "lines": decision_lines,
             }
 
+    def _calculate_journal_profit(self, item_id: str, fame: float, prices: dict, city: str) -> float:
+        """Calculate silver profit from filled journals based on 2026 fame requirements."""
+        from app.core.constants import JOURNAL_FAME_REQUIRED, get_journal_id
+        
+        tier_str = item_id.split("_")[0].replace("T", "")
+        if not tier_str.isdigit(): return 0.0
+        tier = int(tier_str)
+        
+        fame_needed = JOURNAL_FAME_REQUIRED.get(tier)
+        if not fame_needed or fame <= 0: return 0.0
+        
+        # Get category for journal mapping
+        # item_id example: T4_ARMOR_PLATE_SET1
+        parts = item_id.split("_")
+        category = parts[1].lower() if len(parts) > 1 else ""
+        
+        empty_id = get_journal_id(category, tier)
+        if not empty_id: return 0.0
+        
+        full_id = empty_id.replace("_EMPTY", "_FULL")
+        
+        # Fetch prices for journals in the crafting city
+        p_empty = prices.get(empty_id, {}).get(city, {}).get(1, {}).get("sell_price_min") or (tier * 1000)
+        p_full = prices.get(full_id, {}).get(city, {}).get(1, {}).get("sell_price_min") or (p_empty + tier * 5000)
+        
+        profit_per_journal = p_full - p_empty
+        journals_filled = fame / fame_needed
+        
+        return journals_filled * profit_per_journal
+
     async def compute(self, crafting_city_filter: str = None) -> list[dict]:
-        """Run optimized computation with recursive tree awareness."""
-        log.info(f"🚀 Starting Recursive Crafting Tree Analysis (filter={crafting_city_filter})...")
+        """Run optimized computation with recursive tree awareness and hard-fact math."""
+        log.info(f"🚀 Starting Recursive Crafting Tree Analysis (May 2026 Logic)...")
+        from app.core.constants import SETUP_FEE, PREMIUM_SALES_TAX, NON_PREMIUM_SALES_TAX
+        
         self.opportunities = []
         with get_db_session() as db:
             db = cast(Session, db)
             prices = self._get_latest_prices_map(db)
             recipes = self._get_recipes(db)
-            # Fetch names and item_values
             items_data = db.query(Item.item_id, Item.name, Item.item_value).all()
             item_names = {i[0]: i[1] for i in items_data}
             item_values = {i[0]: i[2] or 0.0 for i in items_data}
             market_stats = self._get_market_stats_map(db)
+
+        tax_rate = PREMIUM_SALES_TAX if settings.is_premium else NON_PREMIUM_SALES_TAX
 
         for item_id, recipe_data in recipes.items():
             for city in ALL_MARKET_CITIES:
@@ -223,81 +278,133 @@ class CraftingEngine:
                 total_ing_cost = 0.0
                 final_shopping_list = []
                 decision_lines = []
-                rrr = self._get_rrr(item_id, city, use_focus=True)
+                # Use focus for potential profit analysis
+                rrr_focus = self._get_rrr(item_id, city, use_focus=True)
+                rrr_no_focus = self._get_rrr(item_id, city, use_focus=False)
 
-                # Procurement check (Top level)
+                # Recursive Procurement check
+                resolved_ing_costs = {}
                 for ing in recipe_data["ingredients"]:
-                    res = self._resolve_optimal_procurement(ing["item_id"], ing["quantity"], prices, recipes, city, item_names)
+                    # Depth 3 for May 2026 logic
+                    res = self._resolve_optimal_procurement(ing["item_id"], ing["quantity"], prices, recipes, city, item_names, depth=0)
                     if res["unit_cost"] == 0: total_ing_cost = 0; break
                     total_ing_cost += res["total_cost"]
+                    resolved_ing_costs[ing["item_id"]] = res["unit_cost"]
                     final_shopping_list.extend(res["details"])
                     decision_lines.extend(res.get("lines", []))
 
                 if total_ing_cost == 0: continue
 
-                # Calculate RRR Value
-                return_val = 0.0
-                for ing in recipe_data["ingredients"]:
-                    p_map = prices.get(ing["item_id"], {}).get(city, {})
-                    # Default to quality 1 for return value baseline
-                    p = p_map.get(1, {}).get("sell_price_min", 0)
-                    if not any(x in ing["item_id"].upper() for x in ["_CREST", "_ARTIFACT", "_SOUL", "_RELIC", "_RUNE", "_SHARD"]):
-                        return_val += (p * ing["quantity"] * rrr)
-
-                # Station Fee: (ItemValue * 0.11 * StationTax) / 100
-                # Using DEFAULT_STATION_FEE as the StationTax (e.g. 1200)
+                # Station Fee: Precision 0.1125 constant
                 item_val = item_values.get(item_id, 0.0)
                 from app.core.constants import calculate_station_fee
                 fee = calculate_station_fee(item_val, DEFAULT_STATION_FEE)
-                craft_cost = total_ing_cost + fee - return_val
-                if craft_cost <= 0: continue
+
+                # Journal Yield
+                journal_profit = self._calculate_journal_profit(item_id, recipe_data["fame"], prices, city)
+
+                # Calculate two costs: Focus and Non-Focus
+                def calc_return(rate):
+                    ret = 0.0
+                    for ing in recipe_data["ingredients"]:
+                        # Use resolved procurement price for RRR back calculation
+                        unit_p = resolved_ing_costs.get(ing["item_id"], 0)
+                        if unit_p == 0:
+                            # Fallback to market
+                            unit_p = prices.get(ing["item_id"], {}).get(city, {}).get(1, {}).get("sell_price_min", 0)
+                            
+                        if not any(x in ing["item_id"].upper() for x in ["_CREST", "_ARTIFACT", "_SOUL", "_RELIC"]):
+                            ret += (unit_p * ing["quantity"] * rate)
+                    return ret
+
+                cost_focus = total_ing_cost + fee - calc_return(rrr_focus)
+                cost_no_focus = total_ing_cost + fee - calc_return(rrr_no_focus)
 
                 if item_id not in prices: continue
 
-                # Check all cities and ALL QUALITIES
                 for sell_city, quality_map in prices[item_id].items():
                     for quality, sell_data in quality_map.items():
-                        sell_p = sell_data.get("sell_price_min", 0)
+                        sell_raw = sell_data.get("sell_price_min", 0)
+                        buy_raw = sell_data.get("buy_price_max", 0)
+                        
+                        # BLENDED PRICE: Check cheapest sellers + buy order floor to get a realistic average
+                        sell_p = calculate_blended_price(sell_raw, buy_raw, item_val)
+                        
                         if sell_p <= 0: continue
                         
-                        # Sanity check
+                        # SANITY CHECK: Detect outliers/manipulation (e.g. 85M horses)
+                        if not is_price_sane(sell_p, item_val):
+                            continue
+                        
+                        # Sales Tax Logic: In this tool, we assume sell_price_min is a Sell Order.
+                        total_fees = (sell_p * SETUP_FEE) + (sell_p * tax_rate)
+                        
+                        # Profit Calculation
+                        profit_no_focus = sell_p - cost_no_focus - total_fees + journal_profit
+                        profit_focus = sell_p - cost_focus - total_fees + journal_profit
+                        
+                        if profit_no_focus < settings.min_crafting_profit and profit_focus < settings.min_crafting_profit:
+                            continue
+
+                        # Focus Efficiency
+                        ppf = (profit_focus - profit_no_focus) / recipe_data["focus"] if recipe_data["focus"] > 0 else 0
+                        profit_margin = (profit_no_focus / cost_no_focus) * 100 if cost_no_focus > 0 else 0
+                        
                         stats = market_stats.get((item_id, sell_city), {"volume": 0, "volatility": 0.05})
                         real_vol = stats["volume"]
-                        if (sell_p > craft_cost * 10) and (real_vol <= 0): continue
-                        
-                        profit = sell_p - craft_cost - (sell_p * settings.tax_rate) - (sell_p * settings.setup_fee_rate)
-                        
-                        # Add Journal Profit (Approx 10% of ingredient cost for now)
-                        journal_val = total_ing_cost * 0.08 if "JOURNAL" not in item_id else 0
-                        total_profit = profit + journal_val
-                        
-                        if total_profit <= settings.min_crafting_profit: continue
-                        margin = (total_profit / craft_cost) * 100
 
+                        # Margin Sanity: Discard items with > 1000% margin as they are usually 
+                        # market manipulation trolls or illiquid artifacts.
+                        if profit_margin > 1000:
+                            continue
+                        
                         self.opportunities.append({
                             "item_id": item_id, "item_name": f"{item_names.get(item_id, item_id)} (Q{quality})",
-                            "quality": quality,
-                            "crafting_city": city, "sell_city": sell_city,
-                            "craft_cost": round(craft_cost, 2), "sell_price": sell_p,
-                            "profit": round(total_profit, 2), "profit_margin": round(margin, 2),
-                            "journal_profit": round(journal_val, 2),
+                            "quality": quality, "crafting_city": city, "sell_city": sell_city,
+                            "craft_cost": round(cost_no_focus, 2), "sell_price": sell_p,
+                            "profit": round(profit_no_focus, 2), 
+                            "profit_focus": round(profit_focus, 2),
+                            "profit_margin": round(profit_margin, 2),
+                            "profit_per_focus": round(ppf, 2),
+                            "journal_profit": round(journal_profit, 2),
                             "focus_cost": recipe_data["focus"],
                             "daily_volume": real_vol, "volume_source": "VERIFIED 24H" if real_vol > 0 else "ESTIMATED",
                             "volatility": stats["volatility"], "persistence": 1,
-                            "ingredients_detail": final_shopping_list, # Simplified
+                            "ingredients_detail": final_shopping_list,
+                            "decision_log": decision_lines,
                             "detected_at": datetime.utcnow().isoformat(), "is_active": True
                         })
 
                         # EV Scoring
                         from app.core.scoring import scorer
                         opp_data = self.opportunities[-1]
-                        opp_data["buy_price"] = craft_cost
+                        opp_data["buy_price"] = cost_no_focus
                         opp_data["ev_score"] = scorer.score_arbitrage(opp_data)
                         if opp_data["ev_score"] <= 0: self.opportunities.pop()
 
         log.info(f"✨ Found {len(self.opportunities)} hard-fact crafting opportunities.")
+        
+        # DIVERSITY FILTER: Ensure top results aren't all the same category (Capes/Bags)
         self.opportunities.sort(key=lambda x: x["ev_score"], reverse=True)
-        return self.opportunities
+        
+        diverse_ops = []
+        category_counts = {}
+        for opp in self.opportunities:
+            # Extract category (e.g., T4_CAPE -> CAPE)
+            item_id = opp["item_id"]
+            cat = item_id.split("_")[1] if "_" in item_id else "OTHER"
+            
+            # Limit any single category to 25% of top results
+            count = category_counts.get(cat, 0)
+            if count < 5 or len(diverse_ops) > 20: 
+                diverse_ops.append(opp)
+                category_counts[cat] = count + 1
+            else:
+                # Still include very high EV items even if category is full
+                if opp["ev_score"] > 1000000: # 1M EV/hr threshold
+                    diverse_ops.append(opp)
+
+        return diverse_ops
 
     def store_opportunities(self) -> int:
         if not self.opportunities: return 0
@@ -315,6 +422,7 @@ class CraftingEngine:
                     "volatility": o.get("volatility", 0.0),
                     "persistence": o.get("persistence", 1),
                     "ingredients_json": json.dumps(o.get("ingredients_detail", [])),
+                    "decision_log": json.dumps(o.get("decision_log", [])),
                     "detected_at": datetime.utcnow(), "is_active": True
                 })
             if mappings:

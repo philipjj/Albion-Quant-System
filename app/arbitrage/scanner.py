@@ -16,9 +16,11 @@ from app.core.constants import (
     DANGEROUS_ROUTES,
     QUALITY_NAMES,
     get_distance,
+    is_price_sane,
 )
 from app.core.logging import log
-from app.core.market_utils import simulate_daily_volume
+from app.core.market_utils import calculate_z_score, simulate_daily_volume
+from app.core.scoring import scorer
 from app.db.models import ArbitrageOpportunity, Item, MarketPrice
 from app.db.session import get_db_session
 
@@ -138,13 +140,20 @@ class ArbitrageScanner:
         # 2. Fetch recent prices using the fetched_at index
         recent_prices = db.query(MarketPrice).filter(MarketPrice.fetched_at >= cutoff).all()
 
-        # 3. Group in memory (O(N) single pass, vastly faster than unindexed SQLite GROUP BY)
+        # 3. Group in memory
         prices: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
+        item_meta = {i.item_id: i.item_value for i in db.query(Item.item_id, Item.item_value).filter(Item.item_id.in_(valid_items)).all()}
+        
         for p in recent_prices:
             item_id = cast(str, p.item_id)
             quality = cast(int, p.quality)
             city = cast(str, p.city)
             if item_id not in valid_items:
+                continue
+
+            # Sanity Check at ingestion time
+            iv = item_meta.get(item_id, 0.0)
+            if not is_price_sane(p.sell_price_min or 0, iv) and (p.sell_price_min or 0) > 0:
                 continue
 
             key = (item_id, quality)
@@ -158,6 +167,7 @@ class ArbitrageScanner:
                     "buy_price_max": p.buy_price_max or 0,
                     "quality": p.quality,
                     "fetched_at": p.fetched_at,
+                    "item_value": iv
                 }
 
         return prices
@@ -193,11 +203,22 @@ class ArbitrageScanner:
         for key, bucket in grouped.items():
             prices = bucket["prices"]
             volatility = 0.05
+            z_score = 0.0
             if len(prices) > 1:
                 mean = sum(prices) / len(prices)
-                variance = sum((price - mean) ** 2 for price in prices) / len(prices)
-                volatility = math.sqrt(variance) / mean if mean > 0 else 0.05
-            stats[key] = {"volume": bucket["volume"], "volatility": volatility}
+                variance = sum((p - mean) ** 2 for p in prices) / len(prices)
+                std_dev = math.sqrt(variance)
+                volatility = std_dev / mean if mean > 0 else 0.05
+                
+                # Z-Score relative to history
+                if std_dev > 0:
+                    z_score = (prices[-1] - mean) / std_dev
+            
+            stats[key] = {
+                "volume": bucket["volume"], 
+                "volatility": volatility,
+                "z_score": z_score
+            }
 
         return stats
 
@@ -262,19 +283,6 @@ class ArbitrageScanner:
                 if buy_price >= sell_price:
                     continue
 
-                # Calculate costs
-                # Calculate costs accurately for transport runs:
-                if fast_sell:
-                    # Instant Buy (Source) + Instant Sell (Destination)
-                    # 1. Buy at sell_price_min (Source): No setup fee
-                    # 2. Sell at buy_price_max (Destination): Sales tax only, no setup fee
-                    market_fees = sell_price * settings.tax_rate
-                else:
-                    # Instant Buy (Source) + Sell Order (Destination)
-                    # 1. Buy at sell_price_min (Source): No setup fee
-                    # 2. Create sell order at sell_price_min (Destination): Setup fee + Sales tax
-                    market_fees = (sell_price * settings.setup_fee_rate) + (sell_price * settings.tax_rate)
-
                 transport_cost = self._calculate_transport_cost(source, dest, buy_price)
                 base_risk = self._calculate_risk_score(source, dest, buy_price)
                 liquidity_risk = self._calculate_liquidity_score(buy_price, sell_price)
@@ -282,7 +290,20 @@ class ArbitrageScanner:
                 # Composite risk score
                 risk_score = (base_risk * 0.6) + (liquidity_risk * 0.4)
 
-                # Net profit
+                # Hard-Fact Tax Logic (2026 Professional Trader Model)
+                # Assumption: Trader uses BUY ORDERS (2.5% fee) to source and SELL ORDERS (2.5% + 4% tax) to dump.
+                buy_order_fee = buy_price * settings.setup_fee_rate
+                
+                if dest == "Black Market":
+                    # Sell to BM Buy Order: 0% sell fee, 0% sales tax. Only pay buy-order setup.
+                    market_fees = buy_order_fee
+                elif fast_sell:
+                    # Instant Sell to destination Buy Order: 0% sell setup, but pay sales tax.
+                    market_fees = buy_order_fee + (sell_price * settings.tax_rate)
+                else:
+                    # Full Order cycle: Buy Setup + Sell Setup + Sales Tax
+                    market_fees = buy_order_fee + (sell_price * settings.setup_fee_rate) + (sell_price * settings.tax_rate)
+
                 net_profit = sell_price - buy_price - market_fees - transport_cost
 
                 if net_profit <= 0:

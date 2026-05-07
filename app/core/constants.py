@@ -60,26 +60,34 @@ CITY_CRAFTING_BONUSES = {
 }
 
 # ═══════════════════════════════════════════════════════════════
-# RESOURCE RETURN RATES (RRR)
+# RESOURCE RETURN RATES (RRR) - Updated May 2026
 # ═══════════════════════════════════════════════════════════════
 
 # Royal City RRR
-RRR_ROYAL_BASE = 0.152
-RRR_ROYAL_BONUS = 0.248
-RRR_ROYAL_FOCUS = 0.435  # Base + Focus (Royal)
-RRR_ROYAL_BONUS_FOCUS = 0.479  # Bonus + Focus (Royal)
+BASE_RESOURCE_RETURN_RATE = 0.18        # Was 0.152
+CITY_BONUS_RESOURCE_RETURN_RATE = 0.33  # Was 0.248
+FOCUS_RESOURCE_RETURN_RATE = 0.48       # Base + Focus (Royal)
+FOCUS_CITY_BONUS_RRR = 0.58             # Bonus + Focus (Royal)
 
 # Refining RRR
-RRR_REFINING_BASE = 0.152
-RRR_REFINING_BONUS = 0.367
-RRR_REFINING_BONUS_FOCUS = 0.539
+REFINING_BASE_RRR = 0.18
+REFINING_BONUS_RRR = 0.367
+REFINING_FOCUS_RRR = 0.539
 
-# Islands & Hideouts (Varies by tier and quality)
-RRR_ISLAND_BASE = 0.00
-RRR_ISLAND_FOCUS = 0.37
+# Islands & Hideouts
+ISLAND_RESOURCE_RETURN_RATE = 0.00
+ISLAND_FOCUS_RRR = 0.37
 
 # ═══════════════════════════════════════════════════════════════
-# TRANSPORT DISTANCES (relative units, higher = more dangerous)
+# MARKET MECHANICS - Updated May 2026
+# ═══════════════════════════════════════════════════════════════
+
+SETUP_FEE = 0.025  # 2.5% setup fee (upfront)
+PREMIUM_SALES_TAX = 0.04  # 4% sales tax
+NON_PREMIUM_SALES_TAX = 0.08  # 8% sales tax
+
+# ═══════════════════════════════════════════════════════════════
+# TRANSPORT DISTANCES
 # ═══════════════════════════════════════════════════════════════
 
 TRANSPORT_DISTANCES = {
@@ -100,152 +108,76 @@ TRANSPORT_DISTANCES = {
     ("Thetford", "Caerleon"): 3,
 }
 
-
 def get_distance(city_a: str, city_b: str) -> int:
-    """Get transport distance between two cities (symmetric)."""
-    if city_a == city_b:
-        return 0
-    return TRANSPORT_DISTANCES.get(
-        (city_a, city_b),
-        TRANSPORT_DISTANCES.get((city_b, city_a), 5),
-    )
+    if city_a == city_b: return 0
+    return TRANSPORT_DISTANCES.get((city_a, city_b), TRANSPORT_DISTANCES.get((city_b, city_a), 5))
 
-
-# ═══════════════════════════════════════════════════════════════
-# RISK FACTORS
-# ═══════════════════════════════════════════════════════════════
-
-# Base risk per zone type
-ZONE_RISK = {
-    "blue": 0.01,
-    "yellow": 0.05,
-    "red": 0.15,
-    "black": 0.35,
-}
-
-# Routes through red/black zones
 DANGEROUS_ROUTES = {
-    ("Bridgewatch", "Caerleon"),
-    ("Martlock", "Caerleon"),
-    ("Lymhurst", "Caerleon"),
-    ("Fort Sterling", "Caerleon"),
-    ("Thetford", "Caerleon"),
+    ("Bridgewatch", "Caerleon"), ("Martlock", "Caerleon"), ("Lymhurst", "Caerleon"),
+    ("Fort Sterling", "Caerleon"), ("Thetford", "Caerleon"),
+    ("Bridgewatch", "Black Market"), ("Martlock", "Black Market"), ("Lymhurst", "Black Market"),
+    ("Fort Sterling", "Black Market"), ("Thetford", "Black Market"),
 }
 
 # ═══════════════════════════════════════════════════════════════
-# MARKET MECHANICS
-# ═══════════════════════════════════════════════════════════════
-
-SETUP_FEE = 0.025  # 2.5% per order
-PREMIUM_SALES_TAX = 0.04  # 4% with premium
-NON_PREMIUM_SALES_TAX = 0.08  # 8% without premium
-
-# Resource return rate (base, without focus)
-BASE_RESOURCE_RETURN_RATE = RRR_ROYAL_BASE
-
-# City Bonus RRR (without focus)
-CITY_BONUS_RESOURCE_RETURN_RATE = RRR_ROYAL_BONUS
-
-# With focus (City Bonus + Focus)
-FOCUS_RESOURCE_RETURN_RATE = RRR_ROYAL_BONUS_FOCUS
-
-# Refining Specific RRR
-REFINING_BONUS_RESOURCE_RETURN_RATE = RRR_REFINING_BONUS
-REFINING_FOCUS_RESOURCE_RETURN_RATE = RRR_REFINING_BONUS_FOCUS
-
-# Default crafting station fee per 100 nutrition
-DEFAULT_STATION_FEE = 1200  # silver per 100 nutrition (2026 average)
-
-# ═══════════════════════════════════════════════════════════════
-# ITEM CATEGORIES
-# ═══════════════════════════════════════════════════════════════
-
-EQUIPMENT_CATEGORIES = [
-    "weapon",
-    "armor",
-    "offhand",
-    "cape",
-    "bag",
-    "mount",
-    "food",
-    "potion",
-    "accessory",
-]
-
-RESOURCE_CATEGORIES = [
-    "wood",
-    "ore",
-    "fiber",
-    "hide",
-    "rock",
-]
-
-# ═══════════════════════════════════════════════════════════════
-# QUALITY LEVELS
-# ═══════════════════════════════════════════════════════════════
-
-QUALITY_NAMES = {
-    1: "Normal",
-    2: "Good",
-    3: "Outstanding",
-    4: "Excellent",
-    5: "Masterpiece",
-}
-
-# ═══════════════════════════════════════════════════════════════
-# JOURNALS
+# JOURNALS - Updated May 2026
 # ═══════════════════════════════════════════════════════════════
 
 JOURNAL_MAPPING = {
-    "armor": "BLACKSMITH",
-    "helmet": "BLACKSMITH",
-    "shoes": "BLACKSMITH",
-    "weapon": "BLACKSMITH",  # Simplification, some are fletcher/imbuer
-    "sword": "BLACKSMITH",
-    "axe": "BLACKSMITH",
-    "mace": "BLACKSMITH",
-    "hammer": "BLACKSMITH",
-    "crossbow": "BLACKSMITH",
-    "shield": "BLACKSMITH",
-    "bow": "FLETCHER",
-    "dagger": "FLETCHER",
-    "spear": "FLETCHER",
-    "nature_staff": "FLETCHER",
-    "torch": "FLETCHER",
-    "fire_staff": "IMBUER",
-    "holy_staff": "IMBUER",
-    "arcane_staff": "IMBUER",
-    "frost_staff": "IMBUER",
-    "curse_staff": "IMBUER",
-    "off_hand": "IMBUER",
-    "furniture": "TINKER",
-    "tool": "TINKER",
-    "cape": "TINKER",
-    "bag": "TINKER",
+    "armor": "BLACKSMITH", "helmet": "BLACKSMITH", "shoes": "BLACKSMITH",
+    "weapon": "BLACKSMITH", "sword": "BLACKSMITH", "axe": "BLACKSMITH",
+    "mace": "BLACKSMITH", "hammer": "BLACKSMITH", "crossbow": "BLACKSMITH",
+    "shield": "BLACKSMITH", "bow": "FLETCHER", "dagger": "FLETCHER",
+    "spear": "FLETCHER", "nature_staff": "FLETCHER", "torch": "FLETCHER",
+    "fire_staff": "IMBUER", "holy_staff": "IMBUER", "arcane_staff": "IMBUER",
+    "frost_staff": "IMBUER", "curse_staff": "IMBUER", "off_hand": "IMBUER",
+    "furniture": "TINKER", "tool": "TINKER", "cape": "TINKER", "bag": "TINKER",
 }
 
+JOURNAL_FAME_REQUIRED = {4: 3600, 5: 7200, 6: 14400, 7: 28800, 8: 57600}
+JOURNAL_YIELD_MULTIPLIER = 1.5
+
 def get_journal_id(item_category: str, tier: int) -> str | None:
-    """Get the specific journal item ID (e.g., T4_JOURNAL_BLACKSMITH_EMPTY)."""
     base = JOURNAL_MAPPING.get(item_category.lower())
-    if not base:
-        return None
+    if not base: return None
     return f"T{tier}_JOURNAL_{base}_EMPTY"
 
 # ═══════════════════════════════════════════════════════════════
 # GAME MECHANICS HELPERS
 # ═══════════════════════════════════════════════════════════════
 
-def calculate_station_fee(item_value: float, station_tax: float) -> float:
-    """
-    Calculate the silver fee at a crafting station.
-    The formula is: (ItemValue * 0.11 * StationTax) / 100
-    Note: 0.11 is a game constant for nutrition to silver conversion.
-    """
-    return (item_value * 0.11 * station_tax) / 100.0
+STATION_FEE_CONSTANT = 0.1125  # Updated May 2026 from 0.11
+DEFAULT_STATION_FEE = 500  # Default percentage tax (e.g. 500%)
+
+def calculate_station_fee(item_value: float, station_tax_percent: float) -> float:
+    return (item_value * STATION_FEE_CONSTANT * station_tax_percent) / 100.0
 
 # ═══════════════════════════════════════════════════════════════
-# TIERS
+# PRICE SANITY & OUTLIER DETECTION
 # ═══════════════════════════════════════════════════════════════
 
+def is_price_sane(price: float, item_value: float) -> bool:
+    """
+    Detect market manipulation, trolling, or API glitches.
+    Uses ItemValue as an anchor for realism.
+    """
+    if price <= 0: return False
+    if price > 500_000_000: return False # Hard cap for all items
+    
+    if item_value <= 0:
+        # For items with missing metadata, use a conservative absolute cap
+        return price < 5_000_000 
+    
+    # 2026 Economics: Realistic prices are usually 10x - 1000x ItemValue.
+    # A T3 Horse (IV=112) @ 85M is ~750,000x -> Discard.
+    # A rare artifact might be 2000x. We use 5000x as a safe threshold.
+    ratio = price / item_value
+    return ratio < 5000
+
+# ═══════════════════════════════════════════════════════════════
+# ITEM DATA
+# ═══════════════════════════════════════════════════════════════
+
+QUALITY_NAMES = {1: "Normal", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
 TIERS = [4, 5, 6, 7, 8]
 ENCHANTMENTS = [0, 1, 2, 3]

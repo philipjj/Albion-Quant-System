@@ -33,8 +33,8 @@ class QuantScheduler:
             stats = await self.collector.collect_all_prices()
             log.info(f"[SCHEDULER] Price collection complete: {stats}")
         except asyncio.CancelledError:
-            log.debug("[SCHEDULER] Price collection task stopped.")
-            return
+            log.info("[SCHEDULER] Price collection cancelled.")
+            raise
         except Exception as e:
             log.error(f"[SCHEDULER] Price collection failed: {e}")
 
@@ -44,6 +44,9 @@ class QuantScheduler:
         try:
             stats = await self.collector.collect_market_history()
             log.info(f"[SCHEDULER] History collection complete: {stats}")
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] History collection cancelled.")
+            raise
         except Exception as e:
             log.error(f"[SCHEDULER] History collection failed: {e}")
 

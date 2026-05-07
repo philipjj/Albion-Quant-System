@@ -25,13 +25,12 @@ from fastapi.middleware.cors import CORSMiddleware
 # FASTAPI APP SETUP
 # ═══════════════════════════════════════════════════════════════
 
-scheduler_instance = None
+from app.core import state
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan — start scheduler on startup, stop on shutdown."""
-    global scheduler_instance
+    from app.core import state
     log.info("🚀 Albion Quant Trading System starting up...")
 
     # Initialize database tables
@@ -39,7 +38,7 @@ async def lifespan(app: FastAPI):
     log.info("✅ Database initialized")
 
     if settings.disable_background_tasks:
-        scheduler_instance = None
+        state.scheduler_instance = None
         log.info("⏭️ Background tasks disabled (DISABLE_BACKGROUND_TASKS); API only.")
         yield
         log.info("🛑 Albion Quant Trading System shut down")
@@ -47,8 +46,8 @@ async def lifespan(app: FastAPI):
 
     # Start scheduler
     from workers.scheduler import QuantScheduler
-    scheduler_instance = QuantScheduler()
-    scheduler_instance.start()
+    state.scheduler_instance = QuantScheduler()
+    state.scheduler_instance.start()
     log.info("✅ Scheduler started")
 
     # Start Discord Bot
@@ -59,12 +58,13 @@ async def lifespan(app: FastAPI):
     async def initial_run():
         try:
             log.info("📊 Running initial data collection in the background...")
-            await scheduler_instance.job_collect_prices()
-            await scheduler_instance.job_collect_history()
-            await scheduler_instance.job_compute_arbitrage()
-            await scheduler_instance.job_compute_crafting()
+            await state.scheduler_instance.job_collect_prices()
+            await state.scheduler_instance.job_collect_history()
+            await state.scheduler_instance.job_compute_arbitrage()
+            await state.scheduler_instance.job_compute_crafting()
+            log.info("✅ Initial data collection complete.")
         except asyncio.CancelledError:
-            log.info("Initial run cancelled during shutdown.")
+            log.info("🛑 Initial run sequence aborted due to system shutdown.")
         except Exception as e:
             log.error(f"Error in initial run: {e}")
 
@@ -86,8 +86,8 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
-    if scheduler_instance:
-        scheduler_instance.shutdown()
+    if state.scheduler_instance:
+        state.scheduler_instance.shutdown()
     log.info("🛑 Albion Quant Trading System shut down")
 
 

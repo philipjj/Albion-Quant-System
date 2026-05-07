@@ -152,6 +152,8 @@ class ArbitrageOpportunity(Base):
     expected_hourly_profit = Column(Float, default=0.0)
     ev_score = Column(Float, default=0.0, index=True)
     volatility = Column(Float, default=0.0)
+    z_score = Column(Float, default=0.0)
+    oac = Column(Float, default=1.0)
     persistence = Column(Integer, default=1)
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
     is_active = Column(Boolean, default=True)
@@ -194,6 +196,7 @@ class CraftingOpportunity(Base):
     volatility = Column(Float, default=0.0)
     persistence = Column(Integer, default=1)
     ingredients_json = Column(Text, nullable=True)
+    decision_log = Column(Text, nullable=True) # Recursive path decisions
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
     is_active = Column(Boolean, default=True)
 

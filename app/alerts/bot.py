@@ -401,9 +401,9 @@ async def history(ctx):
     await ctx.send("📊 Starting manual Market History collection... (Verifying Real Demand)")
 
     try:
-        from main import scheduler_instance
-        if scheduler_instance:
-            await scheduler_instance.job_collect_history()
+        from app.core import state
+        if state.scheduler_instance:
+            await state.scheduler_instance.job_collect_history()
             await ctx.send("✅ Market History successfully collected and verified in database.")
         else:
             await ctx.send("❌ Scheduler instance not found. Is the bot running?")
@@ -446,9 +446,9 @@ async def pin_help(ctx):
 @bot.command()
 async def start(ctx):
     """Turn on the background trading engine."""
-    import main
-    if main.scheduler_instance:
-        main.scheduler_instance.resume()
+    from app.core import state
+    if state.scheduler_instance:
+        state.scheduler_instance.resume()
         await ctx.send(f"🟢 **System Started:** The background market collector and arbitrage scanner are now **ON**. You will receive alerts automatically. (PID: {os.getpid()})")
     else:
         await ctx.send("❌ Error: Scheduler not initialized.")
@@ -456,9 +456,9 @@ async def start(ctx):
 @bot.command()
 async def stop(ctx):
     """Turn off the background trading engine."""
-    import main
-    if main.scheduler_instance:
-        main.scheduler_instance.stop()
+    from app.core import state
+    if state.scheduler_instance:
+        state.scheduler_instance.stop()
         await ctx.send(f"🔴 **System Stopped:** The background trading engine is now **OFF**. No automatic alerts will be sent. (PID: {os.getpid()})")
     else:
         await ctx.send("❌ Error: Scheduler not initialized.")
@@ -800,7 +800,7 @@ async def bm(ctx):
 @bot.command()
 async def status(ctx):
     """Check the overall health and status of the system."""
-    import main  # to check scheduler status
+    from app.core import state
     from sqlalchemy import func
 
     from app.db.models import ArbitrageOpportunity, CraftingOpportunity, Item, MarketPrice
@@ -813,7 +813,7 @@ async def status(ctx):
             arb_count = db.query(func.count(ArbitrageOpportunity.id)).filter(ArbitrageOpportunity.is_active == True).scalar()
             craft_count = db.query(func.count(CraftingOpportunity.id)).filter(CraftingOpportunity.is_active == True).scalar()
 
-        scheduler_status = "🟢 RUNNING" if main.scheduler_instance and main.scheduler_instance._is_running else "🔴 STOPPED"
+        scheduler_status = "🟢 RUNNING" if state.scheduler_instance and state.scheduler_instance._is_running else "🔴 STOPPED"
 
         embed = discord.Embed(title="📊 System Status", color=discord.Color.green())
         embed.add_field(name="Background Scheduler", value=scheduler_status, inline=False)

@@ -34,6 +34,7 @@ class MarketCollector:
     API_PRICE_ENDPOINT = "/api/v2/stats/prices/{item_ids}.json"
     API_HISTORY_ENDPOINT = "/api/v2/stats/history/{item_ids}.json"
     API_ORDERS_ENDPOINT = "/api/v2/stats/orders/{item_ids}"
+    API_ORDER_VIEW_ENDPOINT = "/api/v2/stats/view/{item_ids}"
     BATCH_SIZE = 20  # Reduced to 20 for Europe server stability
     REQUEST_DELAY = 2.0  # Increased to 2.0s to prevent rate limits
 
@@ -98,25 +99,32 @@ class MarketCollector:
         
         # Artifacts & Consumables
         misc = ["POTION_HEAL", "POTION_ENERGY", "POTION_REGEN", "FOOD_SOUP", "FOOD_STEW", "FOOD_SANDWICH"]
+        
+        # Journals & Artifact Components
+        extras = ["JOURNAL_BLACKSMITH_EMPTY", "JOURNAL_FLETCHER_EMPTY", "JOURNAL_IMBUER_EMPTY", "JOURNAL_TINKER_EMPTY", "RUNE", "SOUL", "RELIC"]
 
         for tier in [4, 5, 6, 7, 8]:
             # Add base equipment with enchantments
             for cat in base_items:
                 items.append(f"T{tier}_{cat}")
-                if tier >= 4:
-                    for ench in [1, 2, 3, 4]:
-                        items.append(f"T{tier}_{cat}@{ench}")
+                for ench in [1, 2, 3]:
+                    items.append(f"T{tier}_{cat}@{ench}")
             
             # Add resources
             for res in resources:
                 items.append(f"T{tier}_{res}")
-                if tier >= 4:
-                    for ench in [1, 2, 3, 4]:
-                        items.append(f"T{tier}_{res}_LEVEL{ench}")
+                for ench in [1, 2, 3]:
+                    items.append(f"T{tier}_{res}_LEVEL{ench}")
 
-            # Add misc
-            for m in misc:
+            # Add misc & journals
+            for m in misc + extras:
                 items.append(f"T{tier}_{m}")
+                
+            # Add common artifacts
+            artifact_suffixes = ["KEEPER", "HELL", "UNDEAD", "MORGANA", "AVALON"]
+            for suff in artifact_suffixes:
+                items.append(f"T{tier}_ARTIFACT_ARMOR_PLATE_{suff}")
+                items.append(f"T{tier}_ARTIFACT_MAIN_SWORD_{suff}")
 
         return items
 
@@ -306,7 +314,7 @@ class MarketCollector:
 
                 except asyncio.CancelledError:
                     log.info("Price collection stopped (system shutdown).")
-                    return self.stats
+                    raise
                 except httpx.HTTPStatusError as e:
                     feature_gate.report_failure("prices", e.response.status_code)
                     log.error(f"Batch {i + 1} HTTP error: {e.response.status_code}")
@@ -355,7 +363,7 @@ class MarketCollector:
 
                 except asyncio.CancelledError:
                     log.info("History collection stopped (system shutdown).")
-                    return stats
+                    raise
                 except Exception as e:
                     log.error(f"History batch {i+1} error: {e}")
                     stats["errors"] += 1

@@ -2,6 +2,7 @@
 FastAPI routes for Crafting opportunities.
 """
 
+import json
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -47,7 +48,12 @@ def get_top_crafting(
                 "profit": o.profit,
                 "profit_margin": o.profit_margin,
                 "profit_per_focus": o.profit_per_focus,
-                "silver_per_nutrition": o.silver_per_nutrition,
+                "ev_score": o.ev_score,
+                "journal_profit": o.journal_profit,
+                "daily_volume": o.daily_volume,
+                "volatility": o.volatility,
+                "ingredients": json.loads(o.ingredients_json) if o.ingredients_json else [],
+                "path": json.loads(o.decision_log) if o.decision_log else [],
                 "detected_at": o.detected_at.isoformat() if o.detected_at else None,
             }
             for o in opps

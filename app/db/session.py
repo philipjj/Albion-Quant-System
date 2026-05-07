@@ -45,8 +45,36 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db() -> None:
-    """Create all tables if they don't exist."""
+    """Create all tables and run simple migrations for schema changes."""
     Base.metadata.create_all(bind=engine)
+
+    # ═══════════════════════════════════════════════════════════════
+    # AUTO-MIGRATIONS (May 2026 Update)
+    # ═══════════════════════════════════════════════════════════════
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    
+    with engine.connect() as conn:
+        # 1. Update 'items' table
+        items_cols = [c['name'] for c in inspector.get_columns('items')]
+        if 'item_value' not in items_cols:
+            conn.execute(text("ALTER TABLE items ADD COLUMN item_value FLOAT DEFAULT 0.0"))
+        
+        # 2. Update 'arbitrage_opportunities' table
+        arb_cols = [c['name'] for c in inspector.get_columns('arbitrage_opportunities')]
+        if 'ev_score' not in arb_cols:
+            conn.execute(text("ALTER TABLE arbitrage_opportunities ADD COLUMN ev_score FLOAT DEFAULT 0.0"))
+        
+        # 3. Update 'crafting_opportunities' table
+        craft_cols = [c['name'] for c in inspector.get_columns('crafting_opportunities')]
+        if 'ev_score' not in craft_cols:
+            conn.execute(text("ALTER TABLE crafting_opportunities ADD COLUMN ev_score FLOAT DEFAULT 0.0"))
+        if 'ingredients_json' not in craft_cols:
+            conn.execute(text("ALTER TABLE crafting_opportunities ADD COLUMN ingredients_json TEXT"))
+        if 'decision_log' not in craft_cols:
+            conn.execute(text("ALTER TABLE crafting_opportunities ADD COLUMN decision_log TEXT"))
+            
+        conn.commit()
 
 
 def get_db() -> Generator[Session, None, None]:

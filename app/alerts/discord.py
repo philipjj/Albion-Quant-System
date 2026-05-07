@@ -96,6 +96,11 @@ class DiscordAlerter:
                 {"name": "💎 NET PROFIT", "value": f"**{opp['estimated_profit']:,.0f}** silver", "inline": True},
                 {"name": "🚀 ALPHA SCORE", "value": f"**{opp.get('ev_score', 0):,.0f}** EV/hr", "inline": True},
                 {"name": "🧠 DATA CONF", "value": f"**{confidence*100:.0f}%**", "inline": True},
+                {"name": "⚡ ACTION STEPS", "value": (
+                    f"1. **BUY** at {opp['source_city']} (@{opp['buy_price']:,})\n"
+                    f"2. **TRANSPORT** to {opp['destination_city']} ({risk})\n"
+                    f"3. **SELL** for ~{opp['sell_price']:,} (Margin: {margin:.1f}%)"
+                ), "inline": False},
                 {"name": "📊 REAL DEMAND (24H)", "value": f"{opp.get('daily_volume', 0):,}" if opp.get("volume_source") == "VERIFIED 24H" else f"{opp.get('daily_volume', 0):,} (Est)", "inline": True},
                 {"name": "🛡️ VOLATILITY", "value": f"{opp.get('volatility', 0)*100:.1f}%", "inline": True},
                 {"name": "📈 PERSISTENCE", "value": f"{opp.get('persistence', 1)} scans", "inline": True},
@@ -159,6 +164,7 @@ class DiscordAlerter:
                 ), "inline": False},
 
                 {"name": shopping_list_title, "value": ing_text, "inline": False},
+                {"name": "🔄 OPTIMIZATION PATH", "value": "\n".join([f"• {line}" for line in opp.get("decision_log", [])[:10]]) if opp.get("decision_log") else "Direct craft from market ingredients.", "inline": False},
 
                 {"name": "✨ FOCUS VALUE", "value": f"**{opp.get('profit_per_focus', 0):,.1f}** silver/focus", "inline": True},
                 {"name": "📚 JOURNAL", "value": f"**+{opp.get('journal_profit', 0):,.0f}** extra", "inline": True},

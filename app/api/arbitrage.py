@@ -43,6 +43,10 @@ def get_top_arbitrage(
                 "estimated_profit": o.estimated_profit,
                 "estimated_margin": o.estimated_margin,
                 "risk_score": o.risk_score,
+                "ev_score": o.ev_score,
+                "daily_volume": o.daily_volume,
+                "volatility": o.volatility,
+                "persistence": o.persistence,
                 "detected_at": o.detected_at.isoformat() if o.detected_at else None,
             }
             for o in opps
