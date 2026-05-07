@@ -1,7 +1,9 @@
 import asyncio
-import time
 import random
+import time
+
 from app.core.logging import log
+
 
 class DeterministicRateLimiter:
     """

@@ -1,6 +1,7 @@
 import math
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 
 class Scorer:
     """
@@ -9,7 +10,7 @@ class Scorer:
     Goal: Calculate 'Expected Realized Profit per Hour' (ERPH).
     """
 
-    def calculate_data_confidence(self, opp: Dict[str, Any]) -> float:
+    def calculate_data_confidence(self, opp: dict[str, Any]) -> float:
         """
         Calculates a 0.0 -> 1.0 confidence score based on data age and market liquidity.
         """
@@ -43,7 +44,7 @@ class Scorer:
         if margin_pct > 100: margin_penalty = 0.1
         return round(vol_factor * margin_penalty, 2)
 
-    def score_arbitrage(self, opp: Dict[str, Any]) -> float:
+    def score_arbitrage(self, opp: dict[str, Any]) -> float:
         """Calculates ERPH for Arbitrage."""
         net_profit = opp.get("estimated_profit", 0)
         margin_pct = opp.get("estimated_margin", 0)
@@ -52,16 +53,15 @@ class Scorer:
         fill_prob = self.calculate_fill_probability(volume, margin_pct)
         confidence = self.calculate_data_confidence(opp)
         
-        from app.core.constants import get_distance, DANGEROUS_ROUTES
+        from app.core.constants import DANGEROUS_ROUTES, get_distance
         dist = get_distance(opp["source_city"], opp["destination_city"])
         
         is_dangerous = (opp["source_city"], opp["destination_city"]) in DANGEROUS_ROUTES
         risk_multiplier = 1.5 if is_dangerous else 1.0
         transport_cost = (dist * 1000) * risk_multiplier
         
-        # [v3.1] Cap hourly volume to prevent Alpha hallucinations
-        hourly_volume = min(25, max(1, volume / 24))
-        erph = (net_profit * hourly_volume * fill_prob * confidence) - transport_cost
+        # [v3.1] Strictly unit-based expected value to avoid Alpha hallucinations
+        erph = (net_profit * fill_prob * confidence) - transport_cost
         
         opp["fill_prob"] = fill_prob
         opp["confidence"] = confidence
@@ -69,7 +69,7 @@ class Scorer:
         
         return round(max(0.0, erph), 2)
 
-    def score_crafting(self, opp: Dict[str, Any]) -> float:
+    def score_crafting(self, opp: dict[str, Any]) -> float:
         """Calculates ERPH for Crafting."""
         net_profit = opp.get("profit", 0)
         margin_pct = opp.get("profit_margin", 0)
@@ -79,9 +79,8 @@ class Scorer:
         confidence = self.calculate_data_confidence(opp)
         
         craft_overhead = 1500 
-        # [v3.1] Cap hourly volume to prevent Alpha hallucinations
-        hourly_volume = min(25, max(1, volume / 24))
-        erph = (net_profit * hourly_volume * fill_prob * confidence) - craft_overhead
+        # [v3.1] Strictly unit-based expected value to avoid Alpha hallucinations
+        erph = (net_profit * fill_prob * confidence) - craft_overhead
         
         opp["fill_prob"] = fill_prob
         opp["confidence"] = confidence

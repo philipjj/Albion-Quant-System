@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import settings
 from app.db.models import Base
 
+
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
     if settings.database_url.startswith("sqlite"):
@@ -100,9 +101,9 @@ def init_db() -> None:
                 ON black_market_snapshots (item_id, quality, captured_at_bucket)
             """))
             conn.commit()
-            print("✅ Migration: Unique UPSERT indexes verified")
+            print("Migration: Unique UPSERT indexes verified")
         except Exception as e:
-            print(f"⚠️ Migration Error (Indexes): {e}")
+            print(f"Migration Error (Indexes): {e}")
 
         # 4. Arbitrage
         add_col('arbitrage_opportunities', 'ev_score', 'FLOAT DEFAULT 0.0')

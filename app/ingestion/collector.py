@@ -10,23 +10,24 @@ Optimized for high-throughput regional data ingestion.
 
 import asyncio
 from datetime import datetime
-from typing import Any, cast, Optional
-from sqlalchemy.orm import Session
+from typing import Any, Optional, cast
+
 from sqlalchemy import or_
+from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+from sqlalchemy.orm import Session
 
 from app.core.config import AlbionServer, settings
 from app.core.constants import CITY_API_NAMES
-from app.core.logging import log
 from app.core.freshness import is_market_data_fresh
-from app.core.validators import validate_market_record, validate_item_id
-from app.db.models import Item, MarketPrice, BlackMarketSnapshot
+from app.core.logging import log
+from app.core.validators import validate_item_id, validate_market_record
+from app.db.models import BlackMarketSnapshot, Item, MarketPrice
 from app.db.session import get_db_session
 from app.services.http_client import aqs_http
 from app.services.rate_limiter import limiter
-from sqlalchemy.orm import Session
-from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
 
-def parse_timestamp(ts: str) -> Optional[datetime]:
+
+def parse_timestamp(ts: str) -> datetime | None:
     if not ts or ts == "0001-01-01T00:00:00":
         return None
     try:
@@ -166,7 +167,7 @@ class MarketCollector:
         
         return weight
 
-    def should_poll_category(self, category: Optional[str], current_minute: int) -> bool:
+    def should_poll_category(self, category: str | None, current_minute: int) -> bool:
         """Determines if a category should be polled based on frequency (Task 5.3)."""
         if not category: return True
         cat = category.lower()

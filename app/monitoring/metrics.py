@@ -1,7 +1,9 @@
 import time
-from typing import Dict, Any
 from datetime import datetime, timedelta
+from typing import Any, Dict
+
 from app.core.logging import log
+
 
 class MetricsManager:
     """
@@ -47,7 +49,7 @@ class MetricsManager:
         self.data_metrics["stale_rejected"] += stale
         self.data_metrics["invalid_rejected"] += invalid
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         uptime = datetime.utcnow() - self.start_time
         avg_latency = 0
         if self.api_metrics["latency_history"]:

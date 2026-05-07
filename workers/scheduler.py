@@ -107,9 +107,10 @@ class QuantScheduler:
 
     async def job_cleanup(self):
         """Delete old records."""
-        from app.db.session import get_db_session
-        from app.db.models import MarketPrice
         from datetime import timedelta
+
+        from app.db.models import MarketPrice
+        from app.db.session import get_db_session
         
         log.info("[SCHEDULER] Periodic Task: Database Cleanup")
         try:

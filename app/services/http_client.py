@@ -1,11 +1,13 @@
 import asyncio
 import time
+from typing import Any, Optional
+
 import httpx
-from typing import Optional, Any
 from app.core.config import settings
 from app.core.logging import log
-from app.services.rate_limiter import limiter
 from app.monitoring.metrics import metrics
+from app.services.rate_limiter import limiter
+
 
 class AQSHttpClient:
     """
@@ -13,7 +15,7 @@ class AQSHttpClient:
     Wraps httpx.AsyncClient with retry logic, rate limiting, and telemetry.
     """
     def __init__(self):
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
         self._limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
         self._timeout = httpx.Timeout(
             connect=10.0,
@@ -50,7 +52,7 @@ class AQSHttpClient:
             await self._client.aclose()
             self._client = None
 
-    async def get(self, url: str, params: Optional[dict] = None, max_retries: int = 3) -> Optional[httpx.Response]:
+    async def get(self, url: str, params: dict | None = None, max_retries: int = 3) -> httpx.Response | None:
         """Performs a GET request with rate limiting and retries."""
         await self._ensure_client()
         

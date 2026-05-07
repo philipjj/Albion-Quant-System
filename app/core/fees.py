@@ -1,5 +1,6 @@
 from app.core.config import settings
 
+
 def calculate_sell_proceeds(
     sell_price:         int,
     premium:            bool = True,
@@ -64,20 +65,34 @@ def calculate_black_market_margin(buy_price: int, bm_price: int) -> dict:
 def calculate_net_margin(
     buy_price:            int,
     sell_price:           int,
+    is_black_market:      bool  = False,
+    fast_sell:            bool  = False,
     premium:              bool  = True,
+    tax_free:             bool  = False,
     crafting_station_fee: float = None,
-) -> dict:
+) -> tuple[float, float]:
     """
-    Full round-trip margin from buying and selling on regional markets.
-    Applies all standard taxes and fees on both sides.
+    Full round-trip margin calculation.
+    Returns (net_profit, roi_percentage).
     """
-    buy  = calculate_buy_cost(buy_price)
-    sell = calculate_sell_proceeds(sell_price, premium, crafting_station_fee)
-    net_profit = sell["net_proceeds"] - buy["total_cost"]
+    if is_black_market:
+        # BM has 0% tax, 0% setup fee, but we still pay the setup fee on the BUY side
+        buy_setup = round(buy_price * settings.market_setup_fee_pct)
+        total_cost = buy_price + buy_setup
+        net_profit = sell_price - total_cost
+    else:
+        # Standard Market
+        buy_setup = round(buy_price * settings.market_setup_fee_pct)
+        total_cost = buy_price + buy_setup
+        
+        # Sell Side
+        tax_pct = 0.0 if tax_free else (settings.market_tax_premium_pct if premium else settings.market_tax_non_premium_pct)
+        # If fast selling (to a buy order), we don't pay the 2.5% setup fee
+        sell_setup_pct = 0.0 if fast_sell else settings.market_setup_fee_pct
+        
+        sell_fee = round(sell_price * (tax_pct + sell_setup_pct))
+        net_proceeds = sell_price - sell_fee
+        net_profit = net_proceeds - total_cost
 
-    return {
-        "buy_details":  buy,
-        "sell_details": sell,
-        "net_profit":   net_profit,
-        "roi_pct":      round(net_profit / buy["total_cost"] * 100, 2) if buy["total_cost"] > 0 else 0,
-    }
+    roi_pct = (net_profit / total_cost * 100) if total_cost > 0 else 0
+    return round(net_profit, 2), round(roi_pct, 2)

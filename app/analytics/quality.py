@@ -13,8 +13,8 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.db.models import MarketPrice
 from app.core.config import settings
+from app.db.models import MarketPrice
 
 
 def quality_snapshot(db: Session, lookback_hours: int = 2) -> dict[str, Any]:

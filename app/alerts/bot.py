@@ -3,13 +3,15 @@ import io
 import json
 import re
 from datetime import datetime, timezone
+
 import discord
 from discord.ext import commands
-from app.core.config import settings, AlbionServer
+
+from app.core.config import AlbionServer, settings
+from app.core.icons import item_icon_url
 from app.core.logging import log
 from app.db.models import ArbitrageOpportunity, CraftingOpportunity, Item, MarketPrice
 from app.db.session import get_db_session
-from app.core.icons import item_icon_url
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -69,8 +71,9 @@ async def purge(ctx, start_str: str, end_str: str):
 @bot.command()
 async def status(ctx):
     """Check system health and active server."""
-    from app.core import state
     from sqlalchemy import func
+
+    from app.core import state
     
     with get_db_session() as db:
         price_count = db.query(func.count(MarketPrice.id)).scalar()
@@ -162,9 +165,9 @@ async def stop(ctx):
 async def scan(ctx):
     """Trigger a manual arbitrage and crafting scan."""
     await ctx.send(f"🚀 Starting manual scan for **{settings.active_server.value.upper()}** (Top 5 + Specialty)...")
+    from app.alerts.discord import DiscordAlerter
     from app.arbitrage.scanner import ArbitrageScanner
     from app.crafting.engine import CraftingEngine
-    from app.alerts.discord import DiscordAlerter
     
     alerter = DiscordAlerter()
     
@@ -202,8 +205,9 @@ async def scan(ctx):
 @bot.command()
 async def bm(ctx):
     """Quick Black Market shortage report."""
-    from app.db.models import BlackMarketSnapshot
     from sqlalchemy import desc
+
+    from app.db.models import BlackMarketSnapshot
     
     with get_db_session() as db:
         snaps = db.query(BlackMarketSnapshot).order_by(desc(BlackMarketSnapshot.captured_at)).limit(5).all()

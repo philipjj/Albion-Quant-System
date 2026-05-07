@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
+
 from app.core.logging import log
 from app.core.safe_ops import safe_int
 
@@ -10,9 +11,9 @@ THRESHOLD_LOW_VOLUME = 10800   # 3 Hours
 
 def is_market_data_fresh(
     item_id: str, 
-    age_seconds: Optional[int], 
-    volume_24h: Optional[int] = 0,
-    tier: Optional[int] = 4
+    age_seconds: int | None, 
+    volume_24h: int | None = 0,
+    tier: int | None = 4
 ) -> bool:
     """
     Determines if market data is fresh enough to be used for scoring.

@@ -1,5 +1,6 @@
 import sqlite3
 
+
 def check_malformed():
     conn = sqlite3.connect("data/albion_quant.db")
     cursor = conn.cursor()

@@ -3,6 +3,7 @@ FastAPI routes for Crafting opportunities.
 """
 
 import json
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import desc
 from sqlalchemy.orm import Session

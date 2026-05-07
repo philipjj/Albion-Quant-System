@@ -6,10 +6,10 @@ Includes fee-aware scoring and risk-adjusted EV calculations.
 import math
 from datetime import datetime, timedelta
 from itertools import permutations
-from typing import Any, cast, Dict
+from typing import Any, Dict, cast
 
-from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import (
@@ -19,12 +19,13 @@ from app.core.constants import (
     get_distance,
     is_price_sane,
 )
+from app.core.fees import calculate_net_margin
 from app.core.logging import log
 from app.core.market_utils import calculate_z_score
 from app.core.scoring import scorer
-from app.core.fees import calculate_net_margin
-from app.db.models import ArbitrageOpportunity, Item, MarketPrice, BlackMarketSnapshot
+from app.db.models import ArbitrageOpportunity, BlackMarketSnapshot, Item, MarketPrice
 from app.db.session import get_db_session
+
 
 class ArbitrageScanner:
     """
@@ -35,7 +36,7 @@ class ArbitrageScanner:
     def __init__(self):
         self.opportunities: list[dict] = []
         self.stats = {"items_scanned": 0, "pairs_evaluated": 0, "opportunities_found": 0}
-        self._persistence_cache: Dict[str, int] = {}
+        self._persistence_cache: dict[str, int] = {}
 
     def _calculate_risk_score(self, source: str, dest: str, item_value: float) -> float:
         """Calculates transport risk based on distance and route danger."""
@@ -159,7 +160,7 @@ class ArbitrageScanner:
                 net_profit, margin_pct = calculate_net_margin(
                     buy_price=buy_price,
                     sell_price=sell_price,
-                    is_bm=d_data.get("is_black_market", False),
+                    is_black_market=d_data.get("is_black_market", False),
                     fast_sell=fast_sell_actual,
                     tax_free=False 
                 )
@@ -204,3 +205,35 @@ class ArbitrageScanner:
 
         self.opportunities.sort(key=lambda x: x["ev_score"], reverse=True)
         return self.opportunities
+
+    def store_opportunities(self) -> int:
+        if not self.opportunities: return 0
+        with get_db_session() as db:
+            db = cast(Session, db)
+            # Clear old active opportunities
+            db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True).update({"is_active": False})
+            
+            mappings = []
+            for o in self.opportunities:
+                mappings.append({
+                    "item_id": o["item_id"], 
+                    "item_name": o["item_name"], 
+                    "source_city": o["source_city"], 
+                    "destination_city": o["destination_city"], 
+                    "buy_price": o["buy_price"], 
+                    "sell_price": o["sell_price"],
+                    "estimated_profit": o["estimated_profit"], 
+                    "estimated_margin": o["estimated_margin"],
+                    "risk_score": o.get("risk_score", 0), 
+                    "daily_volume": o.get("daily_volume", 0),
+                    "ev_score": o.get("ev_score", 0.0), 
+                    "volatility": o.get("volatility", 0.0), 
+                    "persistence": o.get("persistence", 1),
+                    "detected_at": datetime.utcnow(), 
+                    "is_active": True
+                })
+                
+            if mappings:
+                from sqlalchemy import insert
+                db.execute(insert(ArbitrageOpportunity), mappings)
+            return len(mappings)

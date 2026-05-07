@@ -1,5 +1,6 @@
 from typing import Any, Optional
 
+
 def safe_int(value: Any, default: int = 0) -> int:
     """Safely converts a value to int, returning default if None or invalid."""
     if value is None:

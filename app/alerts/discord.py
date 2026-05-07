@@ -4,6 +4,7 @@ Sends formatted alerts via Discord webhooks with regional server context.
 """
 import asyncio
 from datetime import datetime
+
 import httpx
 
 from app.core.config import settings

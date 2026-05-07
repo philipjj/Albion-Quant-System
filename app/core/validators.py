@@ -1,7 +1,9 @@
-from datetime import datetime
-from typing import Dict, Any, Optional
-from app.core.logging import log
 import re
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from app.core.logging import log
+
 
 def validate_item_id(item_id: str) -> bool:
     """
@@ -29,7 +31,7 @@ def validate_item_id(item_id: str) -> bool:
 
     return True
 
-def validate_market_record(r: Dict[str, Any]) -> bool:
+def validate_market_record(r: dict[str, Any]) -> bool:
     """
     Validates a raw market record before it hits the database.
     Returns True if valid, False to reject.
@@ -85,7 +87,7 @@ def validate_market_record(r: Dict[str, Any]) -> bool:
         log.error(f"🛡️ VALIDATOR: Error during validation: {e}")
         return False
 
-def detect_anomaly(current_price: int, historical_avg: Optional[float]) -> bool:
+def detect_anomaly(current_price: int, historical_avg: float | None) -> bool:
     """
     Flags sudden price spikes (>5000% change).
     """

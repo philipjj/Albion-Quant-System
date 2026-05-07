@@ -10,12 +10,17 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.constants import ALL_MARKET_CITIES, is_price_sane
-from app.core.logging import log
-from app.core.market_utils import calculate_rrr, calculate_net_material_cost, calculate_blended_price
 from app.core.fees import calculate_sell_proceeds
+from app.core.logging import log
+from app.core.market_utils import (
+    calculate_blended_price,
+    calculate_net_material_cost,
+    calculate_rrr,
+)
 from app.core.scoring import scorer
-from app.db.models import CraftingOpportunity, Item, MarketPrice, Recipe, BlackMarketSnapshot
+from app.db.models import BlackMarketSnapshot, CraftingOpportunity, Item, MarketPrice, Recipe
 from app.db.session import get_db_session
+
 
 class CraftingEngine:
     """
@@ -149,8 +154,17 @@ class CraftingEngine:
                 })
             
             if valid_sub:
-                # Crafting unit cost = (Ingredient sum * (1 - RRR))
-                craft_unit_cost = ing_total_cost * (1.0 - rrr)
+                # Bulletproof RRR Normalizer
+                rrr_val = float(rrr)
+                
+                # If RRR comes in as basis points (4700) or whole percent (47.0), force it to decimal
+                while rrr_val > 1.0:
+                    rrr_val /= 100.0
+                    
+                # Hard cap at 99% to mathematically prevent negative-cost hallucinations
+                rrr_val = min(max(rrr_val, 0.0), 0.99)
+                
+                craft_unit_cost = ing_total_cost * (1.0 - rrr_val)
 
         # Decision: Craft if cheaper than buying
         should_craft = craft_unit_cost is not None and (buy_unit_cost <= 0 or craft_unit_cost < buy_unit_cost)

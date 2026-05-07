@@ -9,23 +9,22 @@ import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
+
+# ═══════════════════════════════════════════════════════════════
+# FASTAPI APP SETUP
+# ═══════════════════════════════════════════════════════════════
+from app.core import state
 from app.core.config import settings
 from app.core.logging import log
 from app.db.session import init_db
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# ═══════════════════════════════════════════════════════════════
-# FASTAPI APP SETUP
-# ═══════════════════════════════════════════════════════════════
-
-from app.core import state
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.core import state
-    log.info("🚀 Albion Quant Trading System starting up...")
+    log.info("[START] Albion Quant Trading System starting up...")
 
     # Initialize database tables
     init_db()
@@ -38,20 +37,20 @@ async def lifespan(app: FastAPI):
             log.critical(f"FATAL: Item model missing required field: {field}")
             sys.exit(1)
             
-    log.info("✅ Database and Models verified")
+    log.info("[OK] Database and Models verified")
 
     if settings.disable_background_tasks:
         state.scheduler_instance = None
         log.info("⏭️ Background tasks disabled (DISABLE_BACKGROUND_TASKS); API only.")
         yield
-        log.info("🛑 Albion Quant Trading System shut down")
+        log.info("[STOP] Albion Quant Trading System shut down")
         return
 
     # Initialize and START scheduler automatically
     from workers.scheduler import QuantScheduler
     state.scheduler_instance = QuantScheduler()
     state.scheduler_instance.start()
-    log.info("✅ Background scheduler started automatically")
+    log.info("[OK] Background scheduler started automatically")
 
     # Start Discord Bot
     from app.alerts.bot import start_discord_bot
@@ -68,7 +67,7 @@ async def lifespan(app: FastAPI):
 
     if state.scheduler_instance:
         state.scheduler_instance.shutdown()
-    log.info("🛑 Albion Quant Trading System shut down")
+    log.info("[STOP] Albion Quant Trading System shut down")
 
 
 app = FastAPI(
@@ -87,7 +86,8 @@ app.add_middleware(
 )
 
 # Routers
-from app.api import market, arbitrage, crafting, fees, user, export
+from app.api import arbitrage, crafting, export, fees, market, user
+
 app.include_router(market.router, prefix="/api/v1/market", tags=["Market"])
 app.include_router(arbitrage.router, prefix="/api/v1/arbitrage", tags=["Alpha"])
 app.include_router(crafting.router, prefix="/api/v1/crafting", tags=["Alpha"])
@@ -160,7 +160,7 @@ async def cmd_init():
     init_db()
     parser = StaticDataParser()
     await parser.full_rebuild()
-    log.info("✅ Initialization complete.")
+    log.info("Initialization complete.")
 
 
 async def cmd_collect():
