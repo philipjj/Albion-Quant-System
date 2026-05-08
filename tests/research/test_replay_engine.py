@@ -46,9 +46,9 @@ def test_replay_engine_iterator_db():
     t2 = datetime.utcnow()
     
     cursor.execute("INSERT INTO market_prices (item_id, city, captured_at) VALUES (?, ?, ?)",
-                   ("T4_SWORD", "Caerleon", t1.isoformat()))
+                   ("T4_SWORD", "Caerleon", t1.strftime('%Y-%m-%d %H:%M:%S')))
     cursor.execute("INSERT INTO market_prices (item_id, city, captured_at) VALUES (?, ?, ?)",
-                   ("T4_SWORD", "Caerleon", t2.isoformat()))
+                   ("T4_SWORD", "Caerleon", t2.strftime('%Y-%m-%d %H:%M:%S')))
     conn.commit()
     conn.close()
     
