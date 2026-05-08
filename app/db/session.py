@@ -32,6 +32,33 @@ if settings.database_url.startswith("sqlite"):
 engine = create_engine(settings.database_url, echo=False, pool_pre_ping=True, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+# Async Support for TimescaleDB/PostgreSQL
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from contextlib import asynccontextmanager
+
+# We derive the async URL from the sync one if it's postgresql
+async_engine = None
+AsyncSessionLocal = None
+
+if settings.database_url.startswith("postgresql"):
+    async_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
+    async_engine = create_async_engine(async_url, echo=False, pool_pre_ping=True)
+    AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=async_engine)
+
+@asynccontextmanager
+async def get_async_db_session():
+    if AsyncSessionLocal is None:
+        raise RuntimeError("Async session is not configured. DATABASE_URL must start with postgresql.")
+    db = AsyncSessionLocal()
+    try:
+        yield db
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
 def init_db() -> None:
     """Create all tables and run migrations for AQS v3.0."""
     Base.metadata.create_all(bind=engine)
@@ -45,9 +72,9 @@ def init_db() -> None:
                 if col not in cols:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
                     conn.commit()
-                    print(f"✅ Migration: Added {col} to {table}")
+                    print(f"Migration: Added {col} to {table}")
             except Exception as e:
-                print(f"⚠️ Migration Error ({table}.{col}): {e}")
+                print(f"Migration Error ({table}.{col}): {e}")
 
         # 1. Items
         add_col('items', 'item_value', 'FLOAT DEFAULT 0.0')
@@ -100,6 +127,16 @@ def init_db() -> None:
                 CREATE UNIQUE INDEX IF NOT EXISTS ix_bm_upsert 
                 ON black_market_snapshots (item_id, quality, captured_at_bucket)
             """))
+            
+            # Create hypertable for TimescaleDB if using PostgreSQL
+            if not settings.database_url.startswith("sqlite"):
+                try:
+                    conn.execute(text("SELECT create_hypertable('market_prices', 'captured_at', if_not_exists => TRUE);"))
+                    print("Migration: Verified hypertable for market_prices")
+                except Exception as e:
+                    # This might fail if the extension is not installed or it's already a hypertable
+                    print(f"Migration Error (Hypertable): {e}")
+                    
             conn.commit()
             print("Migration: Unique UPSERT indexes verified")
         except Exception as e:
