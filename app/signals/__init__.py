@@ -1,1 +1,3 @@
-# app/signals/__init__.py
+"""
+Signal engine for alpha generation.
+"""
