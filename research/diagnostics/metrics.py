@@ -39,5 +39,23 @@ def calculate_sharpe_ratio(
         return 0.0
         
     std_dev = math.sqrt(variance)
-    
     return excess_mean / std_dev
+
+def calculate_max_drawdown(equity_curve: List[float]) -> float:
+    """
+    Calculates the maximum drawdown from an equity curve.
+    """
+    if not equity_curve:
+        return 0.0
+        
+    max_drawdown = 0.0
+    peak = equity_curve[0]
+    
+    for value in equity_curve:
+        if value > peak:
+            peak = value
+        drawdown = (peak - value) / peak
+        if drawdown > max_drawdown:
+            max_drawdown = drawdown
+            
+    return max_drawdown

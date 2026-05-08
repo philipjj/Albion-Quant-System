@@ -67,17 +67,35 @@ class BacktestEngine:
         Runs the backtest.
         """
         total_events = 0
+        equity_curve = [self.cash]
         
         # Iterate over data
         for event in self.replay_engine.replay_iterator(start_time, end_time):
             total_events += 1
             self.strategy.on_data(event, self)
+            equity_curve.append(self.cash)
             
         pnl = self.cash - self.initial_cash
+        
+        # Calculate returns for Sharpe
+        returns = []
+        for i in range(1, len(equity_curve)):
+            prev = equity_curve[i-1]
+            if prev > 0:
+                returns.append((equity_curve[i] - prev) / prev)
+            else:
+                returns.append(0.0)
+                
+        from research.diagnostics.metrics import calculate_sharpe_ratio, calculate_max_drawdown
+        
+        sharpe = calculate_sharpe_ratio(returns)
+        mdd = calculate_max_drawdown(equity_curve)
         
         return {
             "total_events": total_events,
             "cash": self.cash,
             "pnl": pnl,
+            "sharpe_ratio": sharpe,
+            "max_drawdown": mdd,
             "status": "completed"
         }
