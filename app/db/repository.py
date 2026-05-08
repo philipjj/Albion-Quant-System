@@ -24,10 +24,20 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
                 "volume_24h": s.rolling_volume,
                 "captured_at": s.timestamp,
                 "captured_at_bucket": bucket,
-                "data_age_seconds": 0.0, # Default or calculate if we had original timestamp
+                "data_age_seconds": 0.0,
                 "confidence_score": 1.0,
                 "coverage_suspect": False
             })
+            
+        # Deduplicate to avoid "ON CONFLICT DO UPDATE command cannot affect row a second time"
+        # We keep the latest one if there are duplicates in the same batch
+        deduped = {}
+        for item in market_to_save:
+            key = (item["item_id"], item["city"], item["quality"], item["captured_at_bucket"])
+            if key not in deduped or item["captured_at"] > deduped[key]["captured_at"]:
+                deduped[key] = item
+                
+        market_to_save = list(deduped.values())
             
         CHUNK_SIZE = 200
         with get_db_session() as db:
