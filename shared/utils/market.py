@@ -125,3 +125,8 @@ def calculate_z_score(current_price: float, historical_prices: list[float]) -> f
     if std_dev == 0:
         return 0.0
     return (current_price - mean) / std_dev
+
+def get_bucket(dt: datetime, window_min: int = 5) -> datetime:
+    """Rounds a datetime to the nearest window_min bucket."""
+    minute = (dt.minute // window_min) * window_min
+    return dt.replace(minute=minute, second=0, microsecond=0)
