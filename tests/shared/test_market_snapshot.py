@@ -5,6 +5,7 @@ def test_market_snapshot_creation():
     snapshot = MarketSnapshot(
         item_id="T8_HEAD_CLOTH",
         city="Bridgewatch",
+        quality=2,
         timestamp=datetime.now(),
         best_bid=1000.0,
         best_ask=1200.0,
@@ -16,4 +17,5 @@ def test_market_snapshot_creation():
         volatility=0.05
     )
     assert snapshot.item_id == "T8_HEAD_CLOTH"
+    assert snapshot.quality == 2
     assert snapshot.midprice == 1100.0

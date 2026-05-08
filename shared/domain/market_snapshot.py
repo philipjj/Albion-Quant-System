@@ -4,6 +4,7 @@ from pydantic import BaseModel
 class MarketSnapshot(BaseModel):
     item_id: str
     city: str
+    quality: int = 1
     timestamp: datetime
     
     best_bid: float
