@@ -1,0 +1,16 @@
+# Feature Flags Configuration
+# Default values for all feature gates
+
+# API Support Flags
+orders_supported: true
+history_supported: true
+prices_supported: true
+
+# Rate Limiting
+is_rate_limited: false
+
+# vNext Feature Engines
+USE_ONTOLOGY_ENGINE: false
+USE_MARKET_STATE_ENGINE: false
+USE_SIGNAL_ENGINE: false
+USE_MANIPULATION_FILTER: false

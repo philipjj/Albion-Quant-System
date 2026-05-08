@@ -44,6 +44,15 @@ class Scorer:
         if margin_pct > 100: margin_penalty = 0.1
         return round(vol_factor * margin_penalty, 2)
 
+    def _get_meta_multipliers(self, opp: dict[str, Any]) -> float:
+        """Calculates combined multiplier for meta and patch status."""
+        multiplier = 1.0
+        if opp.get("item_is_meta"):
+            multiplier *= 1.25
+        if opp.get("item_recently_buffed"):
+            multiplier *= 1.40
+        return multiplier
+
     def score_arbitrage(self, opp: dict[str, Any]) -> float:
         """Calculates ERPH for Arbitrage."""
         net_profit = opp.get("estimated_profit", 0)
@@ -67,6 +76,9 @@ class Scorer:
         
         # [v3.1] Strictly unit-based expected value to avoid Alpha hallucinations
         erph = (net_profit * fill_prob * confidence) - transport_cost
+        
+        # Apply meta and patch multipliers
+        erph *= self._get_meta_multipliers(opp)
         
         opp["fill_prob"] = fill_prob
         opp["confidence"] = confidence
@@ -92,9 +104,13 @@ class Scorer:
         # [v3.1] Strictly unit-based expected value with transport awareness
         erph = (net_profit * fill_prob * confidence) - craft_overhead - transport_cost
         
+        # Apply meta and patch multipliers
+        erph *= self._get_meta_multipliers(opp)
+        
         opp["fill_prob"] = fill_prob
         opp["confidence"] = confidence
         
         return round(max(0.0, erph), 2)
+
 
 scorer = Scorer()

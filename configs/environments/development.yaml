@@ -1,0 +1,4 @@
+# Development Environment Configuration
+env: development
+db_path: runtime/databases/aqs_dev.sqlite
+log_level: DEBUG

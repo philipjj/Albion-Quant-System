@@ -1,0 +1,10 @@
+# Polling Profiles
+# Define frequencies for different endpoints
+
+profiles:
+  default:
+    interval_seconds: 600 # 10 minutes
+  aggressive:
+    interval_seconds: 60 # 1 minute
+  conservative:
+    interval_seconds: 3600 # 1 hour

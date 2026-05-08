@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
         return
 
     # Initialize and START scheduler automatically
-    from workers.scheduler import QuantScheduler
+    from app.workers.scheduler import QuantScheduler
     state.scheduler_instance = QuantScheduler()
     state.scheduler_instance.start()
     log.info("[OK] Background scheduler started automatically")

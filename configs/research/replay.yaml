@@ -1,0 +1,7 @@
+# Replay Configuration
+# Parameters for backtesting and replay
+
+replay:
+  default_start_time: "2026-01-01T00:00:00"
+  default_end_time: "2026-05-01T00:00:00"
+  source: "db" # or "mock"

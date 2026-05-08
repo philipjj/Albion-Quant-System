@@ -1,6 +1,6 @@
 from typing import List
-from shared.domain.market_snapshot import MarketSnapshot
-from shared.domain.signal import Signal
+from app.shared.domain.market_snapshot import MarketSnapshot
+from app.shared.domain.signal import Signal
 from app.signals.base import SignalGenerator
 from app.features.spread import calculate_relative_spread
 

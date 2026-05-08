@@ -1,0 +1,4 @@
+# Production Environment Configuration
+env: production
+db_path: runtime/databases/aqs.sqlite
+log_level: WARNING

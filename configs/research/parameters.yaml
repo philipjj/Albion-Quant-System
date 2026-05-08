@@ -1,0 +1,53 @@
+# Trading and Signal Parameters
+# All thresholds and weights
+
+thresholds:
+  min_arbitrage_margin: 5.0
+  min_arbitrage_profit: 2000
+  min_crafting_profit: 500
+  min_crafting_margin: 3.0
+  min_volume: 5
+  target_exit_hours: 4.0
+  max_capital_per_trade: 2000000
+  max_crafting_capital: 2000000
+  confidence_floor: 0.20
+
+signals:
+  volatility:
+    default_confidence: 0.5
+    default_persistence: 0.4
+    default_manipulation_risk: 0.3
+  imbalance:
+    default_confidence: 0.8
+    default_persistence: 0.5
+    default_manipulation_risk: 0.1
+  liquidity_gap:
+    default_confidence: 0.6
+    default_persistence: 0.5
+    default_manipulation_risk: 0.2
+  scarcity:
+    default_confidence: 0.7
+    default_persistence: 0.8
+    default_manipulation_risk: 0.2
+  substitution:
+    default_confidence: 0.6
+    default_persistence: 0.6
+    default_manipulation_risk: 0.1
+
+arbitrage:
+  risk:
+    distance_weight: 10.0
+    danger_multiplier: 2.5
+    value_divisor: 100000.0
+    value_weight: 5.0
+  lookback:
+    regular_hours: 2.0
+    black_market_hours: 4.0
+  default_volatility: 0.05
+
+crafting:
+  lookback_hours: 24.0
+  max_depth: 2
+  default_tier: 4
+  max_rrr: 0.99
+  default_volatility: 0.05

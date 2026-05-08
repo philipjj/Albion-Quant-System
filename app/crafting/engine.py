@@ -32,7 +32,7 @@ class CraftingEngine:
         self.stats = {"recipes_evaluated": 0, "profitable_found": 0}
 
     def _get_latest_prices_map(self, db: Session) -> dict:
-        cutoff = datetime.utcnow() - timedelta(hours=24)
+        cutoff = datetime.utcnow() - timedelta(hours=settings.crafting_lookback_hours)
         recent_prices = db.query(MarketPrice).filter(
             MarketPrice.captured_at >= cutoff,
             MarketPrice.server == settings.active_server.value
@@ -116,15 +116,15 @@ class CraftingEngine:
         ingredients_purchased = []
         
         # Attempt to craft if within depth limits and recipe exists
-        if depth < 2 and item_id in recipes:
+        if depth < settings.crafting_max_depth and item_id in recipes:
             recipe = recipes[item_id]
             ing_total_cost = 0.0
             valid_sub = True
             
             # Determine RRR for current city/item
             try:
-                tier = int(item_id.split("_")[0].replace("T", "")) if "T" in item_id else 4
-            except: tier = 4
+                tier = int(item_id.split("_")[0].replace("T", "")) if "T" in item_id else settings.crafting_default_tier
+            except: tier = settings.crafting_default_tier
             category = item_id.split("_")[1].lower() if "_" in item_id else "other"
             rrr = calculate_rrr(city, category, tier)
 
@@ -162,7 +162,7 @@ class CraftingEngine:
                     rrr_val /= 100.0
                     
                 # Hard cap at 99% to mathematically prevent negative-cost hallucinations
-                rrr_val = min(max(rrr_val, 0.0), 0.99)
+                rrr_val = min(max(rrr_val, 0.0), settings.crafting_max_rrr)
                 
                 craft_unit_cost = ing_total_cost * (1.0 - rrr_val)
 
@@ -191,8 +191,9 @@ class CraftingEngine:
             db = cast(Session, db)
             prices = self._get_latest_prices_map(db)
             recipes = self._get_recipes(db)
-            items = db.query(Item.item_id, Item.name, Item.category).all()
+            items = db.query(Item.item_id, Item.name, Item.category, Item.weight).all()
             item_names = {i[0]: i[1] for i in items}
+            item_weights = {i[0]: i[3] for i in items}
 
         items_processed = 0
         for item_id, recipe_data in recipes.items():
@@ -239,12 +240,14 @@ class CraftingEngine:
                             continue
 
                         opp = {
-                            "item_id": item_id, "item_name": f"{item_names.get(item_id, item_id)} (Q{quality})",
+                            "item_id": item_id, 
+                            "item_name": f"{item_names.get(item_id, item_id)} (Q{quality})",
+                            "item_weight": item_weights.get(item_id, 0.0),
                             "quality": quality, "crafting_city": city, "sell_city": sell_city,
                             "craft_cost": round(cost_base, 2), "sell_price": sell_p,
                             "profit": round(profit, 2), "profit_margin": round(margin, 2), 
                             "daily_volume": daily_vol,
-                            "volatility": 0.05, "persistence": 1,
+                            "volatility": settings.crafting_default_volatility, "persistence": 1,
                             "confidence_score": sell_data.get("confidence_score", 1.0),
                             "coverage_suspect": daily_vol <= 1,
                             "details": res.get("details", []),

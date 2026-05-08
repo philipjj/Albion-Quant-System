@@ -316,3 +316,55 @@ class UserProfile(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+# Phase 16 Models
+
+class MetaSnapshot(Base):
+    """PvP usage snapshots."""
+    __tablename__ = "meta_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_id = Column(String(128), nullable=False, index=True)
+    tier = Column(String(16), nullable=True)
+    count = Column(Integer, default=0)
+    captured_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+class PatchEventModel(Base):
+    """Buff/nerf history."""
+    __tablename__ = "patch_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(256), nullable=False)
+    content = Column(Text, nullable=False)
+    detected_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+class LoadoutCluster(Base):
+    """Popular builds."""
+    __tablename__ = "loadout_clusters"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    weapon = Column(String(128), nullable=False, index=True)
+    tier = Column(String(16), nullable=True)
+    usage_trend = Column(String(16), default="stable")
+    meta_strength = Column(Float, default=0.0)
+    detected_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+class ItemMetaScore(Base):
+    """Current meta state."""
+    __tablename__ = "item_meta_scores"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_id = Column(String(128), nullable=False, index=True)
+    score = Column(Float, default=0.0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+
+class PatchForecast(Base):
+    """Future demand projections."""
+    __tablename__ = "patch_forecasts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_id = Column(String(128), nullable=False, index=True)
+    expected_impact = Column(String(256), nullable=True)
+    confidence = Column(String(16), default="MEDIUM")
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+

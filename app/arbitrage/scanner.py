@@ -43,17 +43,17 @@ class ArbitrageScanner:
         dist = get_distance(source, dest)
         is_dangerous = (source, dest) in DANGEROUS_ROUTES
         
-        base_risk = dist * 10
+        base_risk = dist * settings.arb_distance_weight
         if is_dangerous:
-            base_risk *= 2.5
+            base_risk *= settings.arb_danger_multiplier
             
         # Value-at-risk penalty
-        value_risk = (item_value / 100000) * 5
+        value_risk = (item_value / settings.arb_value_divisor) * settings.arb_value_weight
         return round(base_risk + value_risk, 2)
 
     def _get_latest_prices(self, db: Session) -> dict[tuple[str, int], dict[str, dict[str, Any]]]:
         """Fetches and groups latest prices using memory-efficient streaming."""
-        cutoff = datetime.utcnow() - timedelta(hours=2)
+        cutoff = datetime.utcnow() - timedelta(hours=settings.arb_regular_hours)
         valid_items = set([
             i[0] for i in db.query(Item.item_id).filter(
                 Item.category != "vanity"
@@ -88,7 +88,7 @@ class ArbitrageScanner:
             }
 
         # --- Black Market Integration ---
-        bm_cutoff = datetime.utcnow() - timedelta(hours=4)
+        bm_cutoff = datetime.utcnow() - timedelta(hours=settings.arb_bm_hours)
         bm_snapshots = db.query(BlackMarketSnapshot).filter(
             BlackMarketSnapshot.captured_at >= bm_cutoff
         ).all()
@@ -118,7 +118,9 @@ class ArbitrageScanner:
         with get_db_session() as db:
             db = cast(Session, db)
             prices = self._get_latest_prices(db)
-            item_names = {i[0]: i[1] for i in db.query(Item.item_id, Item.name).all()}
+            items = db.query(Item.item_id, Item.name, Item.weight).all()
+            item_names = {i.item_id: i.name for i in items}
+            item_weights = {i.item_id: i.weight for i in items}
 
         if not prices:
             log.warning("No market prices available.")
@@ -181,6 +183,7 @@ class ArbitrageScanner:
                 opportunity = {
                     "item_id": item_id,
                     "item_name": item_names.get(item_id, item_id),
+                    "item_weight": item_weights.get(item_id, 0.0),
                     "quality": quality,
                     "source_city": cheapest_source_city,
                     "destination_city": dest_city,
@@ -190,7 +193,7 @@ class ArbitrageScanner:
                     "estimated_margin": round(margin_pct, 2),
                     "risk_score": risk_score,
                     "daily_volume": daily_vol,
-                    "volatility": 0.05, 
+                    "volatility": settings.arb_default_volatility, 
                     "persistence": persistence,
                     "data_age_seconds": d_data.get("data_age_seconds", 0),
                     "confidence_score": d_data.get("confidence_score", 1.0),

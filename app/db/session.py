@@ -131,6 +131,7 @@ def init_db() -> None:
             # Create hypertable for TimescaleDB if using PostgreSQL
             if not settings.database_url.startswith("sqlite"):
                 try:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb;"))
                     conn.execute(text("SELECT create_hypertable('market_prices', 'captured_at', if_not_exists => TRUE);"))
                     print("Migration: Verified hypertable for market_prices")
                 except Exception as e:

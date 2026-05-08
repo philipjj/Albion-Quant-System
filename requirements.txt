@@ -11,6 +11,7 @@ python-dotenv
 pandas
 numpy
 orjson
+pyarrow
 
 # Async + HTTP
 httpx
@@ -27,9 +28,12 @@ rich
 tenacity
 loguru
 Pillow
+pyyaml
 
 # Database
 aiosqlite
+asyncpg
+redis
 discord.py
 
 # Machine Learning & AI

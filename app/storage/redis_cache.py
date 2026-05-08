@@ -3,8 +3,8 @@ import logging
 from typing import Optional, List
 import redis.asyncio as redis
 from redis.exceptions import ConnectionError as RedisConnectionError
-from shared.domain.market_snapshot import MarketSnapshot
-from shared.domain.opportunity import Opportunity
+from app.shared.domain.market_snapshot import MarketSnapshot
+from app.shared.domain.opportunity import Opportunity
 
 logger = logging.getLogger(__name__)
 

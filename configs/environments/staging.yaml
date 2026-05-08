@@ -1,0 +1,4 @@
+# Staging Environment Configuration
+env: staging
+db_path: runtime/databases/aqs_staging.sqlite
+log_level: INFO

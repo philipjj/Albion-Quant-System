@@ -47,14 +47,39 @@ class DiscordAlerter:
     async def _send_webhook(self, payload: dict) -> bool:
         if not self.enabled: return False
         payload["username"] = "Albion Quant Bot"
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(self.webhook_url, json=payload)
-                resp.raise_for_status()
-                return True
-        except Exception as e:
-            log.error(f"Discord webhook failed: {e}")
-            return False
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(self.webhook_url, json=payload)
+                    
+                    if resp.status_code == 429:
+                        retry_after = float(resp.headers.get("Retry-After", 2.0))
+                        log.warning(f"Discord rate limit (429). Waiting {retry_after}s...")
+                        await asyncio.sleep(retry_after)
+                        continue
+                        
+                    if resp.status_code == 503:
+                        log.warning(f"Discord service unavailable (503). Retrying in 2s...")
+                        await asyncio.sleep(2.0)
+                        continue
+                        
+                    resp.raise_for_status()
+                    return True
+            except httpx.HTTPStatusError as e:
+                log.error(f"Discord webhook failed with status {e.response.status_code} (Attempt {attempt+1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    return False
+            except Exception as e:
+                log.error(f"Discord webhook failed: {e} (Attempt {attempt+1}/{max_retries})")
+                if attempt == max_retries - 1:
+                    return False
+            
+            await asyncio.sleep(1.0)
+            
+        return False
+
 
     async def send_arbitrage_alert(self, opp: dict) -> bool:
         confidence = scorer.calculate_data_confidence(opp)
@@ -160,10 +185,91 @@ class DiscordAlerter:
         
         return await self._send_webhook({"embeds": [embed]})
 
+    async def send_patch_alert(self, patch_event: dict) -> bool:
+        """Sends an alert for a patch or NDA update."""
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        color = 0xE67E22 # Orange for patch alerts
+        
+        embed = {
+            "title": f"⚔️ {badge} PATCH/META SHIFT DETECTED",
+            "description": f"**{patch_event['title']}**\n\n{patch_event['content']}",
+            "color": color,
+            "fields": [
+                {"name": "🎯 EXPECTED IMPACT", "value": patch_event.get("impact", "Unknown"), "inline": False},
+                {"name": "🧠 CONFIDENCE", "value": f"**{patch_event.get('confidence', 'MEDIUM')}**", "inline": True},
+                {"name": "⏳ WINDOW", "value": patch_event.get("window", "24-72h"), "inline": True},
+            ],
+            "footer": {"text": f"AQS Patch Intelligence • {settings.active_server.value.upper()} Market"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return await self._send_webhook({"embeds": [embed]})
+
+    async def send_meta_alert(self, meta_event: dict) -> bool:
+        """Sends an alert for a meta surge or build rotation."""
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        color = 0xE74C3C # Red for meta surges
+        
+        embed = {
+            "title": f"🔥 {badge} META SURGE: {meta_event['item_id']}",
+            "description": f"Meta demand score spike detected!",
+            "color": color,
+            "fields": [
+                {"name": "🚀 META SCORE", "value": f"**{meta_event['score']:.2f}**", "inline": True},
+                {"name": "📈 TREND", "value": f"**{meta_event.get('trend', 'UP')}**", "inline": True},
+                {"name": "📊 USAGE", "value": f"{meta_event.get('usage', 'N/A')}", "inline": True},
+            ],
+            "footer": {"text": f"AQS PvP Meta Engine • {settings.active_server.value.upper()} Market"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return await self._send_webhook({"embeds": [embed]})
+
+    async def send_categorized_alert(self, category: str, data: dict) -> bool:
+        """
+        Sends a categorized alert as requested in Phase 14.
+        Supported categories: META SURGE, PATCH BUFF, PATCH NERF, BUILD ROTATION, RESOURCE PRESSURE, BM META PULL
+        """
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        
+        # Color mapping based on category
+        colors = {
+            "META SURGE": 0xE74C3C, # Red
+            "PATCH BUFF": 0x2ECC71, # Green
+            "PATCH NERF": 0xC0392B, # Dark Red
+            "BUILD ROTATION": 0x3498DB, # Blue
+            "RESOURCE PRESSURE": 0xF1C40F, # Yellow
+            "BM META PULL": 0x9B59B6 # Purple
+        }
+        
+        color = colors.get(category, 0x95A5A6) # Default Gray
+        
+        embed = {
+            "title": f"📢 {badge} {category}: {data.get('item_name', data.get('item_id', 'Global'))}",
+            "description": data.get("description", f"Alert for {category}"),
+            "color": color,
+            "fields": [],
+            "footer": {"text": f"AQS vNext Intelligence • {settings.active_server.value.upper()} Market"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Add dynamic fields if present
+        for key, val in data.items():
+            if key not in ["item_name", "item_id", "description"]:
+                embed["fields"].append({"name": key.upper().replace("_", " "), "value": str(val), "inline": True})
+                
+        # Add thumbnail if item_id is present
+        if "item_id" in data:
+            embed["thumbnail"] = {"url": item_icon_url(data["item_id"], quality=data.get("quality", 1), size=128)}
+            
+        return await self._send_webhook({"embeds": [embed]})
+
     async def send_batch_alerts(self, arb_opps: list[dict], craft_opps: list[dict], arb_limit: int = 5, craft_limit: int = 10):
+
         for opp in arb_opps[:arb_limit]:
             await self.send_arbitrage_alert(opp)
             await asyncio.sleep(1.0)
         for opp in craft_opps[:craft_limit]:
             await self.send_crafting_alert(opp)
             await asyncio.sleep(1.0)
+

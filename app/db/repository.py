@@ -2,9 +2,9 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db_session
 from app.db.models import MarketPrice
 from app.core.config import settings
-from shared.domain.repository import IMarketDataRepository
-from shared.domain.market_snapshot import MarketSnapshot
-from shared.utils.market import get_bucket
+from app.shared.domain.repository import IMarketDataRepository
+from app.shared.domain.market_snapshot import MarketSnapshot
+from app.shared.utils.market import get_bucket
 
 class SQLiteMarketDataRepository(IMarketDataRepository):
     async def save_snapshots(self, snapshots: list[MarketSnapshot]) -> None:

@@ -29,16 +29,19 @@ async def on_ready():
 
 @bot.command()
 async def help(ctx):
-    """Custom help command for AQS v3.0 manual controls."""
-    embed = discord.Embed(title="📖 AQS v3.0 Manual Controls", color=discord.Color.green())
+    """Custom help command for AQS manual controls."""
+    embed = discord.Embed(title="📖 AQS Manual Controls", color=discord.Color.green())
     embed.add_field(name="`!status`", value="Check system health, active server, and scheduler state.", inline=False)
     embed.add_field(name="`!server [name]`", value="Switch between `europe`, `west`, or `east`.", inline=False)
     embed.add_field(name="`!schedule [time]`", value="Set poll interval (e.g., `!schedule 1h 30m`).", inline=False)
     embed.add_field(name="`!start` / `!stop`", value="Start or pause background collection tasks.", inline=False)
-    embed.add_field(name="`!scan`", value="Trigger an immediate manual scan (Top 5 + Consumables/Materials).", inline=False)
+    embed.add_field(name="`!scan`", value="Trigger an immediate manual scan.", inline=False)
     embed.add_field(name="`!purge [start] [end]`", value="Delete messages in a date range (DD/MM/YYYY).", inline=False)
     embed.add_field(name="`!bm`", value="Quick Black Market shortage report.", inline=False)
+    embed.add_field(name="`!meta`", value="View top PvP meta items.", inline=False)
+    embed.add_field(name="`!patch`", value="View latest patch intelligence.", inline=False)
     await ctx.send(embed=embed)
+
 
 @bot.command()
 async def purge(ctx, start_str: str, end_str: str):
@@ -225,9 +228,73 @@ async def bm(ctx):
         )
     await ctx.send(embed=embed)
 
+@bot.command()
+async def meta(ctx):
+    """View top PvP meta items."""
+    from sqlalchemy import desc
+    from app.db.models import ItemMetaScore
+    
+    with get_db_session() as db:
+        scores = db.query(ItemMetaScore).order_by(desc(ItemMetaScore.score)).limit(5).all()
+        
+    if not scores:
+        await ctx.send("ℹ️ No meta scores calculated yet. Waiting for next scan.")
+        return
+        
+    embed = discord.Embed(title="🔥 Top PvP Meta Items", color=discord.Color.red())
+    for s in scores:
+        embed.add_field(
+            name=f"{s.item_id}",
+            value=f"Meta Score: **{s.score:.2f}**",
+            inline=False
+        )
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def patch(ctx):
+    """View latest patch intelligence."""
+    from sqlalchemy import desc
+    from app.db.models import PatchForecast
+    
+    with get_db_session() as db:
+        forecasts = db.query(PatchForecast).order_by(desc(PatchForecast.created_at)).limit(3).all()
+        
+    if not forecasts:
+        await ctx.send("ℹ️ No patch forecasts tracked yet.")
+        return
+        
+    embed = discord.Embed(title="⚔️ Latest Patch Intelligence", color=discord.Color.orange())
+    for f in forecasts:
+        embed.add_field(
+            name=f"{f.item_id}",
+            value=f"Impact: **{f.expected_impact}**\nConfidence: **{f.confidence}**",
+            inline=False
+        )
+    await ctx.send(embed=embed)
+
+
 async def start_discord_bot():
     if settings.discord_bot_token:
-        await bot.start(settings.discord_bot_token)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                await bot.start(settings.discord_bot_token)
+                break
+            except discord.errors.HTTPException as e:
+                if e.status == 429:
+                    log.error(f"Discord bot is being rate limited (429): {e}. Retrying in 5s... (Attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(5.0)
+                elif e.status == 503 or "no healthy upstream" in str(e):
+                    log.error(f"Discord service unavailable (503): {e}. Retrying in 5s... (Attempt {attempt+1}/{max_retries})")
+                    await asyncio.sleep(5.0)
+                else:
+                    log.error(f"Discord bot failed to start with HTTP error: {e}")
+                    break
+            except Exception as e:
+                log.error(f"Discord bot failed to start: {e}")
+                break
+
+
 
 async def stop_discord_bot():
     if not bot.is_closed():

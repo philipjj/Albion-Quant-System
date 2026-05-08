@@ -13,7 +13,6 @@ from datetime import datetime
 from typing import Any, Optional, cast
 
 from sqlalchemy import or_
-from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
 from sqlalchemy.orm import Session
 
 from app.core.config import AlbionServer, settings
@@ -25,6 +24,9 @@ from app.db.models import BlackMarketSnapshot, Item, MarketPrice
 from app.db.session import get_db_session
 from app.services.http_client import aqs_http
 from app.services.rate_limiter import limiter
+
+from app.shared.domain.repository import IMarketDataRepository
+from app.shared.domain.market_snapshot import MarketSnapshot
 
 
 def parse_timestamp(ts: str) -> datetime | None:
@@ -47,10 +49,27 @@ class MarketCollector:
     Phase 2: Integrity & Freshness filtering.
     Phase 3: O(n) performance scaling.
     """
-    def __init__(self):
+    def __init__(self, repository: IMarketDataRepository = None, parquet_storage = None, redis_cache = None):
         self.base_url = settings.aodp_base_urls.get(settings.active_server, "https://europe.albion-online-data.com")
         self.active_server = settings.active_server
         self._stop_requested = False
+        if repository is None:
+            from app.db.repository import SQLiteMarketDataRepository
+            self.repository = SQLiteMarketDataRepository()
+        else:
+            self.repository = repository
+            
+        if parquet_storage is None:
+            from app.storage.parquet_storage import ParquetHistoricalStorage
+            self.parquet_storage = ParquetHistoricalStorage()
+        else:
+            self.parquet_storage = parquet_storage
+            
+        if redis_cache is None:
+            from app.storage.redis_cache import RedisCache
+            self.redis_cache = RedisCache(settings.redis_url)
+        else:
+            self.redis_cache = redis_cache
 
     async def __aenter__(self):
         return self
@@ -221,6 +240,46 @@ class MarketCollector:
             
         return batches
 
+    async def process_signals(self, snapshots: list[MarketSnapshot]):
+        """Generates signals for new snapshots using MeanReversionEngine and CrossCityModel."""
+        from app.models.mean_reversion_engine import MeanReversionEngine
+        from app.models.cross_city_model import CrossCityModel
+        
+        mr_engine = MeanReversionEngine()
+        cc_model = CrossCityModel()
+        
+        # Group by item_id
+        by_item = {}
+        for s in snapshots:
+            if s.item_id not in by_item: by_item[s.item_id] = []
+            by_item[s.item_id].append(s)
+            
+        for item_id, snaps in by_item.items():
+            # 1. Mean Reversion Signals
+            for s in snaps:
+                prices = await self.repository.get_historical_prices(s.item_id, s.city)
+                if prices and len(prices) >= 10:
+                    signal = mr_engine.evaluate(s.item_id, s.city, prices)
+                    if signal:
+                        from app.core.logging import log
+                        log.info(f"🚨 SIGNAL generated: {signal.signal_type} for {signal.item_id} in {signal.city} (Strength: {signal.strength:.2f})")
+                        
+            # 2. Cross-City Arbitrage Signals
+            city_prices = {s.city: s.best_ask for s in snaps if s.best_ask > 0}
+            if len(city_prices) > 1:
+                # Generate dummy route info for pairs
+                dummy_route = {}
+                for c1 in city_prices:
+                    dummy_route[c1] = {}
+                    for c2 in city_prices:
+                        if c1 != c2:
+                            dummy_route[c1][c2] = {"distance_zones": 2, "zone_type": "red", "killboard_activity": 5}
+                            
+                signals = cc_model.evaluate(item_id, city_prices, item_weight=1.0, route_info=dummy_route)
+                for sig in signals:
+                    from app.core.logging import log
+                    log.info(f"🚨 ARB SIGNAL: {sig.signal_type} for {sig.item_id} from {sig.metadata['source_city']} to {sig.metadata['target_city']} (Net Profit: {sig.metadata['net_profit']:.0f})")
+
     async def collect_prices(self):
         """High-frequency price ingestion (Pass 1 only)."""
         log.info(f"🚀 Starting AQS v3.1 PRICE Ingestion ({settings.active_server.value})")
@@ -306,24 +365,31 @@ class MarketCollector:
                         r["captured_at_bucket"] = now_bucket
                         if validate_market_record(r): market_to_save.append(r)
 
-                # 4. UPSERT (Chunked)
-                CHUNK_SIZE = 200
-                with get_db_session() as db:
-                    db = cast(Session, db)
-                    if market_to_save:
-                        for j in range(0, len(market_to_save), CHUNK_SIZE):
-                            chunk = market_to_save[j : j + CHUNK_SIZE]
-                            stmt = sqlite_upsert(MarketPrice).values(chunk)
-                            db.execute(stmt.on_conflict_do_update(
-                                index_elements=['item_id', 'city', 'quality', 'captured_at_bucket'],
-                                set_={
-                                    "sell_price_min": stmt.excluded.sell_price_min, 
-                                    "buy_price_max": stmt.excluded.buy_price_max, 
-                                    "data_age_seconds": stmt.excluded.data_age_seconds, 
-                                    "captured_at": stmt.excluded.captured_at
-                                }
-                            ))
-                    db.commit()
+                # 4. UPSERT via Repository
+                if market_to_save:
+                    snapshots = []
+                    for r in market_to_save:
+                        snapshots.append(MarketSnapshot(
+                            item_id=r["item_id"],
+                            city=r["city"],
+                            quality=r["quality"],
+                            timestamp=r["captured_at"],
+                            best_bid=float(r["buy_price_max"] or 0),
+                            best_ask=float(r["sell_price_min"] or 0),
+                            bid_depth=0,
+                            ask_depth=0,
+                            spread=float((r["sell_price_min"] or 0) - (r["buy_price_max"] or 0)),
+                            midprice=float(((r["sell_price_min"] or 0) + (r["buy_price_max"] or 0)) / 2),
+                            rolling_volume=r["volume_24h"] or 0,
+                            volatility=0.0
+                        ))
+                    await self.repository.save_snapshots(snapshots)
+                    self.parquet_storage.save_snapshots(snapshots)
+                    # Cache hot snapshots in Redis
+                    await asyncio.gather(*(self.redis_cache.set_hot_snapshot(s) for s in snapshots))
+                    
+                    # Process signals
+                    await self.process_signals(snapshots)
 
                 # Mandatory Pacing
                 await asyncio.sleep(2.5)
@@ -353,17 +419,12 @@ class MarketCollector:
                     v_map = await self.fetch_volume_data(city_name, batch)
                     if not v_map: continue
                     
-                    # Update the LATEST records for these items in the DB
-                    with get_db_session() as db:
-                        db = cast(Session, db)
-                        for key, vol in v_map.items():
-                            item_id, quality = key.split(":")
-                            db.query(MarketPrice).filter(
-                                MarketPrice.item_id == item_id,
-                                MarketPrice.city == city_name,
-                                MarketPrice.quality == int(quality)
-                            ).order_by(MarketPrice.captured_at.desc()).limit(1).update({"volume_24h": vol})
-                        db.commit()
+                    # Update the LATEST records for these items in the DB via repository
+                    async def update_item_volume(k, v):
+                        item_id, quality = k.split(":")
+                        await self.repository.update_volume(item_id, city_name, int(quality), v)
+                        
+                    await asyncio.gather(*(update_item_volume(key, vol) for key, vol in v_map.items()))
                 
                 if (i + 1) % 5 == 0:
                     log.info(f"✅ Volume Sync: {i + 1}/{len(batches)} batches done.")

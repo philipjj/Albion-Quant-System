@@ -20,19 +20,13 @@ htmlcov/
 !.env.example
 
 # Database & Data
-data/*.db
-data/*.db-shm
-data/*.db-wal
-data/*.sqlite3
-data/**/*.json
-data/**/*.parquet
-data/historical/
-data/snapshots/
-*.parquet
-albion_quant.db
+data/
+runtime/
+*.db
 *.db-shm
 *.db-wal
-*.db
+*.sqlite3
+*.parquet
 *.json
 tests/**/*.db
 

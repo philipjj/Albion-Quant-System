@@ -20,15 +20,37 @@ class AlbionServer(str, Enum):
 
 # Project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = PROJECT_ROOT / "data"
-RAW_DIR = DATA_DIR / "raw"
-PARSED_DIR = DATA_DIR / "parsed"
-SNAPSHOTS_DIR = DATA_DIR / "snapshots"
-CACHE_DIR = DATA_DIR / "cache"
+RUNTIME_DIR = PROJECT_ROOT / "runtime"
+DATA_DIR = RUNTIME_DIR # Fallback for backward compatibility
+CACHE_DIR = RUNTIME_DIR / "cache"
+DB_DIR = RUNTIME_DIR / "databases"
+HISTORICAL_DIR = RUNTIME_DIR / "historical"
+LOGS_DIR = RUNTIME_DIR / "logs"
+PARQUET_DIR = RUNTIME_DIR / "parquet"
+REPORTS_DIR = RUNTIME_DIR / "reports"
+SNAPSHOTS_DIR = RUNTIME_DIR / "snapshots"
+TMP_DIR = RUNTIME_DIR / "tmp"
 
-# Ensure data directories exist
-for d in [DATA_DIR, RAW_DIR, PARSED_DIR, SNAPSHOTS_DIR, CACHE_DIR]:
+# Ensure runtime directories exist
+for d in [RUNTIME_DIR, CACHE_DIR, DB_DIR, HISTORICAL_DIR, LOGS_DIR, PARQUET_DIR, REPORTS_DIR, SNAPSHOTS_DIR, TMP_DIR]:
     d.mkdir(parents=True, exist_ok=True)
+
+import yaml
+
+def _load_yaml_parameters() -> dict:
+    """Loads parameters from configs/research/parameters.yaml if it exists."""
+    param_path = PROJECT_ROOT / "configs" / "research" / "parameters.yaml"
+    if param_path.exists():
+        try:
+            with open(param_path, "r") as f:
+                data = yaml.safe_load(f)
+                return data or {}
+        except Exception as e:
+            print(f"Error loading parameters.yaml: {e}")
+    return {}
+
+_params = _load_yaml_parameters()
+_thresholds = _params.get("thresholds", {})
 
 
 class Settings(BaseSettings):
@@ -36,8 +58,14 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = Field(
-        default=f"sqlite:///{DATA_DIR / 'albion_quant.db'}",
+        default=f"sqlite:///{DB_DIR / 'aqs.sqlite'}",
         alias="DATABASE_URL",
+    )
+
+    # Redis
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        alias="REDIS_URL",
     )
 
     # Albion API
@@ -65,14 +93,14 @@ class Settings(BaseSettings):
     discord_bot_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")
 
     # Trading Parameters
-    min_arbitrage_margin: float = Field(default=5.0, alias="MIN_ARBITRAGE_MARGIN")
-    min_arbitrage_profit: int = Field(default=2000, alias="MIN_ARBITRAGE_PROFIT")
-    min_crafting_profit: int = Field(default=500, alias="MIN_CRAFTING_PROFIT")
-    min_crafting_margin: float = Field(default=3.0, alias="MIN_CRAFTING_MARGIN")
-    min_volume: int = Field(default=5, alias="MIN_VOLUME")
-    target_exit_hours: float = Field(default=4.0, alias="TARGET_EXIT_HOURS")
-    max_capital_per_trade: int = Field(default=2000000, alias="MAX_CAPITAL_PER_TRADE")
-    max_crafting_capital: int = Field(default=2000000, alias="MAX_CRAFTING_CAPITAL")
+    min_arbitrage_margin: float = Field(default=_thresholds.get("min_arbitrage_margin", 5.0), alias="MIN_ARBITRAGE_MARGIN")
+    min_arbitrage_profit: int = Field(default=_thresholds.get("min_arbitrage_profit", 2000), alias="MIN_ARBITRAGE_PROFIT")
+    min_crafting_profit: int = Field(default=_thresholds.get("min_crafting_profit", 500), alias="MIN_CRAFTING_PROFIT")
+    min_crafting_margin: float = Field(default=_thresholds.get("min_crafting_margin", 3.0), alias="MIN_CRAFTING_MARGIN")
+    min_volume: int = Field(default=_thresholds.get("min_volume", 5), alias="MIN_VOLUME")
+    target_exit_hours: float = Field(default=_thresholds.get("target_exit_hours", 4.0), alias="TARGET_EXIT_HOURS")
+    max_capital_per_trade: int = Field(default=_thresholds.get("max_capital_per_trade", 2000000), alias="MAX_CAPITAL_PER_TRADE")
+    max_crafting_capital: int = Field(default=_thresholds.get("max_crafting_capital", 2000000), alias="MAX_CRAFTING_CAPITAL")
 
     # Market Constants
     premium_tax_rate: float = Field(default=0.04, alias="PREMIUM_TAX_RATE")
@@ -81,11 +109,52 @@ class Settings(BaseSettings):
     is_premium: bool = Field(default=True, alias="IS_PREMIUM")
 
     # [NEW] Market fee constants (Albion Online Wiki — Marketplace, 2026)
-    market_setup_fee_pct: float = 0.025
-    market_tax_premium_pct: float = 0.04
-    market_tax_non_premium_pct: float = 0.08
-    crafting_station_fee_default: float = 0.03
-    confidence_floor: float = 0.20
+    market_setup_fee_pct: float = _thresholds.get("market_setup_fee_pct", 0.025)
+    market_tax_premium_pct: float = _thresholds.get("market_tax_premium_pct", 0.04)
+    market_tax_non_premium_pct: float = _thresholds.get("market_tax_non_premium_pct", 0.08)
+    crafting_station_fee_default: float = _thresholds.get("crafting_station_fee_default", 0.03)
+    confidence_floor: float = _thresholds.get("confidence_floor", 0.20)
+
+    # Signal Defaults
+    volatility_default_confidence: float = _params.get("signals", {}).get("volatility", {}).get("default_confidence", 0.5)
+    volatility_default_persistence: float = _params.get("signals", {}).get("volatility", {}).get("default_persistence", 0.4)
+    volatility_default_manipulation_risk: float = _params.get("signals", {}).get("volatility", {}).get("default_manipulation_risk", 0.3)
+
+    # Imbalance Signal Defaults
+    imbalance_default_confidence: float = _params.get("signals", {}).get("imbalance", {}).get("default_confidence", 0.8)
+    imbalance_default_persistence: float = _params.get("signals", {}).get("imbalance", {}).get("default_persistence", 0.5)
+    imbalance_default_manipulation_risk: float = _params.get("signals", {}).get("imbalance", {}).get("default_manipulation_risk", 0.1)
+
+    # Liquidity Gap Signal Defaults
+    liquidity_gap_default_confidence: float = _params.get("signals", {}).get("liquidity_gap", {}).get("default_confidence", 0.6)
+    liquidity_gap_default_persistence: float = _params.get("signals", {}).get("liquidity_gap", {}).get("default_persistence", 0.5)
+    liquidity_gap_default_manipulation_risk: float = _params.get("signals", {}).get("liquidity_gap", {}).get("default_manipulation_risk", 0.2)
+
+    # Scarcity Signal Defaults
+    scarcity_default_confidence: float = _params.get("signals", {}).get("scarcity", {}).get("default_confidence", 0.7)
+    scarcity_default_persistence: float = _params.get("signals", {}).get("scarcity", {}).get("default_persistence", 0.8)
+    scarcity_default_manipulation_risk: float = _params.get("signals", {}).get("scarcity", {}).get("default_manipulation_risk", 0.2)
+
+    # Substitution Signal Defaults
+    substitution_default_confidence: float = _params.get("signals", {}).get("substitution", {}).get("default_confidence", 0.6)
+    substitution_default_persistence: float = _params.get("signals", {}).get("substitution", {}).get("default_persistence", 0.6)
+    substitution_default_manipulation_risk: float = _params.get("signals", {}).get("substitution", {}).get("default_manipulation_risk", 0.1)
+
+    # Arbitrage Parameters
+    arb_distance_weight: float = _params.get("arbitrage", {}).get("risk", {}).get("distance_weight", 10.0)
+    arb_danger_multiplier: float = _params.get("arbitrage", {}).get("risk", {}).get("danger_multiplier", 2.5)
+    arb_value_divisor: float = _params.get("arbitrage", {}).get("risk", {}).get("value_divisor", 100000.0)
+    arb_value_weight: float = _params.get("arbitrage", {}).get("risk", {}).get("value_weight", 5.0)
+    arb_regular_hours: float = _params.get("arbitrage", {}).get("lookback", {}).get("regular_hours", 2.0)
+    arb_bm_hours: float = _params.get("arbitrage", {}).get("lookback", {}).get("black_market_hours", 4.0)
+    arb_default_volatility: float = _params.get("arbitrage", {}).get("default_volatility", 0.05)
+
+    # Crafting Parameters
+    crafting_lookback_hours: float = _params.get("crafting", {}).get("lookback_hours", 24.0)
+    crafting_max_depth: int = _params.get("crafting", {}).get("max_depth", 2)
+    crafting_default_tier: int = _params.get("crafting", {}).get("default_tier", 4)
+    crafting_max_rrr: float = _params.get("crafting", {}).get("max_rrr", 0.99)
+    crafting_default_volatility: float = _params.get("crafting", {}).get("default_volatility", 0.05)
 
     # Scheduler Intervals (minutes)
     market_poll_interval: int = Field(

@@ -60,7 +60,7 @@ class ReplayEngine:
                 ORDER BY captured_at ASC
             """
             
-            cursor.execute(query, (start_time.isoformat(), end_time.isoformat()))
+            cursor.execute(query, (start_time.strftime('%Y-%m-%d %H:%M:%S'), end_time.strftime('%Y-%m-%d %H:%M:%S')))
             
             for row in cursor:
                 # Convert row to dict
