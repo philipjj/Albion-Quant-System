@@ -1,5 +1,3 @@
-from datetime import datetime
-from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
 from sqlalchemy.orm import Session
 from app.db.session import get_db_session
 from app.db.models import MarketPrice
@@ -9,7 +7,7 @@ from shared.domain.market_snapshot import MarketSnapshot
 from shared.utils.market import get_bucket
 
 class SQLiteMarketDataRepository(IMarketDataRepository):
-    def save_snapshots(self, snapshots: list[MarketSnapshot]) -> None:
+    async def save_snapshots(self, snapshots: list[MarketSnapshot]) -> None:
         if not snapshots:
             return
             
@@ -35,18 +33,35 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
         with get_db_session() as db:
             for j in range(0, len(market_to_save), CHUNK_SIZE):
                 chunk = market_to_save[j : j + CHUNK_SIZE]
-                stmt = sqlite_upsert(MarketPrice).values(chunk)
-                db.execute(stmt.on_conflict_do_update(
-                    index_elements=['item_id', 'city', 'quality', 'captured_at_bucket'],
-                    set_={
-                        "sell_price_min": stmt.excluded.sell_price_min, 
-                        "buy_price_max": stmt.excluded.buy_price_max, 
-                        "volume_24h": stmt.excluded.volume_24h,
-                        "captured_at": stmt.excluded.captured_at
-                    }
-                ))
                 
-    def get_latest_snapshot(self, item_id: str, city: str) -> MarketSnapshot | None:
+                if settings.database_url.startswith("sqlite"):
+                    from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
+                    stmt = sqlite_upsert(MarketPrice).values(chunk)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=['item_id', 'city', 'quality', 'captured_at_bucket'],
+                        set_={
+                            "sell_price_min": stmt.excluded.sell_price_min, 
+                            "buy_price_max": stmt.excluded.buy_price_max, 
+                            "volume_24h": stmt.excluded.volume_24h,
+                            "captured_at": stmt.excluded.captured_at
+                        }
+                    )
+                else:
+                    from sqlalchemy.dialects.postgresql import insert as pg_upsert
+                    stmt = pg_upsert(MarketPrice).values(chunk)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=['item_id', 'city', 'quality', 'captured_at_bucket'],
+                        set_={
+                            "sell_price_min": stmt.excluded.sell_price_min, 
+                            "buy_price_max": stmt.excluded.buy_price_max, 
+                            "volume_24h": stmt.excluded.volume_24h,
+                            "captured_at": stmt.excluded.captured_at
+                        }
+                    )
+                
+                db.execute(stmt)
+                
+    async def get_latest_snapshot(self, item_id: str, city: str) -> MarketSnapshot | None:
         with get_db_session() as db:
             row = (
                 db.query(MarketPrice)
@@ -75,3 +90,40 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
                 rolling_volume=row.volume_24h or 0,
                 volatility=0.0 # Not stored in DB
             )
+            
+    async def get_historical_prices(self, item_id: str, city: str, limit: int = 100) -> list[float]:
+        with get_db_session() as db:
+            rows = (
+                db.query(MarketPrice)
+                .filter(
+                    MarketPrice.item_id == item_id,
+                    MarketPrice.city == city
+                )
+                .order_by(MarketPrice.captured_at.desc())
+                .limit(limit)
+                .all()
+            )
+            
+            # Reverse to get chronological order
+            rows.reverse()
+            
+            prices = []
+            for row in rows:
+                sell = row.sell_price_min or 0
+                buy = row.buy_price_max or 0
+                if sell > 0 and buy > 0:
+                    prices.append((sell + buy) / 2.0)
+                elif sell > 0:
+                    prices.append(float(sell))
+                elif buy > 0:
+                    prices.append(float(buy))
+                    
+            return prices
+            
+    async def update_volume(self, item_id: str, city: str, quality: int, volume: int) -> None:
+        with get_db_session() as db:
+            db.query(MarketPrice).filter(
+                MarketPrice.item_id == item_id,
+                MarketPrice.city == city,
+                MarketPrice.quality == quality
+            ).order_by(MarketPrice.captured_at.desc()).limit(1).update({"volume_24h": volume})
