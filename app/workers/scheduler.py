@@ -13,6 +13,7 @@ from app.core.logging import log
 from app.crafting.engine import CraftingEngine
 from app.db.session import get_db_session
 from app.ingestion.collector import MarketCollector
+from app.core.scanner_integration import UnifiedScanner
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -33,6 +34,7 @@ class QuantScheduler:
         self.collector = MarketCollector()
         self.arb_scanner = ArbitrageScanner()
         self.craft_engine = CraftingEngine()
+        self.unified_scanner = UnifiedScanner()
         self.alerter = DiscordAlerter()
         self._is_running = False
         
@@ -102,9 +104,19 @@ class QuantScheduler:
                 log.warning("[SCHEDULER] Cycle aborted: Ingest failed or was cancelled.")
                 return
 
-            # 2. Analyze (sequentially to avoid DB locks and use latest data)
-            await self.job_compute_arbitrage()
-            await self.job_compute_crafting()
+            # 2. Analyze using UnifiedScanner
+            log.info("[SCHEDULER] Step 2: Running Unified Scanner...")
+            bm, crafting, arb = await self.unified_scanner.scan_all()
+            
+            # 3. Alert
+            log.info(f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)})")
+            
+            # Combine BM and Arb for alerts
+            all_arb = bm + arb
+            if all_arb:
+                await self.alerter.send_batch_alerts(all_arb, [], arb_limit=settings.alert_limit_per_cycle)
+            if crafting:
+                await self.alerter.send_batch_alerts([], crafting, craft_limit=settings.alert_limit_per_cycle)
             
             duration = (datetime.utcnow() - start_time).total_seconds()
             log.info(f"═══ MASTER QUANT CYCLE COMPLETE ({duration:.1f}s) ═══")

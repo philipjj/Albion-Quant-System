@@ -95,21 +95,24 @@ class DiscordAlerter:
         
         embed = {
             "title": f"⚔️ {badge} ARBITRAGE: {opp['item_name']}",
-            "description": f"Margin: **{opp['estimated_margin']:.1f}%**",
+            "description": f"Margin: **{opp['estimated_margin']:.1f}%** (Instant-Fill)",
             "color": color,
             "thumbnail": {"url": item_icon_url(opp["item_id"], quality=opp.get("quality", 1), size=128)},
             "fields": [
                 {"name": "🏙️ ROUTE", "value": f"**{opp['source_city']}** ➔ **{dest_city}**", "inline": True},
-                {"name": "⚖️ RISK", "value": _risk_label(opp.get("risk_score", 0)), "inline": True},
+                {"name": "💰 PRICES", "value": f"Buy: **{opp['buy_price']:,}**\nSell: **{opp['sell_price']:,}**", "inline": True},
                 {"name": "💎 PROFIT", "value": f"**{opp['estimated_profit']:,.0f}**", "inline": True},
+                {"name": "⚖️ RISK", "value": _risk_label(opp.get("risk_score", 0)), "inline": True},
                 {"name": "🚀 ALPHA", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
-                {"name": "🧠 CONF", "value": f"**{confidence*100:.0f}%**", "inline": True},
                 {"name": "📊 VOL", "value": f"{opp.get('daily_volume', 0):,}", "inline": True},
             ],
             "footer": {"text": f"AQS v3.1 High-Efficiency • {settings.active_server.value.upper()} Market"},
             "timestamp": datetime.utcnow().isoformat()
         }
         
+        if opp.get("can_be_crafted"):
+            embed["description"] += f"\n🔨 **Cheaper to Craft**: Yes at **{opp.get('craft_city')}** (Cost: **{opp.get('craft_cost', 0):,.0f}**)"
+
         if opp.get("coverage_suspect"):
             embed["description"] += "\n⚠️ **ENCRYPTION GAP**: 0 Volume, price may be stale."
             
@@ -147,8 +150,9 @@ class DiscordAlerter:
             "fields": [
                 {"name": "🚚 SELL CITY", "value": sell_city, "inline": True},
                 {"name": "💰 PROFIT", "value": f"**{opp['profit']:,.0f}**", "inline": True},
+                {"name": "♻️ RRR", "value": f"**{opp.get('rrr_used', 0)*100:.1f}%**", "inline": True},
+                {"name": "🧘 FOCUS", "value": "YES" if opp.get("use_focus") else "NO", "inline": True},
                 {"name": "🚀 ALPHA", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
-                {"name": "🧠 CONF", "value": f"**{confidence*100:.0f}%**", "inline": True},
                 {"name": "📊 VOL", "value": f"{opp.get('daily_volume', 0):,}", "inline": True},
                 {"name": "📜 CRAFTING PATH", "value": f"```\n{path_str[:900]}\n```" if path_str else "No details", "inline": False},
             ],

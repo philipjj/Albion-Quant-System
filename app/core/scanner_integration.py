@@ -12,7 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
@@ -27,8 +26,8 @@ from app.core.opportunity_engine import (
 )
 from app.db.models import BlackMarketSnapshot, Item, MarketPrice, Recipe
 from app.db.session import get_db_session
+from app.core.logging import log
 
-log = logging.getLogger(__name__)
 
 
 class UnifiedScanner:
@@ -71,6 +70,8 @@ class UnifiedScanner:
             )
             .all()
         )
+        log.info(f"[UNIFIED SCANNER] Loaded {len(rows)} rows from DB for cutoff {cutoff} and server {settings.active_server.value}")
+
 
         for p in rows:
             item_id = p.item_id
@@ -90,7 +91,7 @@ class UnifiedScanner:
                 "sell_price_min": p.sell_price_min or 0,
                 "buy_price_max": p.buy_price_max or 0,
                 "volume_24h": p.volume_24h or 0,
-                "data_age_seconds": int(p.data_age_seconds or 9999),
+                "data_age_seconds": int(p.data_age_seconds) if p.data_age_seconds is not None else 0,
                 "is_black_market": False,
                 "item_value": 0.0,  # Filled below
                 "_ts": p.captured_at,
