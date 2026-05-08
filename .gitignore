@@ -30,6 +30,7 @@ albion_quant.db
 *.db-wal
 *.db
 *.json
+tests/**/*.db
 
 # AQS Specific
 scratch/
