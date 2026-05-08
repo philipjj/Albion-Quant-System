@@ -25,6 +25,10 @@ data/*.db-shm
 data/*.db-wal
 data/*.sqlite3
 data/**/*.json
+data/**/*.parquet
+data/historical/
+data/snapshots/
+*.parquet
 albion_quant.db
 *.db-shm
 *.db-wal

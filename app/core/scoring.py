@@ -56,9 +56,14 @@ class Scorer:
         from app.core.constants import DANGEROUS_ROUTES, get_distance
         dist = get_distance(opp["source_city"], opp["destination_city"])
         
+        # [v3.1] Weight-adjusted transport cost
+        weight = opp.get("item_weight") or 0.5
+        
+        # [v3.1] Define risk multiplier based on route danger
         is_dangerous = (opp["source_city"], opp["destination_city"]) in DANGEROUS_ROUTES
-        risk_multiplier = 1.5 if is_dangerous else 1.0
-        transport_cost = (dist * 1000) * risk_multiplier
+        risk_multiplier = 2.5 if is_dangerous else 1.0
+        
+        transport_cost = (dist * weight * 250) * risk_multiplier
         
         # [v3.1] Strictly unit-based expected value to avoid Alpha hallucinations
         erph = (net_profit * fill_prob * confidence) - transport_cost
@@ -78,9 +83,14 @@ class Scorer:
         fill_prob = self.calculate_fill_probability(volume, margin_pct)
         confidence = self.calculate_data_confidence(opp)
         
+        from app.core.constants import get_distance
+        dist = get_distance(opp["crafting_city"], opp.get("sell_city", opp["crafting_city"]))
+        weight = opp.get("item_weight") or 0.5
+        transport_cost = (dist * weight * 250)
+        
         craft_overhead = 1500 
-        # [v3.1] Strictly unit-based expected value to avoid Alpha hallucinations
-        erph = (net_profit * fill_prob * confidence) - craft_overhead
+        # [v3.1] Strictly unit-based expected value with transport awareness
+        erph = (net_profit * fill_prob * confidence) - craft_overhead - transport_cost
         
         opp["fill_prob"] = fill_prob
         opp["confidence"] = confidence
