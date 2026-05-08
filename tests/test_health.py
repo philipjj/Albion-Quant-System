@@ -9,5 +9,5 @@ def test_root_returns_json() -> None:
         r = client.get("/")
     assert r.status_code == 200
     body = r.json()
-    assert body.get("system") == "Albion Quant Trading System"
-    assert "endpoints" in body
+    assert body.get("message") == "Albion Quant Trading System API"
+    assert body.get("status") == "online"
