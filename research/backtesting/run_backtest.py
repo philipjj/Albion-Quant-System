@@ -6,18 +6,25 @@ from research.backtesting.strategy import SimpleArbitrageStrategy
 from research.replay.engine import ReplayEngine
 from datetime import datetime
 
+import argparse
+
 def main():
-    print("Initializing Replay Engine...")
-    # Use real DB
-    replay_engine = ReplayEngine(source="db", db_path="data/albion_quant.db")
+    parser = argparse.ArgumentParser(description="Run Backtest on Real Data")
+    parser.add_argument("--db", type=str, default="data/albion_quant.db", help="Path to database")
+    parser.add_argument("--start", type=str, default="2026-05-07 12:00:00", help="Start time (YYYY-MM-DD HH:MM:SS)")
+    parser.add_argument("--end", type=str, default="2026-05-07 13:00:00", help="End time (YYYY-MM-DD HH:MM:SS)")
+    args = parser.parse_args()
+
+    print(f"Initializing Replay Engine with {args.db}...")
+    replay_engine = ReplayEngine(source="db", db_path=args.db)
     
     strategy = SimpleArbitrageStrategy()
     
     print("Initializing Backtest Engine...")
     backtester = BacktestEngine(replay_engine=replay_engine, strategy=strategy, initial_cash=100000.0)
     
-    start_time = datetime(2026, 5, 7, 12, 0, 0)
-    end_time = datetime(2026, 5, 7, 13, 0, 0)
+    start_time = datetime.strptime(args.start, "%Y-%m-%d %H:%M:%S")
+    end_time = datetime.strptime(args.end, "%Y-%m-%d %H:%M:%S")
     
     print(f"Running backtest from {start_time} to {end_time}...")
     
