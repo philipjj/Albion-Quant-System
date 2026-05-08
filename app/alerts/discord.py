@@ -136,6 +136,30 @@ class DiscordAlerter:
 
         return await self._send_webhook({"embeds": [embed]})
 
+    async def send_signal_alert(self, signal: dict) -> bool:
+        """Sends an alert for an alpha signal."""
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        color = 0x3498DB # Blue for signals
+        
+        embed = {
+            "title": f"📈 {badge} SIGNAL: {signal['item_id']}",
+            "description": f"Signal Type: **{signal['signal_type'].upper()}**",
+            "color": color,
+            "thumbnail": {"url": item_icon_url(signal["item_id"], quality=1, size=128)},
+            "fields": [
+                {"name": "🚀 ALPHA SCORE", "value": f"**{signal['alpha_score']:.2f}**", "inline": True},
+                {"name": "🧠 CONFIDENCE", "value": f"**{signal['confidence']*100:.0f}%**", "inline": True},
+                {"name": "⚖️ RISK (MANIP)", "value": f"**{signal['manipulation_risk']:.2f}**", "inline": True},
+                {"name": "💧 LIQUIDITY", "value": f"**{signal.get('liquidity_score', 0):.2f}**", "inline": True},
+                {"name": "⏳ PERSISTENCE", "value": f"**{signal.get('persistence_score', 0):.2f}**", "inline": True},
+                {"name": "🗂️ CLUSTER", "value": signal.get("cluster_id", "None"), "inline": True},
+            ],
+            "footer": {"text": f"AQS vNext Signal Engine • {settings.active_server.value.upper()} Market"},
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return await self._send_webhook({"embeds": [embed]})
+
     async def send_batch_alerts(self, arb_opps: list[dict], craft_opps: list[dict], arb_limit: int = 5, craft_limit: int = 10):
         for opp in arb_opps[:arb_limit]:
             await self.send_arbitrage_alert(opp)
