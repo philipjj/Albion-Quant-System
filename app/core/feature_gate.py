@@ -16,6 +16,12 @@ class FeatureGate:
     # Rate limiting protection
     is_rate_limited = False
 
+    # vNext Feature Flags
+    USE_ONTOLOGY_ENGINE = False
+    USE_MARKET_STATE_ENGINE = False
+    USE_SIGNAL_ENGINE = False
+    USE_MANIPULATION_FILTER = False
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
