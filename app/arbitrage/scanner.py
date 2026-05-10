@@ -76,6 +76,14 @@ class ArbitrageScanner:
             if key not in prices: prices[key] = {}
 
             iv = item_meta.get(item_id, 0.0)
+            
+            # [FIX] Only keep the latest price per (item_id, quality, city)
+            existing = prices[key].get(p.city)
+            if existing:
+                existing_ts = existing.get("_ts")
+                if existing_ts and p.captured_at and p.captured_at <= existing_ts:
+                    continue  # Skip older record
+
             prices[key][p.city] = {
                 "sell_price_min": p.sell_price_min or 0,
                 "buy_price_max": p.buy_price_max or 0,
@@ -84,7 +92,8 @@ class ArbitrageScanner:
                 "volume_24h": p.volume_24h or 0,
                 "confidence_score": p.confidence_score or 1.0,
                 "item_value": iv,
-                "is_black_market": False
+                "is_black_market": False,
+                "_ts": p.captured_at
             }
 
         # --- Black Market Integration ---
@@ -180,9 +189,19 @@ class ArbitrageScanner:
                 persistence = self._persistence_cache.get(p_key, 0) + 1
                 self._persistence_cache[p_key] = persistence
 
+                quality_names = {1: "", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
+                base_name = item_names.get(item_id, item_id)
+                # [FIX] Include enchantment and quality in the display name
+                display_name = base_name
+                if "@" in item_id:
+                    display_name += f" .{item_id.split('@')[1]}"
+                q_label = quality_names.get(quality, "")
+                if q_label:
+                    display_name += f" ({q_label})"
+
                 opportunity = {
                     "item_id": item_id,
-                    "item_name": item_names.get(item_id, item_id),
+                    "item_name": display_name,
                     "item_weight": item_weights.get(item_id, 0.0),
                     "quality": quality,
                     "source_city": cheapest_source_city,

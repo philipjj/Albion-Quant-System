@@ -8,6 +8,7 @@ from app.core.opportunity_engine import (
     OpportunityScanner,
     rrr,
     is_price_valid,
+    is_bm_price_valid,
     cross_city_outlier_check,
     ROYAL_CITIES,
 )
@@ -57,6 +58,12 @@ def test_price_invalid_manipulation_ratio():
 def test_price_valid_normal_spread():
     # 5x spread is on the edge but acceptable for rare items
     assert is_price_valid(400_000, 100_000) is True    # 4x
+
+
+def test_bm_price_valid_with_item_value():
+    """BM price should be rejected if it exceeds 5000x item value"""
+    assert is_bm_price_valid(10_000_000, 1_000) is False  # 10000x
+    assert is_bm_price_valid(4_000_000, 1_000) is True   # 4000x
 
 
 # ─── Cross-City Outlier Tests ─────────────────────────────────────────────────
@@ -142,6 +149,31 @@ def test_bm_scan_finds_profitable_flip(scanner):
     assert best.buy_city == "Bridgewatch"   # Cheapest city
     assert best.net_profit == 700_000 - 480_000
     assert best.profit_pct > 0
+
+
+def test_bm_scan_skips_unrealistic_spread(scanner):
+    """BM price > 8x royal price should be skipped"""
+    prices = {
+        "T8_BOW": {
+            "Lymhurst": {1: {
+                "sell_price_min": 1_000_000,
+                "buy_price_max": 800_000,
+                "volume_24h": 10,
+                "data_age_seconds": 600,
+                "is_black_market": False,
+            }},
+            "Black Market": {1: {
+                "sell_price_min": 0,
+                "buy_price_max": 9_000_000,   # 9x > 8x
+                "volume_24h": 1,
+                "data_age_seconds": 1200,
+                "is_black_market": True,
+            }},
+        }
+    }
+    names = {"T8_BOW": "Elder's Bow"}
+    opps = scanner.scan_black_market(prices, names, {}, {})
+    assert len(opps) == 0, "Unrealistic spread should be skipped"
 
 
 def test_bm_scan_skips_stale_bm_price(scanner):

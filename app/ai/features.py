@@ -24,9 +24,9 @@ class FeatureEngineer:
                 and_(
                     MarketSnapshot.item_id == item_id,
                     MarketSnapshot.city == city,
-                    MarketSnapshot.snapshot_at >= cutoff
+                    MarketSnapshot.captured_at >= cutoff
                 )
-            ).order_by(MarketSnapshot.snapshot_at.asc())
+            ).order_by(MarketSnapshot.captured_at.asc())
 
             records = db.execute(query).scalars().all()
 
@@ -34,7 +34,7 @@ class FeatureEngineer:
                 return pd.DataFrame()
 
             data = [{
-                'timestamp': r.snapshot_at,
+                'timestamp': r.captured_at,
                 'sell_price': r.sell_price_min,
                 'buy_price': r.buy_price_max
             } for r in records]

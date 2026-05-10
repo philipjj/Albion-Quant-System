@@ -255,7 +255,6 @@ class MarketSnapshot(Base):
     confidence_score = Column(Float, nullable=True)
     coverage_suspect = Column(Boolean, default=False)
 
-    quality = Column(Integer, default=1)
     captured_at = Column(DateTime, default=datetime.utcnow)
 
 class BlackMarketSnapshot(Base):

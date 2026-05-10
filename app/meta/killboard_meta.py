@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from app.core.logging import log
 
 SLOT_ORDER = [
     "MainHand",
@@ -91,10 +92,13 @@ async def fetch_events(base_url: str, *, pages: int = 3, limit: int = 51) -> lis
     async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "AlbionQuant/0.1 meta-scanner"}) as client:
         for page in range(pages):
             offset = page * limit
-            resp = await client.get(f"{base_url.rstrip('/')}/events", params={"limit": limit, "offset": offset})
+            url = f"{base_url.rstrip('/')}/events"
+            log.info(f"[META] Fetching {url} offset={offset} limit={limit}")
+            resp = await client.get(url, params={"limit": limit, "offset": offset})
             resp.raise_for_status()
             data = resp.json()
             batch = data if isinstance(data, list) else data.get("Events") if isinstance(data, dict) else []
+            log.info(f"[META] Received {len(batch)} events from API")
             if not batch:
                 break
             events.extend(batch)

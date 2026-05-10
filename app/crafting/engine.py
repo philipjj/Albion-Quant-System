@@ -63,11 +63,6 @@ class CraftingEngine:
             if item_id not in prices: prices[item_id] = {}
             if "Black Market" not in prices[item_id]: prices[item_id]["Black Market"] = {}
             
-        for bm in bm_snapshots:
-            item_id, quality = bm.item_id, bm.quality
-            if item_id not in prices: prices[item_id] = {}
-            if "Black Market" not in prices[item_id]: prices[item_id]["Black Market"] = {}
-            
             prices[item_id]["Black Market"][quality] = {
                 "sell_price_min": 0,
                 "buy_price_max": bm.buy_price_max or 0,
@@ -144,13 +139,20 @@ class CraftingEngine:
                 ingredient_total_cost = res["unit_cost"] * ing["quantity"]
                 ing_total_cost += ingredient_total_cost
                 
+                # Check if this ingredient is returnable (RRR eligible)
+                is_returnable = False
+                if "ARTIFACT" not in ing["item_id"].upper() and "ARTEFACT" not in ing["item_id"].upper():
+                    if any(r in ing["item_id"].upper() for r in ["PLANKS", "CLOTH", "LEATHER", "METALBAR", "BAR", "STONEBLOCK"]):
+                        is_returnable = True
+
                 # Add to path details (Summary only shows immediate ingredients to avoid double-counting)
                 ingredients_purchased.append({
                     "id": ing["item_id"], 
                     "mode": res["mode"], 
                     "quantity": ing["quantity"], 
                     "unit_price": res["unit_cost"],
-                    "total_price": ingredient_total_cost
+                    "total_price": ingredient_total_cost,
+                    "is_returnable": is_returnable
                 })
             
             if valid_sub:
@@ -164,7 +166,13 @@ class CraftingEngine:
                 # Hard cap at 99% to mathematically prevent negative-cost hallucinations
                 rrr_val = min(max(rrr_val, 0.0), settings.crafting_max_rrr)
                 
-                craft_unit_cost = ing_total_cost * (1.0 - rrr_val)
+                # [FIX] Apply RRR only to returnable ingredients, not artifacts
+                craft_unit_cost = 0.0
+                for ing_detail in ingredients_purchased:
+                    if ing_detail.get("is_returnable"):
+                        craft_unit_cost += ing_detail["total_price"] * (1.0 - rrr_val)
+                    else:
+                        craft_unit_cost += ing_detail["total_price"]
 
         # Decision: Craft if cheaper than buying
         should_craft = craft_unit_cost is not None and (buy_unit_cost <= 0 or craft_unit_cost < buy_unit_cost)
@@ -216,7 +224,11 @@ class CraftingEngine:
                 # 2. Evaluate sell cities
                 if item_id not in prices: continue
                 for sell_city, quality_map in prices[item_id].items():
-                    for quality, sell_data in quality_map.items():
+                    # [FIX] Only evaluate quality 1 — crafting at base spec always produces Q1.
+                    # Matching Q1 craft cost against Q4/Q5 sell prices created phantom 5000%+ margins.
+                    for quality in [1]:
+                        sell_data = quality_map.get(quality)
+                        if not sell_data: continue
                         sell_p = calculate_blended_price(sell_data["sell_price_min"], sell_data["buy_price_max"])
                         if sell_p <= 0: continue
                         

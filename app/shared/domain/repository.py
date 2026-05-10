@@ -13,8 +13,8 @@ class IMarketDataRepository(ABC):
         pass
         
     @abstractmethod
-    async def get_historical_prices(self, item_id: str, city: str, limit: int = 100) -> list[float]:
-        """Retrieves a list of historical midprices for a given item and city."""
+    async def get_historical_prices(self, item_id: str, city: str, limit: int = 100, quality: int = 1) -> list[float]:
+        """Retrieves a list of historical midprices for a given item, city, and quality."""
         pass
         
     @abstractmethod

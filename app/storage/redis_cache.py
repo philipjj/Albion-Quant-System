@@ -40,7 +40,7 @@ class RedisCache:
             return
         key = f"snapshot:{snapshot.item_id}:{snapshot.city}"
         try:
-            await self.redis.set(key, json.dumps(snapshot.dict(), default=str), ex=expire_seconds)
+            await self.redis.set(key, json.dumps(snapshot.model_dump(), default=str), ex=expire_seconds)
         except RedisConnectionError:
             logger.warning("Redis connection failed. Running without Redis cache.")
             self._connected = False
@@ -70,7 +70,7 @@ class RedisCache:
             return
         key = "active_opportunities"
         try:
-            items = [o.dict() for o in opportunities]
+            items = [o.model_dump() for o in opportunities]
             await self.redis.set(key, json.dumps(items, default=str), ex=expire_seconds)
         except RedisConnectionError:
             logger.warning("Redis connection failed. Running without Redis cache.")

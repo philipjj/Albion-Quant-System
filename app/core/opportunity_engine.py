@@ -127,7 +127,7 @@ MAX_AGE_CRAFTING_SECONDS = 14_400  # 4 hours — acceptable for material cost ca
 
 # ─── Outlier / Manipulation Detection ────────────────────────────────────────
 
-MAX_SELL_TO_BUY_RATIO = 8.0    # If sell_min > buy_max * 8 → single-item manipulation
+MAX_SELL_TO_BUY_RATIO = 5.0    # If sell_min > buy_max * 5 → single-item manipulation
 MIN_PRICE = 100                 # Ignore anything below 100 silver (test orders)
 ABSOLUTE_MAX_PRICE = 500_000_000  # 500M cap — anything higher is a troll order
 
@@ -146,14 +146,19 @@ def is_price_valid(sell_min: int, buy_max: int, daily_volume: int = 0) -> bool:
             return False
     return True
 
-def is_bm_price_valid(bm_buy_price: int, royal_sell_price: int) -> bool:
-    """BM price should always be ABOVE royal sell price (otherwise why run?)"""
+def is_bm_price_valid(bm_buy_price: int, item_value: float = 0.0) -> bool:
+    """
+    BM price should always be ABOVE royal sell price.
+    Uses ItemValue as an anchor to detect unrealistic prices.
+    """
     if bm_buy_price <= MIN_PRICE:
         return False
     if bm_buy_price > ABSOLUTE_MAX_PRICE:
         return False
-    # BM pays more than market — otherwise no one would bother transporting
-    # We don't reject if BM < royal sell (we just won't have profit), scanner handles that
+    if item_value > 0:
+        # Realistic prices are usually < 5000x ItemValue
+        if bm_buy_price / item_value > 5000:
+            return False
     return True
 
 def cross_city_outlier_check(prices_by_city: Dict[str, int]) -> Dict[str, int]:
@@ -406,6 +411,7 @@ class OpportunityScanner:
         item_names: Dict[str, str],
         recipes: Dict,
         item_categories: Dict[str, str],
+        item_values: Dict[str, float] = None,
     ) -> List[BMOpportunity]:
         """
         Find items where BM buy order > cheapest royal city sell order.
@@ -425,7 +431,8 @@ class OpportunityScanner:
                 bm_price = bm_data.get("buy_price_max", 0)
                 bm_age = bm_data.get("data_age_seconds", 9999)
 
-                if not is_bm_price_valid(bm_price, 0):
+                item_val = item_values.get(item_id, 0.0) if item_values else 0.0
+                if not is_bm_price_valid(bm_price, item_val):
                     continue
                 if bm_age > MAX_AGE_BM_SECONDS:
                     continue
@@ -435,6 +442,10 @@ class OpportunityScanner:
                     prices, item_id, quality
                 )
                 if not buy_city or buy_price <= 0:
+                    continue
+
+                # Spread check: BM price shouldn't be too far from royal price
+                if bm_price > buy_price * MAX_SELL_TO_BUY_RATIO:
                     continue
 
                 net_profit = bm_price - buy_price
@@ -468,7 +479,7 @@ class OpportunityScanner:
                     data_age_buy=buy_age,
                     data_age_bm=bm_age,
                     quality=quality,
-                    can_be_crafted=can_craft and craft_cost > 0,
+                    can_be_crafted=can_craft and craft_cost > 0 and craft_cost < buy_price,
                     craft_cost=craft_cost,
                     craft_city=craft_city,
                 )
@@ -512,7 +523,13 @@ class OpportunityScanner:
                 if material_cost_gross <= 0:
                     continue
 
-                material_cost_net = material_cost_gross * (1.0 - best_rrr)
+                # RRR only applies to returnable resources (Planks, Cloth, etc.)
+                material_cost_net = 0.0
+                for ing in ingredient_details:
+                    if ing.get("is_returnable"):
+                        material_cost_net += ing["line_cost"] * (1.0 - best_rrr)
+                    else:
+                        material_cost_net += ing["line_cost"]
 
                 # Station fee: based on item_value from DB
                 item_val = item_values.get(item_id, 0.0)
@@ -628,6 +645,12 @@ class OpportunityScanner:
         results = []
         seen = set()   # Dedup: same item+route
 
+        # Diagnostics: count how many items pass each filter stage
+        _diag = {"total_pairs": 0, "no_sources": 0, "no_dest_data": 0, 
+                 "dest_no_buy": 0, "dest_too_old": 0, "low_profit": 0, 
+                 "low_pct": 0, "outlier_filtered": 0, "src_age_filtered": 0,
+                 "src_invalid_price": 0, "passed": 0}
+
         for item_id in prices:
             for quality in [1, 2, 3, 4, 5]:
                 # Get all valid source prices (where we buy)
@@ -640,12 +663,15 @@ class OpportunityScanner:
                     buy_max = p.get("buy_price_max", 0)
                     age = p.get("data_age_seconds", 9999)
                     if sell_min <= 0 or age > MAX_AGE_ROYAL_SECONDS:
+                        _diag["src_age_filtered"] += 1
                         continue
                     if not is_price_valid(sell_min, buy_max):
+                        _diag["src_invalid_price"] += 1
                         continue
                     sources.append((city, sell_min, p.get("volume_24h", 0), age))
 
                 if not sources:
+                    _diag["no_sources"] += 1
                     continue
 
                 # Outlier check on sources
@@ -655,14 +681,18 @@ class OpportunityScanner:
                 # For each valid source, look for a destination with a buy order
                 for src_city, src_sell, src_vol, src_age in sources:
                     if cleaned_src.get(src_city, 0) == 0:
+                        _diag["outlier_filtered"] += 1
                         continue  # Outlier filtered
 
                     for dest_city in ROYAL_CITIES + [CAERLEON]:
                         if dest_city == src_city:
                             continue
 
+                        _diag["total_pairs"] += 1
+
                         dest_data = self._get_price(prices, item_id, dest_city, quality)
                         if not dest_data:
+                            _diag["no_dest_data"] += 1
                             continue
 
                         dest_buy_max = dest_data.get("buy_price_max", 0)
@@ -670,8 +700,10 @@ class OpportunityScanner:
                         dest_vol = dest_data.get("volume_24h", 0)
 
                         if dest_buy_max <= 0:
+                            _diag["dest_no_buy"] += 1
                             continue
                         if dest_age > MAX_AGE_ROYAL_SECONDS:
+                            _diag["dest_too_old"] += 1
                             continue
 
                         # Net profit: you pay src_sell, you receive dest_buy_max - 4% tax
@@ -681,8 +713,10 @@ class OpportunityScanner:
                         pct = (net_profit / src_sell * 100) if src_sell > 0 else 0
 
                         if net_profit < self.min_arb_profit:
+                            _diag["low_profit"] += 1
                             continue
                         if pct < self.min_arb_profit_pct:
+                            _diag["low_pct"] += 1
                             continue
 
                         key = f"{item_id}:{quality}:{src_city}:{dest_city}"
@@ -690,6 +724,7 @@ class OpportunityScanner:
                             continue
                         seen.add(key)
 
+                        _diag["passed"] += 1
                         opp = ArbitrageOpportunity(
                             item_id=item_id,
                             item_name=item_names.get(item_id, item_id),
@@ -709,6 +744,11 @@ class OpportunityScanner:
                         )
                         opp.score = self._score_arb(opp)
                         results.append(opp)
+
+        # Log filter diagnostics
+        import logging
+        _log = logging.getLogger("app.core.opportunity_engine")
+        _log.info(f"[ARB DIAG] Filter pipeline: {_diag}")
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results
@@ -740,13 +780,19 @@ class OpportunityScanner:
                 best_rrr = r
                 best_craft_city = city
 
-        gross_cost, _, _ = self._calc_material_cost(
+        gross_cost, ingredients, _ = self._calc_material_cost(
             item_id, recipe, prices, best_craft_city, quality=1
         )
         if gross_cost <= 0:
             return (0.0, "")
 
-        net_cost = gross_cost * (1.0 - best_rrr)
+        # RRR only applies to returnable resources (Planks, Cloth, etc.)
+        net_cost = 0.0
+        for ing in ingredients:
+            if ing.get("is_returnable"):
+                net_cost += ing["line_cost"] * (1.0 - best_rrr)
+            else:
+                net_cost += ing["line_cost"]
         return (round(net_cost, 0), best_craft_city)
 
     def _calc_material_cost(
@@ -769,26 +815,37 @@ class OpportunityScanner:
             ing_id = ing["item_id"]
             qty = ing["quantity"]
 
-            # Try to find cheapest place to buy this ingredient
             best_price = 0
             best_city = ""
             best_age = 9999
 
-            for city in ROYAL_CITIES + [CAERLEON]:
-                p = self._get_price(prices, ing_id, city, 1)
-                if not p:
-                    continue
-                sp = p.get("sell_price_min", 0)
-                bm = p.get("buy_price_max", 0)
-                age = p.get("data_age_seconds", 9999)
-                if sp <= 0 or age > MAX_AGE_CRAFTING_SECONDS:
-                    continue
-                if not is_price_valid(sp, bm):
-                    continue
-                if best_price == 0 or sp < best_price:
+            # Try to find price in craft_city first
+            p_local = self._get_price(prices, ing_id, craft_city, 1)
+            if p_local and p_local.get("sell_price_min", 0) > 0 and p_local.get("data_age_seconds", 9999) <= MAX_AGE_CRAFTING_SECONDS:
+                sp = p_local["sell_price_min"]
+                bm = p_local.get("buy_price_max", 0)
+                if is_price_valid(sp, bm):
                     best_price = sp
-                    best_city = city
-                    best_age = age
+                    best_city = craft_city
+                    best_age = p_local.get("data_age_seconds", 9999)
+
+            # Fallback to cheapest place to buy this ingredient if not found locally
+            if best_price <= 0:
+                for city in ROYAL_CITIES + [CAERLEON]:
+                    p = self._get_price(prices, ing_id, city, 1)
+                    if not p:
+                        continue
+                    sp = p.get("sell_price_min", 0)
+                    bm = p.get("buy_price_max", 0)
+                    age = p.get("data_age_seconds", 9999)
+                    if sp <= 0 or age > MAX_AGE_CRAFTING_SECONDS:
+                        continue
+                    if not is_price_valid(sp, bm):
+                        continue
+                    if best_price == 0 or sp < best_price:
+                        best_price = sp
+                        best_city = city
+                        best_age = age
 
             if best_price <= 0:
                 return (0.0, [], 0)   # Can't price this ingredient → skip
@@ -796,12 +853,20 @@ class OpportunityScanner:
             line_cost = best_price * qty
             total += line_cost
             max_age = max(max_age, best_age)
+            
+            # Check if returnable (RRR applies)
+            is_returnable = False
+            if "ARTIFACT" not in ing_id:
+                if any(r in ing_id for r in ["PLANKS", "CLOTH", "LEATHER", "BAR"]):
+                    is_returnable = True
+                    
             ingredients.append({
                 "item_id": ing_id,
                 "quantity": qty,
                 "unit_price": best_price,
                 "buy_city": best_city,
                 "line_cost": round(line_cost, 0),
+                "is_returnable": is_returnable,
             })
 
         return (total, ingredients, max_age)

@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from datetime import datetime
 from app.meta.killboard_meta import fetch_events, compute_meta
+from app.core.logging import log
 
 class MetaDemandScore(BaseModel):
     item_id: str
@@ -26,7 +27,7 @@ class PvPMetaEngine:
             events = await fetch_events(self.base_api_url, pages=5, limit=50)
             meta_result = compute_meta(events)
         except Exception as e:
-            print(f"Error fetching killboard events: {e}")
+            log.error(f"Error fetching killboard events ({type(e).__name__}): {e}", exc_info=True)
             return {}
 
         # Task 11.2: Create meta_demand_score

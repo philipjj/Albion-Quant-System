@@ -23,6 +23,7 @@ from app.meta.patch_tracker import PatchTracker
 from app.meta.patch_parser import PatchParser
 from app.meta.impact_forecast import PatchImpactForecaster
 from app.meta.loadouts import LoadoutTracker
+from app.db.models import PatchEventModel
 
 
 
@@ -39,7 +40,12 @@ class QuantScheduler:
         self._is_running = False
         
         # Phase 15 Initializations
-        self.meta_engine = PvPMetaEngine()
+        if settings.active_server.value == "europe":
+            self.meta_engine = PvPMetaEngine(base_api_url="https://gameinfo-ams.albiononline.com/api/gameinfo")
+        elif settings.active_server.value == "asia":
+            self.meta_engine = PvPMetaEngine(base_api_url="https://gameinfo-sgp.albiononline.com/api/gameinfo")
+        else:
+            self.meta_engine = PvPMetaEngine()
         self.patch_tracker = PatchTracker()
         self.patch_parser = PatchParser()
         self.impact_forecaster = PatchImpactForecaster()
@@ -113,10 +119,48 @@ class QuantScheduler:
             
             # Combine BM and Arb for alerts
             all_arb = bm + arb
-            if all_arb:
-                await self.alerter.send_batch_alerts(all_arb, [], arb_limit=settings.alert_limit_per_cycle)
-            if crafting:
-                await self.alerter.send_batch_alerts([], crafting, craft_limit=settings.alert_limit_per_cycle)
+            
+            # Group by category to ensure variety (Task: Ops from every category)
+            from collections import defaultdict
+            
+            grouped_arb = defaultdict(list)
+            for o in all_arb:
+                grouped_arb[o.get("category", "Unknown")].append(o)
+                
+            varied_arb = []
+            for cat, ops in grouped_arb.items():
+                ops.sort(key=lambda x: x.get("ev_score", 0), reverse=True)
+                varied_arb.extend(ops[:2]) # Take top 2 (highest score)
+                if len(ops) > 2:
+                    remaining = ops[2:]
+                    remaining.sort(key=lambda x: x.get("ev_score", 0)) # Ascending (lowest score)
+                    varied_arb.extend(remaining[:2])
+                
+            # Sort by category then score descending
+            varied_arb.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+            
+            grouped_craft = defaultdict(list)
+            for o in crafting:
+                grouped_craft[o.get("category", "Unknown")].append(o)
+                
+            varied_craft = []
+            for cat, ops in grouped_craft.items():
+                ops.sort(key=lambda x: x.get("ev_score", 0), reverse=True)
+                varied_craft.extend(ops[:2]) # Take top 2
+                if len(ops) > 2:
+                    remaining = ops[2:]
+                    remaining.sort(key=lambda x: x.get("ev_score", 0)) # Ascending
+                    varied_craft.extend(remaining[:2])
+                
+            # Sort by category then score descending
+            varied_craft.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+            
+            if varied_arb:
+                limit = max(20, settings.alert_limit_per_cycle)
+                await self.alerter.send_batch_alerts(varied_arb, [], arb_limit=limit)
+            if varied_craft:
+                limit = max(20, settings.alert_limit_per_cycle)
+                await self.alerter.send_batch_alerts([], varied_craft, craft_limit=limit)
             
             duration = (datetime.utcnow() - start_time).total_seconds()
             log.info(f"═══ MASTER QUANT CYCLE COMPLETE ({duration:.1f}s) ═══")
@@ -166,19 +210,30 @@ class QuantScheduler:
         log.info("[SCHEDULER] Meta Task: Monitoring Patch Notes")
         try:
             updates = await self.patch_tracker.check_for_updates()
-            for update in updates:
-                changes = self.patch_parser.parse_content(update.content)
-                forecasts = self.impact_forecaster.forecast_impact(changes)
-                
-                # Send alerts for each change
-                for change in changes:
-                    await self.alerter.send_patch_alert({
-                        "title": update.title,
-                        "content": f"{change.item} was {change.change}ed.",
-                        "impact": f"Expected market impact: {change.expected_market_impact}",
-                        "confidence": "HIGH" if change.severity > 0.7 else "MEDIUM",
-                        "window": "24-72h"
-                    })
+            with get_db_session() as db:
+                for update in updates:
+                    # Check if already processed
+                    exists = db.query(PatchEventModel).filter(PatchEventModel.title == update.title).first()
+                    if exists:
+                        continue
+                        
+                    changes = self.patch_parser.parse_content(update.content)
+                    forecasts = self.impact_forecaster.forecast_impact(changes)
+                    
+                    # Send alerts for each change
+                    for change in changes:
+                        await self.alerter.send_patch_alert({
+                            "title": update.title,
+                            "content": f"{change.item} was {change.change}ed.",
+                            "impact": f"Expected market impact: {change.expected_market_impact}",
+                            "confidence": "HIGH" if change.severity > 0.7 else "MEDIUM",
+                            "window": "24-72h"
+                        })
+                        
+                    # Save to DB so we don't alert again
+                    db.add(PatchEventModel(title=update.title, content=update.content))
+                    db.commit()
+                    
             log.info(f"[SCHEDULER] Patch Monitor Complete: {len(updates)} updates processed")
         except Exception as e:
             log.error(f"[SCHEDULER] Patch Monitor failed: {e}")

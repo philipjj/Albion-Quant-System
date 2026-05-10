@@ -24,7 +24,7 @@ class BlackMarketTracker:
             # We care about what the BM is BUYING for (buy_price_max)
             query = select(MarketPrice).where(
                 MarketPrice.city == self.city_name
-            ).order_by(MarketPrice.fetched_at.desc()).limit(limit)
+            ).order_by(MarketPrice.captured_at.desc()).limit(limit)
 
             records = db.execute(query).scalars().all()
             if not records:
@@ -34,7 +34,7 @@ class BlackMarketTracker:
                 'item_id': r.item_id,
                 'buy_price': r.buy_price_max,
                 'quality': r.quality,
-                'fetched_at': r.fetched_at
+                'fetched_at': r.captured_at
             } for r in records]
 
             return pd.DataFrame(data)
@@ -49,9 +49,9 @@ class BlackMarketTracker:
                 and_(
                     MarketSnapshot.item_id == item_id,
                     MarketSnapshot.city == self.city_name,
-                    MarketSnapshot.snapshot_at >= cutoff
+                    MarketSnapshot.captured_at >= cutoff
                 )
-            ).order_by(MarketSnapshot.snapshot_at.asc())
+            ).order_by(MarketSnapshot.captured_at.asc())
 
             records = db.execute(query).scalars().all()
 
@@ -65,7 +65,7 @@ class BlackMarketTracker:
                 }
 
             df = pd.DataFrame([{
-                'timestamp': r.snapshot_at,
+                'timestamp': r.captured_at,
                 'buy_price': r.buy_price_max
             } for r in records])
 

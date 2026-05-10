@@ -93,8 +93,7 @@ class MarketCollector:
         raw = resp.json()
         results = []
         for item in raw:
-            raw_id = item.get("item_id", "")
-            item_id = raw_id.split("@")[0]
+            item_id = item.get("item_id", "")
             
             # Age calculation
             dates = [item.get("sell_price_min_date"), item.get("buy_price_max_date")]
@@ -141,7 +140,7 @@ class MarketCollector:
             valid_data = [d for d in data if d.get("timestamp")]
             if not valid_data: continue
             latest = max(valid_data, key=lambda x: x.get("timestamp"))
-            key = f"{record.get('item_id', '').split('@')[0]}:{record.get('quality', 1)}"
+            key = f"{record.get('item_id', '')}:{record.get('quality', 1)}"
             
             # Force minimum volume of 1
             volume_map[key] = int(latest.get("item_count", 1)) 
@@ -242,11 +241,23 @@ class MarketCollector:
 
     async def process_signals(self, snapshots: list[MarketSnapshot]):
         """Generates signals for new snapshots using MeanReversionEngine and CrossCityModel."""
+        # Hourly throttle
+        if not hasattr(self, "_last_signal_run"):
+            self._last_signal_run = None
+            
+        now = datetime.utcnow()
+        if self._last_signal_run and (now - self._last_signal_run).total_seconds() < 3600:
+            return # Skip if less than an hour has passed
+            
+        self._last_signal_run = now
+        
         from app.models.mean_reversion_engine import MeanReversionEngine
         from app.models.cross_city_model import CrossCityModel
+        from app.alerts.discord import DiscordAlerter
         
         mr_engine = MeanReversionEngine()
         cc_model = CrossCityModel()
+        alerter = DiscordAlerter()
         
         # Group by item_id
         by_item = {}
@@ -256,13 +267,27 @@ class MarketCollector:
             
         for item_id, snaps in by_item.items():
             # 1. Mean Reversion Signals
+            processed = set()
             for s in snaps:
-                prices = await self.repository.get_historical_prices(s.item_id, s.city)
+                if (s.item_id, s.city) in processed:
+                    continue
+                processed.add((s.item_id, s.city))
+                
+                prices = await self.repository.get_historical_prices(s.item_id, s.city, quality=s.quality)
                 if prices and len(prices) >= 10:
                     signal = mr_engine.evaluate(s.item_id, s.city, prices)
                     if signal:
-                        from app.core.logging import log
                         log.info(f"🚨 SIGNAL generated: {signal.signal_type} for {signal.item_id} in {signal.city} (Strength: {signal.strength:.2f})")
+                        await alerter.send_signal_alert({
+                            "item_id": signal.item_id,
+                            "signal_type": signal.signal_type,
+                            "alpha_score": signal.strength,
+                            "confidence": 0.8,
+                            "manipulation_risk": signal.metadata.get("volatility", 0.0),
+                            "liquidity_score": 0.0,
+                            "persistence_score": signal.metadata.get("half_life_seconds", 0.0) / 3600.0,
+                            "cluster_id": signal.city
+                        })
                         
             # 2. Cross-City Arbitrage Signals
             city_prices = {s.city: s.best_ask for s in snaps if s.best_ask > 0}
@@ -277,8 +302,17 @@ class MarketCollector:
                             
                 signals = cc_model.evaluate(item_id, city_prices, item_weight=1.0, route_info=dummy_route)
                 for sig in signals:
-                    from app.core.logging import log
                     log.info(f"🚨 ARB SIGNAL: {sig.signal_type} for {sig.item_id} from {sig.metadata['source_city']} to {sig.metadata['target_city']} (Net Profit: {sig.metadata['net_profit']:.0f})")
+                    await alerter.send_signal_alert({
+                        "item_id": sig.item_id,
+                        "signal_type": f"ARB ({sig.metadata['source_city']}->{sig.metadata['target_city']})",
+                        "alpha_score": sig.strength,
+                        "confidence": 0.8,
+                        "manipulation_risk": 0.0,
+                        "liquidity_score": 0.0,
+                        "persistence_score": 0.0,
+                        "cluster_id": sig.item_id
+                    })
 
     async def collect_prices(self):
         """High-frequency price ingestion (Pass 1 only)."""

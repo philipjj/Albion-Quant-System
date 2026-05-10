@@ -101,13 +101,14 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
                 volatility=0.0 # Not stored in DB
             )
             
-    async def get_historical_prices(self, item_id: str, city: str, limit: int = 100) -> list[float]:
+    async def get_historical_prices(self, item_id: str, city: str, limit: int = 100, quality: int = 1) -> list[float]:
         with get_db_session() as db:
             rows = (
                 db.query(MarketPrice)
                 .filter(
                     MarketPrice.item_id == item_id,
-                    MarketPrice.city == city
+                    MarketPrice.city == city,
+                    MarketPrice.quality == quality
                 )
                 .order_by(MarketPrice.captured_at.desc())
                 .limit(limit)
@@ -132,8 +133,11 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
             
     async def update_volume(self, item_id: str, city: str, quality: int, volume: int) -> None:
         with get_db_session() as db:
-            db.query(MarketPrice).filter(
+            record = db.query(MarketPrice).filter(
                 MarketPrice.item_id == item_id,
                 MarketPrice.city == city,
                 MarketPrice.quality == quality
-            ).order_by(MarketPrice.captured_at.desc()).limit(1).update({"volume_24h": volume})
+            ).order_by(MarketPrice.captured_at.desc()).first()
+            
+            if record:
+                record.volume_24h = volume

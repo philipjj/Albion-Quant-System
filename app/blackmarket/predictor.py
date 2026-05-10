@@ -28,7 +28,7 @@ class BlackMarketPredictor:
             # 1. Get recent Black Market prices
             bm_query = select(MarketPrice).where(
                 MarketPrice.city == "Black Market"
-            ).order_by(MarketPrice.item_id, MarketPrice.fetched_at.desc())
+            ).order_by(MarketPrice.item_id, MarketPrice.captured_at.desc())
 
             # Subquery or distinct might be better, but we'll do a simple latest-fetch in python for demo
             bm_records = db.execute(bm_query).scalars().all()
@@ -44,7 +44,7 @@ class BlackMarketPredictor:
             # 2. Get recent Royal City prices (sell_price_min to buy from market)
             royal_query = select(MarketPrice).where(
                 MarketPrice.city.in_(self.royal_cities)
-            ).order_by(MarketPrice.item_id, MarketPrice.fetched_at.desc())
+            ).order_by(MarketPrice.item_id, MarketPrice.captured_at.desc())
 
             royal_records = db.execute(royal_query).scalars().all()
             latest_royal = {}
@@ -60,9 +60,8 @@ class BlackMarketPredictor:
                     royal_price = latest_royal[item_id]["price"]
                     source_city = latest_royal[item_id]["city"]
 
-                    # Calculate taxes (BM sales always pay sales tax, no setup fee for instant sell)
-                    bm_tax = bm_price * settings.tax_rate
-                    gross_profit = bm_price - royal_price - bm_tax
+                    # BM sells have NO sales tax (direct NPC transaction)
+                    gross_profit = bm_price - royal_price
                     margin = (gross_profit / royal_price) * 100 if royal_price > 0 else 0
 
                     if margin > 5.0: # Minimum 5% margin to care

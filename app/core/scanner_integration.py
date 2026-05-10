@@ -87,11 +87,19 @@ class UnifiedScanner:
             if existing and p.captured_at and existing.get("_ts") and p.captured_at <= existing["_ts"]:
                 continue   # Keep newest only
 
+            # Recompute data age dynamically: original API age + time since collection
+            api_age = int(p.data_age_seconds) if p.data_age_seconds is not None else 0
+            if p.captured_at:
+                db_age = (datetime.utcnow() - p.captured_at).total_seconds()
+            else:
+                db_age = 0
+            effective_age = api_age + db_age
+
             prices[item_id][city][quality] = {
                 "sell_price_min": p.sell_price_min or 0,
                 "buy_price_max": p.buy_price_max or 0,
                 "volume_24h": p.volume_24h or 0,
-                "data_age_seconds": int(p.data_age_seconds) if p.data_age_seconds is not None else 0,
+                "data_age_seconds": int(effective_age),
                 "is_black_market": False,
                 "item_value": 0.0,  # Filled below
                 "_ts": p.captured_at,
@@ -105,6 +113,9 @@ class UnifiedScanner:
 
         for bm in bm_rows:
             item_id = bm.item_id
+            if bm.enchantment and bm.enchantment > 0:
+                item_id = f"{item_id}@{bm.enchantment}"
+                
             quality = bm.quality or 1
             city = "Black Market"
 
@@ -117,11 +128,19 @@ class UnifiedScanner:
             if existing and bm.captured_at and existing.get("_ts") and bm.captured_at <= existing["_ts"]:
                 continue
 
+            # Recompute BM data age dynamically
+            bm_api_age = int(bm.data_age_seconds or 0)
+            if bm.captured_at:
+                bm_db_age = (datetime.utcnow() - bm.captured_at).total_seconds()
+            else:
+                bm_db_age = 0
+            bm_effective_age = bm_api_age + bm_db_age
+
             prices[item_id][city][quality] = {
                 "sell_price_min": 0,
                 "buy_price_max": bm.buy_price_max or 0,
                 "volume_24h": 1,
-                "data_age_seconds": int(bm.data_age_seconds or 9999),
+                "data_age_seconds": int(bm_effective_age),
                 "is_black_market": True,
                 "_ts": bm.captured_at,
             }
@@ -152,6 +171,29 @@ class UnifiedScanner:
                 "item_id": r.ingredient_item_id,
                 "quantity": float(r.quantity or 1),
             })
+            
+        # Generate enchanted recipes for items that can be enchanted
+        enchanted_recipes = {}
+        for cid, recipe in recipes.items():
+            # Skip if already enchanted (shouldn't be in DB usually, but just in case)
+            if "@" in cid:
+                continue
+                
+            for e in [1, 2, 3, 4]:
+                modified_ingredients = []
+                for ing in recipe["ingredients"]:
+                    ing_id = ing["item_id"]
+                    # Skip artifacts and runes/souls/relics/sigils which are not enchanted
+                    if any(x in ing_id for x in ["ARTEFACT", "RUNE", "SOUL", "RELIC", "SIGIL"]):
+                        modified_ingredients.append(ing)
+                    else:
+                        modified_ingredients.append({
+                            "item_id": f"{ing_id}@{e}",
+                            "quantity": ing["quantity"]
+                        })
+                enchanted_recipes[f"{cid}@{e}"] = {"ingredients": modified_ingredients}
+                
+        recipes.update(enchanted_recipes)
         return recipes
 
     # ── Main entry point ────────────────────────────────────────────────────
@@ -172,7 +214,7 @@ class UnifiedScanner:
             recipes = self._load_recipes(db)
 
         log.info("[UNIFIED SCANNER] Scanning Black Market...")
-        bm_raw = self.engine.scan_black_market(prices, names, recipes, categories)
+        bm_raw = self.engine.scan_black_market(prices, names, recipes, categories, values)
         log.info(f"[UNIFIED SCANNER] BM: {len(bm_raw)} opportunities")
 
         log.info("[UNIFIED SCANNER] Scanning Crafting...")
@@ -184,17 +226,28 @@ class UnifiedScanner:
         log.info(f"[UNIFIED SCANNER] Arbitrage: {len(arb_raw)} opportunities")
 
         return (
-            [self._bm_to_dict(o) for o in bm_raw],
-            [self._craft_to_dict(o) for o in craft_raw],
-            [self._arb_to_dict(o) for o in arb_raw],
+            [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw],
+            [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in craft_raw],
+            [self._arb_to_dict(o, categories.get(o.item_id, "Unknown")) for o in arb_raw],
         )
 
     # ── Dict converters for compatibility with existing DB/Discord code ─────
 
-    def _bm_to_dict(self, o: BMOpportunity) -> Dict[str, Any]:
+    def _enhance_name(self, item_id: str, item_name: str, quality: int) -> str:
+        display_name = item_name
+        if "@" in item_id:
+            enchant = f" .{item_id.split('@')[1]}"
+            if enchant not in display_name:
+                display_name += enchant
+        if quality and quality > 1:
+            quality_names = {1: "", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
+            display_name += f" ({quality_names.get(quality, 'Unknown')})"
+        return display_name
+
+    def _bm_to_dict(self, o: BMOpportunity, category: str) -> Dict[str, Any]:
         return {
             "item_id": o.item_id,
-            "item_name": o.item_name,
+            "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
             "source_city": o.buy_city,
             "destination_city": "Black Market",
             "buy_price": o.buy_price,
@@ -212,13 +265,14 @@ class UnifiedScanner:
             "ev_score": o.score,
             "risk_score": 0.5,   # BM always requires Caerleon run
             "type": "black_market",
+            "category": category,
             "detected_at": datetime.utcnow().isoformat(),
         }
 
-    def _craft_to_dict(self, o: CraftingOpportunity) -> Dict[str, Any]:
+    def _craft_to_dict(self, o: CraftingOpportunity, category: str) -> Dict[str, Any]:
         return {
             "item_id": o.item_id,
-            "item_name": o.item_name,
+            "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
             "crafting_city": o.craft_city,
             "sell_city": o.sell_city,
             "sell_mode": o.sell_mode,            # "BM" or "MARKET"
@@ -239,13 +293,14 @@ class UnifiedScanner:
             "ev_score": o.score,
             "ingredients": o.ingredients,
             "type": "crafting",
+            "category": category,
             "detected_at": datetime.utcnow().isoformat(),
         }
 
-    def _arb_to_dict(self, o: ArbitrageOpportunity) -> Dict[str, Any]:
+    def _arb_to_dict(self, o: ArbitrageOpportunity, category: str) -> Dict[str, Any]:
         return {
             "item_id": o.item_id,
-            "item_name": o.item_name,
+            "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
             "source_city": o.buy_city,
             "destination_city": o.sell_city,
             "buy_price": o.buy_price,
@@ -261,5 +316,6 @@ class UnifiedScanner:
             "ev_score": o.score,
             "risk_score": 0.7 if o.is_dangerous_route else 0.2,
             "type": "arbitrage",
+            "category": category,
             "detected_at": datetime.utcnow().isoformat(),
         }

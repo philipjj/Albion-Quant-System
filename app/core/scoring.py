@@ -42,6 +42,8 @@ class Scorer:
         margin_penalty = 1.0
         if margin_pct > 30: margin_penalty = 0.6
         if margin_pct > 100: margin_penalty = 0.1
+        # [FIX] Margins above 500% are almost always data anomalies
+        if margin_pct > 500: margin_penalty = 0.01
         return round(vol_factor * margin_penalty, 2)
 
     def _get_meta_multipliers(self, opp: dict[str, Any]) -> float:

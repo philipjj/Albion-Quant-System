@@ -150,6 +150,7 @@ class DiscordAlerter:
             "fields": [
                 {"name": "🚚 SELL CITY", "value": sell_city, "inline": True},
                 {"name": "💰 PROFIT", "value": f"**{opp['profit']:,.0f}**", "inline": True},
+                {"name": "🛠️ COST", "value": f"**{opp.get('craft_cost', 0):,.0f}**", "inline": True},
                 {"name": "♻️ RRR", "value": f"**{opp.get('rrr_used', 0)*100:.1f}%**", "inline": True},
                 {"name": "🧘 FOCUS", "value": "YES" if opp.get("use_focus") else "NO", "inline": True},
                 {"name": "🚀 ALPHA", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
