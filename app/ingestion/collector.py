@@ -433,6 +433,132 @@ class MarketCollector:
 
         log.info("📊 Price Collection Sync Complete.")
 
+    def partition_items(self, item_ids: list[str], num_partitions: int, partition_idx: int) -> list[str]:
+        """
+        Deterministically assign items to partitions using hash-based distribution.
+        This ensures each partition gets a diverse mix of categories/tiers,
+        not a contiguous alphabetical block.
+        """
+        return [
+            iid for iid in item_ids
+            if hash(iid) % num_partitions == partition_idx
+        ]
+
+    async def collect_partition(self, partition_idx: int, num_partitions: int) -> int:
+        """
+        Collect prices for a single partition of the item universe.
+        Returns the number of batches processed.
+        """
+        log.info(f"🚀 Partition {partition_idx+1}/{num_partitions} — Starting ingestion ({settings.active_server.value})")
+
+        now = datetime.utcnow()
+        now_bucket = get_bucket(now)
+        current_min = now.minute
+
+        async with self as collector:
+            with get_db_session() as db:
+                db = cast(Session, db)
+                item_info = self._get_tradeable_items_info(db)
+
+                # Apply category frequency filter first
+                all_ids = [
+                    id for id, info in item_info.items()
+                    if self.should_poll_category(info.get("category"), current_min)
+                ]
+
+            # Slice to this partition only
+            partition_ids = self.partition_items(all_ids, num_partitions, partition_idx)
+            if not partition_ids:
+                log.info(f"⚠️ Partition {partition_idx+1}/{num_partitions} is empty after filtering. Skipping.")
+                return 0
+
+            batches = self.build_safe_batches(partition_ids)
+            log.info(f"📦 Partition {partition_idx+1}/{num_partitions}: {len(partition_ids)} items → {len(batches)} batches")
+
+            consecutive_429s = 0
+            for i, batch in enumerate(batches):
+                if self._stop_requested: break
+
+                batch_weight = sum(self.estimate_item_weight(id) for id in batch)
+                all_cities = ",".join(CITY_API_NAMES.values())
+                log.info(f"🌐 P{partition_idx+1} Batch {i+1}/{len(batches)} | items={len(batch)} | weight={batch_weight}")
+
+                try:
+                    raw_data = await self.fetch_market_data(all_cities, batch)
+                    consecutive_429s = 0
+                except Exception as e:
+                    if "429" in str(e):
+                        consecutive_429s += 1
+                        if consecutive_429s >= 5:
+                            log.warning("🛑 CIRCUIT BREAKER: Too many 429s. Cooling down for 60s...")
+                            await asyncio.sleep(60)
+                            consecutive_429s = 0
+                    raise
+
+                # Group by city
+                city_groups = {}
+                for r in raw_data:
+                    c = r["city"]
+                    if c not in city_groups: city_groups[c] = []
+                    city_groups[c].append(r)
+
+                # Black Market Process
+                bm_to_save = []
+                real_bm_raw = city_groups.get("Black Market", [])
+                for item in real_bm_raw:
+                    info = item_info.get(item["item_id"], {})
+                    if not is_market_data_fresh(item["item_id"], item["data_age_seconds"], tier=info.get("tier", 4)):
+                        continue
+                    item["captured_at"] = datetime.utcnow()
+                    item["captured_at_bucket"] = now_bucket
+                    if validate_market_record(item): bm_to_save.append(item)
+
+                # Regional Process
+                market_to_save = []
+                for item in bm_to_save:
+                    if item.get("buy_price_max", 0) > 0:
+                        market_to_save.append({
+                            **item, "city": "Black Market", "server": self.active_server.value
+                        })
+
+                for city_name, city_raw in city_groups.items():
+                    if city_name == "Black Market": continue
+                    for r in city_raw:
+                        info = item_info.get(r["item_id"], {})
+                        if not is_market_data_fresh(r["item_id"], r["data_age_seconds"], tier=info.get("tier", 4)):
+                            continue
+                        r["captured_at"] = datetime.utcnow()
+                        r["captured_at_bucket"] = now_bucket
+                        if validate_market_record(r): market_to_save.append(r)
+
+                # UPSERT via Repository
+                if market_to_save:
+                    snapshots = []
+                    for r in market_to_save:
+                        snapshots.append(MarketSnapshot(
+                            item_id=r["item_id"],
+                            city=r["city"],
+                            quality=r["quality"],
+                            timestamp=r["captured_at"],
+                            best_bid=float(r["buy_price_max"] or 0),
+                            best_ask=float(r["sell_price_min"] or 0),
+                            bid_depth=0,
+                            ask_depth=0,
+                            spread=float((r["sell_price_min"] or 0) - (r["buy_price_max"] or 0)),
+                            midprice=float(((r["sell_price_min"] or 0) + (r["buy_price_max"] or 0)) / 2),
+                            rolling_volume=r["volume_24h"] or 0,
+                            volatility=0.0
+                        ))
+                    await self.repository.save_snapshots(snapshots)
+                    self.parquet_storage.save_snapshots(snapshots)
+                    await asyncio.gather(*(self.redis_cache.set_hot_snapshot(s) for s in snapshots))
+
+                # Mandatory Pacing
+                await asyncio.sleep(0.5)
+
+            log.info(f"✅ Partition {partition_idx+1}/{num_partitions} complete: {len(batches)} batches ingested.")
+            return len(batches)
+
     async def collect_volumes(self):
         """Lower-frequency volume ingestion (Pass 2). Updates current market records."""
         log.info(f"🚀 Starting AQS v3.1 VOLUME Refresh ({settings.active_server.value})")
