@@ -38,6 +38,9 @@ class QuantScheduler:
         self.unified_scanner = UnifiedScanner()
         self.alerter = DiscordAlerter()
         self._is_running = False
+        self._current_partition = 0  # Rotates through scan_partitions
+        self._alert_history = {}  # Tracks last alert time for (type, item, source, dest)
+        self._cycle_running = False
         
         # Phase 15 Initializations
         if settings.active_server.value == "europe":
@@ -99,74 +102,133 @@ class QuantScheduler:
             log.error(f"[SCHEDULER] Crafting failed: {e}")
 
     async def master_cycle(self):
-        """The Master Cycle: Ensures sequential execution (Ingest -> Analyze -> Alert)."""
-        log.info("═══ STARTING MASTER QUANT CYCLE ═══")
+        """
+        Partitioned Master Cycle — Ingest → Scan → Alert in ~10 minutes.
+
+        Instead of collecting ALL items (700+ batches, 25+ min) then scanning,
+        we split the item universe into N partitions and rotate through them.
+        Each cycle:
+          1. Ingest 1/N of items (fast — ~3-8 min depending on partition size)
+          2. Scan the FULL DB (all recent data, including prior partitions)
+          3. Send alerts immediately
+
+        After N cycles the entire universe has been refreshed. The scanner always
+        sees fresh data from the most recent partition PLUS still-valid data from
+        older partitions (within the lookback window).
+        """
+        if self._cycle_running:
+            log.warning("[SCHEDULER] Master cycle already running. Skipping this run.")
+            return
+
+        self._cycle_running = True
+        
+        num_partitions = max(1, settings.scan_partitions)
+        partition_idx = self._current_partition % num_partitions
+
+        log.info(f"═══ PARTITION CYCLE {partition_idx+1}/{num_partitions} ═══")
         start_time = datetime.utcnow()
 
         try:
-            # 1. Ingest Data
-            success = await self.job_collect_prices()
-            if not success:
-                log.warning("[SCHEDULER] Cycle aborted: Ingest failed or was cancelled.")
+            # 1. Ingest only this partition's items
+            log.info(f"[SCHEDULER] Step 1: Ingesting Partition {partition_idx+1}/{num_partitions}...")
+            batches_done = await self.collector.collect_partition(partition_idx, num_partitions)
+            if batches_done == 0 and not self.collector._stop_requested:
+                log.warning(f"[SCHEDULER] Partition {partition_idx+1} yielded 0 batches. Advancing to next.")
+                self._current_partition += 1
                 return
 
-            # 2. Analyze using UnifiedScanner
-            log.info("[SCHEDULER] Step 2: Running Unified Scanner...")
+            if self.collector._stop_requested:
+                log.info("[SCHEDULER] Cycle aborted: stop requested during ingestion.")
+                return
+
+            # 2. Scan the FULL DB — scanner sees all data within lookback window,
+            #    not just this partition's items. This is the key advantage:
+            #    fresh data from partition N mixes with still-valid data from N-1, N-2...
+            log.info("[SCHEDULER] Step 2: Running Unified Scanner (full DB)...")
             bm, crafting, arb = await self.unified_scanner.scan_all()
-            
+
             # 3. Alert
             log.info(f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)})")
-            
+
             # Combine BM and Arb for alerts
             all_arb = bm + arb
-            
-            # Group by category to ensure variety (Task: Ops from every category)
+
+            # Group by category to ensure variety
             from collections import defaultdict
-            
+
             grouped_arb = defaultdict(list)
             for o in all_arb:
                 grouped_arb[o.get("category", "Unknown")].append(o)
-                
+
             varied_arb = []
             for cat, ops in grouped_arb.items():
                 ops.sort(key=lambda x: x.get("ev_score", 0), reverse=True)
-                varied_arb.extend(ops[:2]) # Take top 2 (highest score)
+                varied_arb.extend(ops[:2])
                 if len(ops) > 2:
                     remaining = ops[2:]
-                    remaining.sort(key=lambda x: x.get("ev_score", 0)) # Ascending (lowest score)
+                    remaining.sort(key=lambda x: x.get("ev_score", 0))
                     varied_arb.extend(remaining[:2])
-                
-            # Sort by category then score descending
+
             varied_arb.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
-            
+
             grouped_craft = defaultdict(list)
             for o in crafting:
                 grouped_craft[o.get("category", "Unknown")].append(o)
-                
+
             varied_craft = []
             for cat, ops in grouped_craft.items():
                 ops.sort(key=lambda x: x.get("ev_score", 0), reverse=True)
-                varied_craft.extend(ops[:2]) # Take top 2
+                varied_craft.extend(ops[:2])
                 if len(ops) > 2:
                     remaining = ops[2:]
-                    remaining.sort(key=lambda x: x.get("ev_score", 0)) # Ascending
+                    remaining.sort(key=lambda x: x.get("ev_score", 0))
                     varied_craft.extend(remaining[:2])
-                
-            # Sort by category then score descending
+
             varied_craft.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+
+            # Cooldown filtering to prevent repeating stale alerts
+            cooldown_seconds = settings.alert_cooldown_minutes * 60
+            now_time = datetime.utcnow()
             
-            if varied_arb:
+            final_arb = []
+            for o in varied_arb:
+                key = f"arb:{o['item_id']}:{o['source_city']}:{o['destination_city']}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                final_arb.append(o)
+                self._alert_history[key] = now_time
+                
+            final_craft = []
+            for o in varied_craft:
+                key = f"craft:{o['item_id']}:{o['crafting_city']}:{o.get('sell_city', 'Any')}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                final_craft.append(o)
+                self._alert_history[key] = now_time
+
+            if final_arb:
                 limit = max(20, settings.alert_limit_per_cycle)
-                await self.alerter.send_batch_alerts(varied_arb, [], arb_limit=limit)
-            if varied_craft:
+                await self.alerter.send_batch_alerts(final_arb, [], arb_limit=limit)
+                log.info(f"[SCHEDULER] Sent {len(final_arb)} arb alerts after cooldown filtering.")
+            if final_craft:
                 limit = max(20, settings.alert_limit_per_cycle)
-                await self.alerter.send_batch_alerts([], varied_craft, craft_limit=limit)
-            
+                await self.alerter.send_batch_alerts([], final_craft, craft_limit=limit)
+                log.info(f"[SCHEDULER] Sent {len(final_craft)} craft alerts after cooldown filtering.")
+
             duration = (datetime.utcnow() - start_time).total_seconds()
-            log.info(f"═══ MASTER QUANT CYCLE COMPLETE ({duration:.1f}s) ═══")
+            self._current_partition += 1
+            next_part = (self._current_partition % num_partitions) + 1
+            log.info(f"═══ PARTITION {partition_idx+1}/{num_partitions} COMPLETE ({duration:.1f}s) — Next: P{next_part} ═══")
 
         except Exception as e:
-            log.error(f"❌ MASTER CYCLE FAILED: {e}", exc_info=True)
+            log.error(f"❌ PARTITION CYCLE FAILED: {e}", exc_info=True)
+            self._current_partition += 1  # Don't get stuck on a failing partition
+        finally:
+            self._cycle_running = False
 
     async def job_snapshot(self):
         """Archive live prices to snapshots table."""
