@@ -51,7 +51,7 @@ class DiscordAlerter:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
+                async with httpx.AsyncClient(timeout=20.0) as client:
                     resp = await client.post(self.webhook_url, json=payload)
                     
                     if resp.status_code == 429:
@@ -72,7 +72,7 @@ class DiscordAlerter:
                 if attempt == max_retries - 1:
                     return False
             except Exception as e:
-                log.error(f"Discord webhook failed: {e} (Attempt {attempt+1}/{max_retries})")
+                log.error(f"Discord webhook failed: {repr(e)} (Attempt {attempt+1}/{max_retries})")
                 if attempt == max_retries - 1:
                     return False
             
