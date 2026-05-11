@@ -21,3 +21,30 @@ async def test_cycle_lock():
     finally:
         # Restore __init__
         QuantScheduler.__init__ = original_init
+
+
+@pytest.mark.asyncio
+async def test_scheduler_start_creates_task():
+    from unittest.mock import MagicMock, AsyncMock
+    # Bypass __init__ to avoid heavy initialization
+    original_init = QuantScheduler.__init__
+    QuantScheduler.__init__ = lambda self: None
+    
+    try:
+        sched = QuantScheduler()
+        sched.scheduler = MagicMock()
+        sched._is_running = False
+        sched.collector = MagicMock()
+        
+        # Mock master_cycle to avoid running it
+        sched.master_cycle = AsyncMock()
+        
+        sched.start()
+        
+        assert hasattr(sched, '_loop_task')
+        assert sched._loop_task is not None
+        
+        # Cleanup
+        sched.stop()
+    finally:
+        QuantScheduler.__init__ = original_init

@@ -310,6 +310,12 @@ class QuantScheduler:
             log.error(f"[SCHEDULER] Loadout Clustering failed: {e}")
 
 
+    async def _continuous_cycle_loop(self):
+        log.info("[SCHEDULER] Starting continuous cycle loop.")
+        while self._is_running:
+            await self.master_cycle()
+            await asyncio.sleep(1) # Small pause between cycles
+
     def start(self):
         """Start the background scheduler with sequential master cycle."""
         if self._is_running:
@@ -320,16 +326,8 @@ class QuantScheduler:
 
         now = datetime.utcnow()
 
-        # The Master Cycle handles all core data work sequentially
-        self.scheduler.add_job(
-            self.master_cycle,
-            IntervalTrigger(minutes=settings.market_poll_interval),
-            id="master_cycle",
-            name="Master Quant Cycle",
-            next_run_time=now,
-            misfire_grace_time=60,
-            coalesce=True,
-        )
+        # The Master Cycle handles all core data work sequentially in a continuous loop
+        self._loop_task = asyncio.create_task(self._continuous_cycle_loop())
 
         # Secondary maintenance tasks
         self.scheduler.add_job(
@@ -393,11 +391,15 @@ class QuantScheduler:
         if self._is_running:
             self.scheduler.pause()
             self._is_running = False
+            if hasattr(self, '_loop_task') and self._loop_task:
+                self._loop_task.cancel()
             log.info("🛑 AQS background loop PAUSED")
 
     def shutdown(self):
         """Fully stop scheduler."""
         self.collector.request_stop()
+        if hasattr(self, '_loop_task') and self._loop_task:
+            self._loop_task.cancel()
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)
         self._is_running = False
