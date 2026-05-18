@@ -42,17 +42,25 @@ def _get_category_group(item_id: str) -> str:
 class DiscordAlerter:
     def __init__(self):
         self.webhook_url = settings.discord_webhook_url
-        self.enabled = bool(self.webhook_url and "YOUR_WEBHOOK" not in self.webhook_url)
+        self.bm_webhook_url = settings.discord_bm_webhook_url
+        self.enabled = bool(
+            (self.webhook_url and "YOUR_WEBHOOK" not in self.webhook_url) or
+            (self.bm_webhook_url and "YOUR_WEBHOOK" not in self.bm_webhook_url)
+        )
 
-    async def _send_webhook(self, payload: dict) -> bool:
+    async def _send_webhook(self, payload: dict, webhook_url: str = None) -> bool:
         if not self.enabled: return False
+        if webhook_url is None:
+            webhook_url = self.webhook_url
+        if not webhook_url: return False
+        
         payload["username"] = "Albion Quant Bot"
         
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 async with httpx.AsyncClient(timeout=20.0) as client:
-                    resp = await client.post(self.webhook_url, json=payload)
+                    resp = await client.post(webhook_url, json=payload)
                     
                     if resp.status_code == 429:
                         retry_after = float(resp.headers.get("Retry-After", 2.0))
@@ -80,91 +88,132 @@ class DiscordAlerter:
             
         return False
 
-
-    async def send_arbitrage_alert(self, opp: dict) -> bool:
+    def _format_arbitrage_embed(self, opp: dict) -> dict:
         confidence = scorer.calculate_data_confidence(opp)
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = opp["estimated_margin"]
         
-        # [v3.1] Special Black Market Branding
+        # Color coding by opportunity quality
         dest_city = opp['destination_city']
         if dest_city == "Black Market":
-            dest_city = "🏷️ Black Market"
-            color = 0x9B59B6 # Purple for BM
+            dest_city = "☠️ Black Market"
+            color = 0x9B59B6  # Purple for BM
+        elif margin > 30:
+            color = 0x57F287  # Discord green — strong margin
+        elif margin > 15:
+            color = 0xFEE75C  # Discord yellow — moderate
         else:
-            color = 0x00FF88 if opp["estimated_margin"] > 30 else 0xFFAA00
+            color = 0xFFAA00  # Amber — thin margin
+        
+        # Build description with visual margin bar
+        bar_filled = min(int(margin / 5), 10)
+        bar_empty = 10 - bar_filled
+        margin_bar = "█" * bar_filled + "░" * bar_empty
+        
+        desc = f"**{margin:.1f}%** `{margin_bar}` margin"
+        if opp.get("can_be_crafted"):
+            desc += f"\n🔨 Craftable at **{opp.get('craft_city')}** (Cost: **{opp.get('craft_cost', 0):,.0f}**)"
+        if opp.get("coverage_suspect"):
+            desc += "\n⚠️ Low volume — price may be stale"
         
         embed = {
-            "title": f"⚔️ {badge} ARBITRAGE: {opp['item_name']}",
-            "description": f"Margin: **{opp['estimated_margin']:.1f}%** (Instant-Fill)",
+            "title": f"⚔️ {badge} {opp['item_name']}",
+            "description": desc,
             "color": color,
             "thumbnail": {"url": item_icon_url(opp["item_id"], quality=opp.get("quality", 1), size=128)},
             "fields": [
-                {"name": "🏙️ ROUTE", "value": f"**{opp['source_city']}** ➔ **{dest_city}**", "inline": True},
-                {"name": "💰 PRICES", "value": f"Buy: **{opp['buy_price']:,}**\nSell: **{opp['sell_price']:,}**", "inline": True},
-                {"name": "💎 PROFIT", "value": f"**{opp['estimated_profit']:,.0f}**", "inline": True},
+                {"name": "🏙️ ROUTE", "value": f"**{opp['source_city']}** ➔ {dest_city}", "inline": False},
+                {"name": "BUY", "value": f"`{opp['buy_price']:,.0f}`", "inline": True},
+                {"name": "SELL", "value": f"`{opp['sell_price']:,.0f}`", "inline": True},
+                {"name": "💰 PROFIT", "value": f"**{opp['estimated_profit']:,.0f}**", "inline": True},
+                {"name": "🛡️ SAFE QTY", "value": f"**{opp.get('safe_limit', 0):,}** / {opp.get('daily_volume', 0):,} vol", "inline": True},
+                {"name": "🚀 EV", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
                 {"name": "⚖️ RISK", "value": _risk_label(opp.get("risk_score", 0)), "inline": True},
-                {"name": "🚀 ALPHA", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
-                {"name": "📊 VOL", "value": f"{opp.get('daily_volume', 0):,}", "inline": True},
             ],
-            "footer": {"text": f"AQS v3.1 High-Efficiency • {settings.active_server.value.upper()} Market"},
+            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()} Market"},
             "timestamp": datetime.utcnow().isoformat()
         }
-        
-        if opp.get("can_be_crafted"):
-            embed["description"] += f"\n🔨 **Cheaper to Craft**: Yes at **{opp.get('craft_city')}** (Cost: **{opp.get('craft_cost', 0):,.0f}**)"
-
-        if opp.get("coverage_suspect"):
-            embed["description"] += "\n⚠️ **ENCRYPTION GAP**: 0 Volume, price may be stale."
             
-        return await self._send_webhook({"embeds": [embed]})
+        return embed
 
-    async def send_crafting_alert(self, opp: dict) -> bool:
+    def _format_crafting_embed(self, opp: dict) -> dict:
         confidence = scorer.calculate_data_confidence(opp)
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = opp['profit_margin']
         
-        # [v3.1] Black Market Destination logic
+        # Color coding
         sell_city = opp.get("sell_city", "Any")
         if sell_city == "Black Market":
-            sell_city = "🏷️ Black Market"
+            sell_city = "☠️ Black Market"
             color = 0x9B59B6
+        elif margin > 25:
+            color = 0x57F287  # Green — strong
+        elif margin > 10:
+            color = 0xFEE75C  # Yellow — moderate
         else:
-            color = 0xFFCC00
+            color = 0xFFAA00  # Amber
 
-        # Build Crafting Path string
-        details = opp.get("details", [])
-        path_str = ""
+        # Build Crafting Path string with proper names
+        details = opp.get("details", opp.get("ingredients", []))
+        path_lines = []
+        rrr = opp.get("rrr_used", 0.0)
+        
         for d in details:
-            mode_icon = "🛒" if d.get("mode") == "BUY" else "🔨"
-            qty = d.get("quantity", 1)
-            # Cleanup names: T4_HEAD_CLOTH_SET1 -> Cloth Headgear
-            raw_name = d.get("id", "Unknown")
-            name = raw_name.split("_")[1] if "_" in raw_name else raw_name
-            price = d.get("unit_price", 0)
-            path_str += f"{mode_icon} x{qty} {name} (@{price:,.0f})\n"
+            mode = d.get("mode")
+            if not mode:
+                mode = "BUY" if d.get("buy_city") else "CRAFT"
             
+            mode_icon = "🛒" if mode == "BUY" else "🔨"
+            raw_qty = d.get("quantity", 1)
+            qty = int(raw_qty) if raw_qty == int(raw_qty) else raw_qty
+            
+            # Use localized name from engine, fallback to readable item_id
+            name = d.get("name")
+            if not name or name == d.get("id") or name == d.get("item_id"):
+                raw_id = d.get("item_id", d.get("id", "Unknown"))
+                name = raw_id.replace("_", " ").title()
+            
+            price = d.get("unit_price", 0)
+            is_returnable = d.get("is_returnable", False)
+            
+            if is_returnable and rrr > 0:
+                net_price = price * (1.0 - rrr)
+                path_lines.append(f"{mode_icon} x{qty} {name}")
+                path_lines.append(f"   └ @{price:,.0f} ➔ Net: {net_price:,.0f}")
+            else:
+                path_lines.append(f"{mode_icon} x{qty} {name}")
+                path_lines.append(f"   └ @{price:,.0f}")
+        
+        path_str = "\n".join(path_lines)
+
+        # Build margin bar
+        bar_filled = min(int(margin / 5), 10)
+        bar_empty = 10 - bar_filled
+        margin_bar = "█" * bar_filled + "░" * bar_empty
+        
+        desc = f"**{margin:.1f}%** `{margin_bar}` @ {opp['crafting_city']}"
+        if opp.get("coverage_suspect"):
+            desc += "\n⚠️ Low volume — price may be stale"
+        
         embed = {
-            "title": f"🔨 {badge} CRAFTING: {opp['item_name']}",
-            "description": f"Margin: **{opp['profit_margin']:.1f}%** @ {opp['crafting_city']}",
+            "title": f"🔨 {badge} {opp['item_name']}",
+            "description": desc,
             "color": color,
             "thumbnail": {"url": item_icon_url(opp["item_id"], quality=opp.get("quality", 1), size=128)},
             "fields": [
-                {"name": "🚚 SELL CITY", "value": sell_city, "inline": True},
+                {"name": "🚢 SELL AT", "value": f"**{sell_city}**", "inline": True},
                 {"name": "💰 PROFIT", "value": f"**{opp['profit']:,.0f}**", "inline": True},
                 {"name": "🛠️ COST", "value": f"**{opp.get('craft_cost', 0):,.0f}**", "inline": True},
-                {"name": "♻️ RRR", "value": f"**{opp.get('rrr_used', 0)*100:.1f}%**", "inline": True},
-                {"name": "🧘 FOCUS", "value": "YES" if opp.get("use_focus") else "NO", "inline": True},
-                {"name": "🚀 ALPHA", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
-                {"name": "📊 VOL", "value": f"{opp.get('daily_volume', 0):,}", "inline": True},
-                {"name": "📜 CRAFTING PATH", "value": f"```\n{path_str[:900]}\n```" if path_str else "No details", "inline": False},
+                {"name": "📈 VOL", "value": f"**{opp.get('daily_volume', 0):,}**/day", "inline": True},
+                {"name": "🚀 EV", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
+                {"name": "♻️ RRR", "value": f"**{opp.get('rrr_used', 0.152)*100:.1f}%** {'🔮 Focus' if opp.get('use_focus') else ''}", "inline": True},
+                {"name": "📜 INGREDIENTS", "value": f"```\n{path_str[:900]}\n```" if path_str else "No details", "inline": False},
             ],
-            "footer": {"text": f"AQS v3.1 High-Efficiency • {settings.active_server.value.upper()} Market"},
+            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()} Market"},
             "timestamp": datetime.utcnow().isoformat()
         }
-        
-        if opp.get("coverage_suspect"):
-            embed["description"] += "\n⚠️ **ENCRYPTION GAP**: 0 Volume, price may be stale."
 
-        return await self._send_webhook({"embeds": [embed]})
+        return embed
 
     async def send_signal_alert(self, signal: dict) -> bool:
         """Sends an alert for an alpha signal."""
@@ -270,11 +319,20 @@ class DiscordAlerter:
         return await self._send_webhook({"embeds": [embed]})
 
     async def send_batch_alerts(self, arb_opps: list[dict], craft_opps: list[dict], arb_limit: int = 5, craft_limit: int = 10):
-
+        # Process Arbitrage Opportunities
         for opp in arb_opps[:arb_limit]:
-            await self.send_arbitrage_alert(opp)
-            await asyncio.sleep(1.0)
+            embed = self._format_arbitrage_embed(opp)
+            # Route to BM webhook if destination is Black Market
+            target_webhook = self.bm_webhook_url if opp.get("destination_city") == "Black Market" and self.bm_webhook_url else self.webhook_url
+            if target_webhook:
+                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                await asyncio.sleep(4.0)  # 4-second gap to allow user to read
+                
+        # Process Crafting Opportunities
         for opp in craft_opps[:craft_limit]:
-            await self.send_crafting_alert(opp)
-            await asyncio.sleep(1.0)
-
+            embed = self._format_crafting_embed(opp)
+            # Route to BM webhook if sell city is Black Market
+            target_webhook = self.bm_webhook_url if opp.get("sell_city") == "Black Market" and self.bm_webhook_url else self.webhook_url
+            if target_webhook:
+                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                await asyncio.sleep(4.0)  # 4-second gap to allow user to read

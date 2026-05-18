@@ -148,6 +148,7 @@ class CraftingEngine:
                 # Add to path details (Summary only shows immediate ingredients to avoid double-counting)
                 ingredients_purchased.append({
                     "id": ing["item_id"], 
+                    "name": item_names.get(ing["item_id"], ing["item_id"]),
                     "mode": res["mode"], 
                     "quantity": ing["quantity"], 
                     "unit_price": res["unit_cost"],
@@ -224,6 +225,8 @@ class CraftingEngine:
                 # 2. Evaluate sell cities
                 if item_id not in prices: continue
                 for sell_city, quality_map in prices[item_id].items():
+                    if sell_city == "Caerleon" and city != "Caerleon":
+                        continue  # Caerleon sell only valid when also crafting there
                     # [FIX] Only evaluate quality 1 — crafting at base spec always produces Q1.
                     # Matching Q1 craft cost against Q4/Q5 sell prices created phantom 5000%+ margins.
                     for quality in [1]:

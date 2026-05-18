@@ -145,70 +145,77 @@ class QuantScheduler:
             #    not just this partition's items. This is the key advantage:
             #    fresh data from partition N mixes with still-valid data from N-1, N-2...
             log.info("[SCHEDULER] Step 2: Running Unified Scanner (full DB)...")
-            bm, crafting, arb = await self.unified_scanner.scan_all()
+            bm, crafting, arb = await self.unified_scanner.scan_all(scan_bm=True)
 
             # 3. Alert
             log.info(f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)})")
 
-            # Combine BM and Arb for alerts
-            all_arb = bm + arb
-
-            # Group by category to ensure variety
-            from collections import defaultdict
-
-            grouped_arb = defaultdict(list)
-            for o in all_arb:
-                grouped_arb[o.get("category", "Unknown")].append(o)
-
-            varied_arb = []
-            for cat, ops in grouped_arb.items():
-                ops.sort(key=lambda x: x.get("ev_score", 0), reverse=True)
-                varied_arb.extend(ops[:2])
-                if len(ops) > 2:
-                    remaining = ops[2:]
-                    remaining.sort(key=lambda x: x.get("ev_score", 0))
-                    varied_arb.extend(remaining[:2])
-
-            varied_arb.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
-
-            grouped_craft = defaultdict(list)
-            for o in crafting:
-                grouped_craft[o.get("category", "Unknown")].append(o)
-
-            varied_craft = []
-            for cat, ops in grouped_craft.items():
-                ops.sort(key=lambda x: x.get("ev_score", 0), reverse=True)
-                varied_craft.extend(ops[:2])
-                if len(ops) > 2:
-                    remaining = ops[2:]
-                    remaining.sort(key=lambda x: x.get("ev_score", 0))
-                    varied_craft.extend(remaining[:2])
-
-            varied_craft.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+            # Combine Arb and BM for alerts
+            all_arb = arb + bm
 
             # Cooldown filtering to prevent repeating stale alerts
             cooldown_seconds = settings.alert_cooldown_minutes * 60
             now_time = datetime.utcnow()
             
+            # Check for global tier lock
+            from app.core import state
+            tier_prefix = f"T{state.tier_lock}_" if state.tier_lock is not None else None
+
+            # Filter Arb
+            fresh_arb = []
+            for o in all_arb:
+                item_id = o.get('item_id', '')
+                if tier_prefix and not item_id.upper().startswith(tier_prefix):
+                    continue
+                    
+                key = f"arb:{item_id}:{o['source_city']}:{o['destination_city']}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                fresh_arb.append((key, o))
+
+            # Group fresh Arb by category
+            from collections import defaultdict
+            grouped_arb = defaultdict(list)
+            for key, o in fresh_arb:
+                grouped_arb[o.get("category", "Unknown")].append((key, o))
+
             final_arb = []
-            for o in varied_arb:
-                key = f"arb:{o['item_id']}:{o['source_city']}:{o['destination_city']}"
+            for cat, ops in grouped_arb.items():
+                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
+                top_ops = ops[:5]  # Top 5 per category to give more chances
+                for key, o in top_ops:
+                    final_arb.append(o)
+                    self._alert_history[key] = now_time
+            final_arb.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+
+            # Filter Crafting
+            fresh_craft = []
+            for o in crafting:
+                item_id = o.get('item_id', '')
+                if tier_prefix and not item_id.upper().startswith(tier_prefix):
+                    continue
+                    
+                key = f"craft:{item_id}:{o['crafting_city']}:{o.get('sell_city', 'Any')}"
                 if key in self._alert_history:
                     last_time = self._alert_history[key]
                     if (now_time - last_time).total_seconds() < cooldown_seconds:
                         continue
-                final_arb.append(o)
-                self._alert_history[key] = now_time
-                
+                fresh_craft.append((key, o))
+
+            grouped_craft = defaultdict(list)
+            for key, o in fresh_craft:
+                grouped_craft[o.get("category", "Unknown")].append((key, o))
+
             final_craft = []
-            for o in varied_craft:
-                key = f"craft:{o['item_id']}:{o['crafting_city']}:{o.get('sell_city', 'Any')}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
-                        continue
-                final_craft.append(o)
-                self._alert_history[key] = now_time
+            for cat, ops in grouped_craft.items():
+                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
+                top_ops = ops[:5]  # Top 5 per category
+                for key, o in top_ops:
+                    final_craft.append(o)
+                    self._alert_history[key] = now_time
+            final_craft.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
 
             if final_arb:
                 limit = max(20, settings.alert_limit_per_cycle)

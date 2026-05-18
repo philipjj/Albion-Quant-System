@@ -156,6 +156,7 @@ class ArbitrageScanner:
 
             for dest_city, d_data in city_prices.items():
                 if dest_city == cheapest_source_city: continue
+                if dest_city == "Caerleon": continue  # same risk zone as BM; handled by BM scan
                 self.stats["pairs_evaluated"] += 1
                 
                 if d_data.get("is_black_market"):
@@ -167,8 +168,8 @@ class ArbitrageScanner:
 
                 if sell_price <= buy_price: continue
 
-                # Calculate Fee-Adjusted Profit
-                net_profit, margin_pct = calculate_net_margin(
+                # 1. Fast path: check raw profit
+                net_profit_raw, margin_pct_raw = calculate_net_margin(
                     buy_price=buy_price,
                     sell_price=sell_price,
                     is_black_market=d_data.get("is_black_market", False),
@@ -176,13 +177,39 @@ class ArbitrageScanner:
                     tax_free=False 
                 )
 
-                if margin_pct < settings.min_arbitrage_margin: continue
+                if margin_pct_raw < settings.min_arbitrage_margin: continue
                 
                 # Sanitize 999 Volume Fallbacks
                 raw_vol = d_data.get("volume_24h", 0)
                 daily_vol = 1 if raw_vol == 999 or raw_vol == 0 else raw_vol
                 
                 if daily_vol <= 0 and not d_data.get("is_black_market"): continue
+
+                # 2. VWAP & Slippage Math
+                from app.execution.slippage import calculate_safe_trade_limit
+                from app.execution.vwap import estimate_vwap
+                
+                if d_data.get("is_black_market"):
+                    safe_limit = 1
+                else:
+                    safe_limit = calculate_safe_trade_limit(daily_vol, max_slippage_pct=0.03)
+                    
+                s_daily_vol = s_data.get("volume_24h", 1)
+                s_daily_vol = 1 if s_daily_vol == 999 or s_daily_vol == 0 else s_daily_vol
+                
+                vwap_buy = estimate_vwap(buy_price, safe_limit, s_daily_vol, is_buy=True)
+                vwap_sell = estimate_vwap(sell_price, safe_limit, daily_vol, is_buy=False)
+
+                # Calculate Fee-Adjusted Profit using VWAP
+                net_profit, margin_pct = calculate_net_margin(
+                    buy_price=vwap_buy,
+                    sell_price=vwap_sell,
+                    is_black_market=d_data.get("is_black_market", False),
+                    fast_sell=fast_sell_actual,
+                    tax_free=False 
+                )
+
+                if margin_pct < settings.min_arbitrage_margin: continue
 
                 risk_score = self._calculate_risk_score(cheapest_source_city, dest_city, s_data["item_value"])
                 p_key = f"{item_id}:{cheapest_source_city}:{dest_city}"
@@ -206,12 +233,13 @@ class ArbitrageScanner:
                     "quality": quality,
                     "source_city": cheapest_source_city,
                     "destination_city": dest_city,
-                    "buy_price": buy_price,
-                    "sell_price": sell_price,
+                    "buy_price": vwap_buy,
+                    "sell_price": vwap_sell,
                     "estimated_profit": round(net_profit, 2), # strictly unit math
                     "estimated_margin": round(margin_pct, 2),
                     "risk_score": risk_score,
                     "daily_volume": daily_vol,
+                    "safe_limit": safe_limit,
                     "volatility": settings.arb_default_volatility, 
                     "persistence": persistence,
                     "data_age_seconds": d_data.get("data_age_seconds", 0),
@@ -248,6 +276,7 @@ class ArbitrageScanner:
                     "estimated_margin": o["estimated_margin"],
                     "risk_score": o.get("risk_score", 0), 
                     "daily_volume": o.get("daily_volume", 0),
+                    "safe_limit": o.get("safe_limit", 1),
                     "ev_score": o.get("ev_score", 0.0), 
                     "volatility": o.get("volatility", 0.0), 
                     "persistence": o.get("persistence", 1),

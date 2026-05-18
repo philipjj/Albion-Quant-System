@@ -191,12 +191,8 @@ class MarketCollector:
         cat = category.lower()
         
         # High Frequency (Every cycle)
-        if cat in ['crafting', 'gathering', 'consumables', 'farming']:
+        if cat in ['crafting', 'gathering', 'consumables', 'farming', 'weapons', 'head', 'armors', 'shoes', 'offhands']:
             return True
-            
-        # Medium Frequency (Every 15 min)
-        if cat in ['weapons', 'head', 'armors', 'shoes', 'offhands']:
-            return (current_minute % 15) < 5 # Poll at 0, 15, 30, 45
             
         # Low Frequency (Every 60 min)
         if cat in ['mounts', 'artefacts', 'capes', 'bags']:

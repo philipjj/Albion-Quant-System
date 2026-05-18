@@ -127,20 +127,23 @@ def init_db() -> None:
                 CREATE UNIQUE INDEX IF NOT EXISTS ix_bm_upsert 
                 ON black_market_snapshots (item_id, quality, captured_at_bucket)
             """))
+            conn.commit()
             
             # Create hypertable for TimescaleDB if using PostgreSQL
             if not settings.database_url.startswith("sqlite"):
                 try:
                     conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb;"))
                     conn.execute(text("SELECT create_hypertable('market_prices', 'captured_at', if_not_exists => TRUE);"))
+                    conn.commit()
                     print("Migration: Verified hypertable for market_prices")
                 except Exception as e:
+                    conn.rollback()
                     # This might fail if the extension is not installed or it's already a hypertable
                     print(f"Migration Error (Hypertable): {e}")
                     
-            conn.commit()
             print("Migration: Unique UPSERT indexes verified")
         except Exception as e:
+            conn.rollback()
             print(f"Migration Error (Indexes): {e}")
 
         # 4. Arbitrage

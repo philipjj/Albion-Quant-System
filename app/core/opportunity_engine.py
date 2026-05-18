@@ -121,7 +121,7 @@ DANGEROUS_DESTINATIONS = {CAERLEON, BM_CITY}
 
 # ─── Data Age Limits ─────────────────────────────────────────────────────────
 
-MAX_AGE_BM_SECONDS = 3_600       # 1 hour — BM orders fill fast
+MAX_AGE_BM_SECONDS = 600         # 10 minutes — BM orders fill fast
 MAX_AGE_ROYAL_SECONDS = 7_200    # 2 hours — royal city orders last longer
 MAX_AGE_CRAFTING_SECONDS = 14_400  # 4 hours — acceptable for material cost calc
 
@@ -542,7 +542,7 @@ class OpportunityScanner:
 
                 # — Sell to Black Market (0 tax, no setup fee)
                 bm_data = self._get_price(prices, item_id, BM_CITY, 1)
-                if bm_data:
+                if bm_data and best_craft_city == "Caerleon":
                     bm_price = bm_data.get("buy_price_max", 0)
                     bm_age = bm_data.get("data_age_seconds", 9999)
                     if bm_price > 0 and bm_age <= MAX_AGE_BM_SECONDS:
@@ -574,6 +574,8 @@ class OpportunityScanner:
 
                 # — Sell on royal market (best price across all cities)
                 for sell_city in ALL_SELL_CITIES:
+                    if sell_city == "Caerleon" and best_craft_city != "Caerleon":
+                        continue
                     sell_data = self._get_price(prices, item_id, sell_city, quality)
                     if not sell_data:
                         continue
@@ -586,7 +588,7 @@ class OpportunityScanner:
                         continue
                     if sell_age > MAX_AGE_ROYAL_SECONDS:
                         continue
-                    if not is_price_valid(sell_price, buy_max):
+                    if buy_max <= 0 or not is_price_valid(sell_price, buy_max):
                         continue
 
                     # Revenue = sell_price - setup_fee - tax
@@ -684,7 +686,7 @@ class OpportunityScanner:
                         _diag["outlier_filtered"] += 1
                         continue  # Outlier filtered
 
-                    for dest_city in ROYAL_CITIES + [CAERLEON]:
+                    for dest_city in ROYAL_CITIES:  # Caerleon excluded — same risk as BM
                         if dest_city == src_city:
                             continue
 

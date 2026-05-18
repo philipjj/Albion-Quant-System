@@ -40,10 +40,14 @@ class UnifiedScanner:
         self,
         use_focus: bool = False,
         premium: bool = True,
-        min_bm_profit: int = 10_000,
-        min_craft_profit: int = 5_000,
+        min_bm_profit: int = 30_000,
+        min_craft_profit: int = 15_000,
         min_arb_profit: int = 5_000,
     ):
+        self.default_min_bm_profit = min_bm_profit
+        self.default_min_craft_profit = min_craft_profit
+        self.default_min_arb_profit = min_arb_profit
+        
         self.engine = OpportunityScanner(
             min_bm_profit=min_bm_profit,
             min_craft_profit=min_craft_profit,
@@ -54,7 +58,7 @@ class UnifiedScanner:
 
     # ── Data loading ────────────────────────────────────────────────────────
 
-    def _load_prices(self, db: Session, lookback_hours: float = 4.0) -> Dict:
+    def _load_prices(self, db: Session, lookback_hours: float = 4.0, scan_bm: bool = False) -> Dict:
         """
         Load latest prices into the nested dict structure OpportunityEngine expects.
         Structure: {item_id: {city: {quality: {fields...}}}}
@@ -100,50 +104,51 @@ class UnifiedScanner:
                 "buy_price_max": p.buy_price_max or 0,
                 "volume_24h": p.volume_24h or 0,
                 "data_age_seconds": int(effective_age),
-                "is_black_market": False,
+                "is_black_market": (city == "Black Market"),
                 "item_value": 0.0,  # Filled below
                 "_ts": p.captured_at,
             }
 
-        # Black Market snapshots (Caerleon buy orders)
-        bm_cutoff = datetime.utcnow() - timedelta(hours=2)
-        bm_rows = db.query(BlackMarketSnapshot).filter(
-            BlackMarketSnapshot.captured_at >= bm_cutoff
-        ).all()
+        if scan_bm:
+            # Black Market snapshots (Caerleon buy orders)
+            bm_cutoff = datetime.utcnow() - timedelta(hours=2)
+            bm_rows = db.query(BlackMarketSnapshot).filter(
+                BlackMarketSnapshot.captured_at >= bm_cutoff
+            ).all()
 
-        for bm in bm_rows:
-            item_id = bm.item_id
-            if bm.enchantment and bm.enchantment > 0:
-                item_id = f"{item_id}@{bm.enchantment}"
-                
-            quality = bm.quality or 1
-            city = "Black Market"
+            for bm in bm_rows:
+                item_id = bm.item_id
+                if bm.enchantment and bm.enchantment > 0:
+                    item_id = f"{item_id}@{bm.enchantment}"
+                    
+                quality = bm.quality or 1
+                city = "Black Market"
 
-            if item_id not in prices:
-                prices[item_id] = {}
-            if city not in prices[item_id]:
-                prices[item_id][city] = {}
+                if item_id not in prices:
+                    prices[item_id] = {}
+                if city not in prices[item_id]:
+                    prices[item_id][city] = {}
 
-            existing = prices[item_id][city].get(quality)
-            if existing and bm.captured_at and existing.get("_ts") and bm.captured_at <= existing["_ts"]:
-                continue
+                existing = prices[item_id][city].get(quality)
+                if existing and bm.captured_at and existing.get("_ts") and bm.captured_at <= existing["_ts"]:
+                    continue
 
-            # Recompute BM data age dynamically
-            bm_api_age = int(bm.data_age_seconds or 0)
-            if bm.captured_at:
-                bm_db_age = (datetime.utcnow() - bm.captured_at).total_seconds()
-            else:
-                bm_db_age = 0
-            bm_effective_age = bm_api_age + bm_db_age
+                # Recompute BM data age dynamically
+                bm_api_age = int(bm.data_age_seconds or 0)
+                if bm.captured_at:
+                    bm_db_age = (datetime.utcnow() - bm.captured_at).total_seconds()
+                else:
+                    bm_db_age = 0
+                bm_effective_age = bm_api_age + bm_db_age
 
-            prices[item_id][city][quality] = {
-                "sell_price_min": 0,
-                "buy_price_max": bm.buy_price_max or 0,
-                "volume_24h": 1,
-                "data_age_seconds": int(bm_effective_age),
-                "is_black_market": True,
-                "_ts": bm.captured_at,
-            }
+                prices[item_id][city][quality] = {
+                    "sell_price_min": 0,
+                    "buy_price_max": bm.buy_price_max or 0,
+                    "volume_24h": 1,
+                    "data_age_seconds": int(bm_effective_age),
+                    "is_black_market": True,
+                    "_ts": bm.captured_at,
+                }
 
         return prices
 
@@ -199,23 +204,32 @@ class UnifiedScanner:
     # ── Main entry point ────────────────────────────────────────────────────
 
     async def scan_all(
-        self, db: Session = None
+        self, db: Session = None, scan_bm: bool = False
     ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
         """
         Returns (bm_opps, craft_opps, arb_opps) as plain dicts ready for DB storage
         and Discord alerts. All sorted by score descending.
         """
+        from app.core import state
+        
+        # Use dynamic thresholds from state
+        self.engine.min_arb_profit = self.default_min_arb_profit
+        self.engine.min_craft_profit = state.min_craft_profit
+        self.engine.min_bm_profit = state.min_bm_profit
+            
         with get_db_session() as db:
             log.info("[UNIFIED SCANNER] Loading prices...")
-            prices = self._load_prices(db)
+            prices = self._load_prices(db, scan_bm=scan_bm)
             log.info(f"[UNIFIED SCANNER] {len(prices)} items loaded.")
 
             names, categories, values = self._load_item_metadata(db)
             recipes = self._load_recipes(db)
 
-        log.info("[UNIFIED SCANNER] Scanning Black Market...")
-        bm_raw = self.engine.scan_black_market(prices, names, recipes, categories, values)
-        log.info(f"[UNIFIED SCANNER] BM: {len(bm_raw)} opportunities")
+        bm_raw = []
+        if scan_bm:
+            log.info("[UNIFIED SCANNER] Scanning Black Market...")
+            bm_raw = self.engine.scan_black_market(prices, names, recipes, categories, values)
+            log.info(f"[UNIFIED SCANNER] BM: {len(bm_raw)} opportunities")
 
         log.info("[UNIFIED SCANNER] Scanning Crafting...")
         craft_raw = self.engine.scan_crafting(prices, names, recipes, categories, values)
@@ -226,7 +240,7 @@ class UnifiedScanner:
         log.info(f"[UNIFIED SCANNER] Arbitrage: {len(arb_raw)} opportunities")
 
         return (
-            [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw],
+            [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw] if scan_bm else [],
             [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in craft_raw],
             [self._arb_to_dict(o, categories.get(o.item_id, "Unknown")) for o in arb_raw],
         )

@@ -90,6 +90,7 @@ class Settings(BaseSettings):
 
     # Discord
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
+    discord_bm_webhook_url: str = Field(default="", alias="DISCORD_BM_WEBHOOK_URL")
     discord_bot_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")
 
     # Trading Parameters
@@ -177,6 +178,14 @@ class Settings(BaseSettings):
     )
     alert_limit_per_cycle: int = Field(
         default=5, alias="ALERT_LIMIT_PER_CYCLE"
+    )
+    scan_partitions: int = Field(
+        default=6, alias="SCAN_PARTITIONS",
+        description="Split item universe into N partitions. Each cycle ingests 1 partition then scans+alerts immediately."
+    )
+    alert_cooldown_minutes: int = Field(
+        default=30, alias="ALERT_COOLDOWN_MINUTES",
+        description="Minutes to wait before repeating an alert for the exact same item and route."
     )
 
     # Logging

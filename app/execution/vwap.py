@@ -1,25 +1,26 @@
 """
 VWAP (Volume Weighted Average Price) engine.
+Calculates realistic execution prices based on market depth and slippage.
 """
+from typing import List, Dict
+from app.execution.slippage import estimate_market_impact
 
-def calculate_vwap(orders: list[dict], target_volume: float) -> float:
+def calculate_vwap_from_orderbook(orders: List[Dict], target_volume: float) -> float:
     """
     Calculates VWAP for a target volume by walking the order book.
-    Each order should have 'price' and 'volume'.
+    Each order should have 'price' and 'amount'/'volume'.
     Returns the average execution price.
     """
     total_cost = 0.0
     filled_volume = 0.0
-    
-    # Sort orders by price (buy orders descending, sell orders ascending)
-    # Assuming orders passed are already relevant for the operation
     
     for order in orders:
         if filled_volume >= target_volume:
             break
             
         remaining = target_volume - filled_volume
-        fill = min(order['volume'], remaining)
+        vol = order.get('amount', order.get('volume', 0))
+        fill = min(vol, remaining)
         
         total_cost += fill * order['price']
         filled_volume += fill
@@ -29,10 +30,22 @@ def calculate_vwap(orders: list[dict], target_volume: float) -> float:
         
     return total_cost / filled_volume
 
-def calculate_slippage(base_price: float, executed_price: float) -> float:
+def estimate_vwap(base_price: float, trade_volume: float, daily_volume: float, is_buy: bool) -> float:
     """
-    Calculates slippage as a percentage.
+    Estimates VWAP when full orderbook data is unavailable.
+    Applies an estimated market impact (slippage) to the best price.
+    is_buy = True: we are buying from the market (lifts best ask).
+    is_buy = False: we are selling to the market (hits best bid).
     """
-    if base_price == 0:
-        return 0.0
-    return abs(executed_price - base_price) / base_price
+    if trade_volume <= 0 or base_price <= 0:
+        return base_price
+
+    slippage_pct = estimate_market_impact(trade_volume, daily_volume)
+    
+    if is_buy:
+        # Buying pushes our average price UP (we pay more)
+        return base_price * (1.0 + slippage_pct)
+    else:
+        # Selling pushes our average price DOWN (we receive less)
+        return base_price * (1.0 - slippage_pct)
+

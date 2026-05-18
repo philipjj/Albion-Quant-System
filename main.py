@@ -46,11 +46,11 @@ async def lifespan(app: FastAPI):
         log.info("[STOP] Albion Quant Trading System shut down")
         return
 
-    # Initialize and START scheduler automatically
+    # Initialize scheduler but DON'T start — wait for !start command
     from app.workers.scheduler import QuantScheduler
     state.scheduler_instance = QuantScheduler()
-    state.scheduler_instance.start()
-    log.info("[OK] Background scheduler started automatically")
+    state.standby_mode = True
+    log.info("[OK] Scheduler initialized in STANDBY mode — use !start in Discord to begin")
 
     # Start Discord Bot
     from app.alerts.bot import start_discord_bot
