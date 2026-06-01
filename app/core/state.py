@@ -1,6 +1,7 @@
 """
 Global application state to avoid circular imports.
 """
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

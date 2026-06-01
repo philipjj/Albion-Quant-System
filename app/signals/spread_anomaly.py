@@ -1,14 +1,16 @@
 from typing import List
+
+from app.features.spread import calculate_relative_spread
 from app.shared.domain.market_snapshot import MarketSnapshot
 from app.shared.domain.signal import Signal
 from app.signals.base import SignalGenerator
-from app.features.spread import calculate_relative_spread
+
 
 class SpreadAnomalyGenerator(SignalGenerator):
     def __init__(self, threshold: float):
         self.threshold = threshold
-        
-    def generate(self, snapshot: MarketSnapshot) -> List[Signal]:
+
+    def generate(self, snapshot: MarketSnapshot) -> list[Signal]:
         rel_spread = calculate_relative_spread(snapshot.best_ask, snapshot.best_bid)
         if rel_spread > self.threshold:
             return [
@@ -18,7 +20,7 @@ class SpreadAnomalyGenerator(SignalGenerator):
                     timestamp=snapshot.timestamp,
                     signal_type="spread_anomaly",
                     strength=rel_spread,
-                    metadata={"threshold": self.threshold}
+                    metadata={"threshold": self.threshold},
                 )
             ]
         return []

@@ -5,21 +5,22 @@ Run: pytest tests/test_opportunity_engine.py -v
 
 import pytest
 from app.core.opportunity_engine import (
-    OpportunityScanner,
-    rrr,
-    is_price_valid,
-    is_bm_price_valid,
-    cross_city_outlier_check,
     ROYAL_CITIES,
+    OpportunityScanner,
+    cross_city_outlier_check,
+    is_bm_price_valid,
+    is_price_valid,
+    rrr,
 )
 
-
 # ─── RRR Tests ────────────────────────────────────────────────────────────────
+
 
 def test_rrr_base_no_bonus():
     """All cities, non-bonus items get ~15.3% RRR"""
     rate = rrr("Caerleon", "random_item", use_focus=False)
     assert 0.14 < rate < 0.17, f"Expected ~15%, got {rate}"
+
 
 def test_rrr_city_crafting_bonus():
     """Lymhurst gives crafting bonus to swords"""
@@ -28,12 +29,14 @@ def test_rrr_city_crafting_bonus():
     assert rate_bonus > rate_base, "Bonus city should have higher RRR"
     assert rate_bonus > 0.24, f"Expected >24% for bonus city, got {rate_bonus}"
 
+
 def test_rrr_with_focus():
     """Focus always increases RRR"""
     rate_no_focus = rrr("Bridgewatch", "crossbow", use_focus=False)
     rate_with_focus = rrr("Bridgewatch", "crossbow", use_focus=True)
     assert rate_with_focus > rate_no_focus
     assert rate_with_focus < 1.0
+
 
 def test_rrr_never_exceeds_99pct():
     rate = rrr("Martlock", "axe", use_focus=True)
@@ -42,31 +45,37 @@ def test_rrr_never_exceeds_99pct():
 
 # ─── Price Validity Tests ─────────────────────────────────────────────────────
 
+
 def test_price_valid_normal():
     assert is_price_valid(100_000, 80_000) is True
 
+
 def test_price_invalid_too_low():
-    assert is_price_valid(50, 40) is False   # Below MIN_PRICE
+    assert is_price_valid(50, 40) is False  # Below MIN_PRICE
+
 
 def test_price_invalid_too_high():
     assert is_price_valid(600_000_000, 500_000) is False  # Above 500M cap
 
+
 def test_price_invalid_manipulation_ratio():
     # sell_min is 10x buy_max → likely a single troll listing
-    assert is_price_valid(1_000_000, 100_000) is False   # ratio = 10x > 8x limit
+    assert is_price_valid(1_000_000, 100_000) is False  # ratio = 10x > 8x limit
+
 
 def test_price_valid_normal_spread():
     # 5x spread is on the edge but acceptable for rare items
-    assert is_price_valid(400_000, 100_000) is True    # 4x
+    assert is_price_valid(400_000, 100_000) is True  # 4x
 
 
 def test_bm_price_valid_with_item_value():
     """BM price should be rejected if it exceeds 5000x item value"""
     assert is_bm_price_valid(10_000_000, 1_000) is False  # 10000x
-    assert is_bm_price_valid(4_000_000, 1_000) is True   # 4000x
+    assert is_bm_price_valid(4_000_000, 1_000) is True  # 4000x
 
 
 # ─── Cross-City Outlier Tests ─────────────────────────────────────────────────
+
 
 def test_outlier_detection_removes_spike():
     """One city at 10x median should be zeroed out"""
@@ -81,6 +90,7 @@ def test_outlier_detection_removes_spike():
     assert cleaned["Thetford"] == 0, "Troll listing should be zeroed"
     assert cleaned["Bridgewatch"] > 0, "Normal price should be kept"
 
+
 def test_outlier_detection_keeps_valid_prices():
     prices = {
         "Bridgewatch": 1_000_000,
@@ -94,10 +104,11 @@ def test_outlier_detection_keeps_valid_prices():
 
 # ─── Scanner Integration Tests ────────────────────────────────────────────────
 
+
 @pytest.fixture
 def scanner():
     return OpportunityScanner(
-        min_bm_profit=1_000,    # Low thresholds for testing
+        min_bm_profit=1_000,  # Low thresholds for testing
         min_craft_profit=500,
         min_arb_profit=500,
         min_bm_profit_pct=2.0,
@@ -115,27 +126,33 @@ def test_bm_scan_finds_profitable_flip(scanner):
     """BM buy order > royal sell price → should be detected"""
     prices = {
         "T6_MAIN_SWORD": {
-            "Lymhurst": {1: {
-                "sell_price_min": 500_000,
-                "buy_price_max": 400_000,
-                "volume_24h": 10,
-                "data_age_seconds": 600,
-                "is_black_market": False,
-            }},
-            "Bridgewatch": {1: {
-                "sell_price_min": 480_000,
-                "buy_price_max": 390_000,
-                "volume_24h": 5,
-                "data_age_seconds": 900,
-                "is_black_market": False,
-            }},
-            "Black Market": {1: {
-                "sell_price_min": 0,
-                "buy_price_max": 700_000,   # BM pays 700k, cheapest buy is 480k → 220k profit
-                "volume_24h": 1,
-                "data_age_seconds": 1200,
-                "is_black_market": True,
-            }},
+            "Lymhurst": {
+                1: {
+                    "sell_price_min": 500_000,
+                    "buy_price_max": 400_000,
+                    "volume_24h": 10,
+                    "data_age_seconds": 600,
+                    "is_black_market": False,
+                }
+            },
+            "Bridgewatch": {
+                1: {
+                    "sell_price_min": 480_000,
+                    "buy_price_max": 390_000,
+                    "volume_24h": 5,
+                    "data_age_seconds": 900,
+                    "is_black_market": False,
+                }
+            },
+            "Black Market": {
+                1: {
+                    "sell_price_min": 0,
+                    "buy_price_max": 700_000,  # BM pays 700k, cheapest buy is 480k → 220k profit
+                    "volume_24h": 1,
+                    "data_age_seconds": 500,
+                    "is_black_market": True,
+                }
+            },
         }
     }
     names = {"T6_MAIN_SWORD": "Expert's Broadsword"}
@@ -146,7 +163,7 @@ def test_bm_scan_finds_profitable_flip(scanner):
     assert len(opps) >= 1
     best = opps[0]
     assert best.item_id == "T6_MAIN_SWORD"
-    assert best.buy_city == "Bridgewatch"   # Cheapest city
+    assert best.buy_city == "Bridgewatch"  # Cheapest city
     assert best.net_profit == 700_000 - 480_000
     assert best.profit_pct > 0
 
@@ -155,20 +172,24 @@ def test_bm_scan_skips_unrealistic_spread(scanner):
     """BM price > 8x royal price should be skipped"""
     prices = {
         "T8_BOW": {
-            "Lymhurst": {1: {
-                "sell_price_min": 1_000_000,
-                "buy_price_max": 800_000,
-                "volume_24h": 10,
-                "data_age_seconds": 600,
-                "is_black_market": False,
-            }},
-            "Black Market": {1: {
-                "sell_price_min": 0,
-                "buy_price_max": 9_000_000,   # 9x > 8x
-                "volume_24h": 1,
-                "data_age_seconds": 1200,
-                "is_black_market": True,
-            }},
+            "Lymhurst": {
+                1: {
+                    "sell_price_min": 1_000_000,
+                    "buy_price_max": 800_000,
+                    "volume_24h": 10,
+                    "data_age_seconds": 600,
+                    "is_black_market": False,
+                }
+            },
+            "Black Market": {
+                1: {
+                    "sell_price_min": 0,
+                    "buy_price_max": 9_000_000,  # 9x > 8x
+                    "volume_24h": 1,
+                    "data_age_seconds": 1200,
+                    "is_black_market": True,
+                }
+            },
         }
     }
     names = {"T8_BOW": "Elder's Bow"}
@@ -180,20 +201,24 @@ def test_bm_scan_skips_stale_bm_price(scanner):
     """BM price older than 1hr should be skipped"""
     prices = {
         "T5_AXE": {
-            "Martlock": {1: {
-                "sell_price_min": 200_000,
-                "buy_price_max": 150_000,
-                "volume_24h": 5,
-                "data_age_seconds": 600,
-                "is_black_market": False,
-            }},
-            "Black Market": {1: {
-                "sell_price_min": 0,
-                "buy_price_max": 500_000,
-                "volume_24h": 1,
-                "data_age_seconds": 5_000,  # ← Stale: >3600s
-                "is_black_market": True,
-            }},
+            "Martlock": {
+                1: {
+                    "sell_price_min": 200_000,
+                    "buy_price_max": 150_000,
+                    "volume_24h": 5,
+                    "data_age_seconds": 600,
+                    "is_black_market": False,
+                }
+            },
+            "Black Market": {
+                1: {
+                    "sell_price_min": 0,
+                    "buy_price_max": 500_000,
+                    "volume_24h": 1,
+                    "data_age_seconds": 5_000,  # ← Stale: >3600s
+                    "is_black_market": True,
+                }
+            },
         }
     }
     names = {"T5_AXE": "Adept's Battleaxe"}
@@ -205,34 +230,42 @@ def test_bm_scan_skips_manipulated_royal_price(scanner):
     """If one city has a 10x spike, it should be ignored as buy source"""
     prices = {
         "T7_SPEAR": {
-            "Fort Sterling": {1: {
-                "sell_price_min": 900_000,   # Normal
-                "buy_price_max": 800_000,
-                "volume_24h": 8,
-                "data_age_seconds": 300,
-                "is_black_market": False,
-            }},
-            "Martlock": {1: {
-                "sell_price_min": 10_000_000,  # ← Manipulated (10x other cities)
-                "buy_price_max": 800_000,
-                "volume_24h": 1,
-                "data_age_seconds": 300,
-                "is_black_market": False,
-            }},
-            "Lymhurst": {1: {
-                "sell_price_min": 950_000,   # Normal
-                "buy_price_max": 820_000,
-                "volume_24h": 3,
-                "data_age_seconds": 600,
-                "is_black_market": False,
-            }},
-            "Black Market": {1: {
-                "sell_price_min": 0,
-                "buy_price_max": 1_500_000,
-                "volume_24h": 1,
-                "data_age_seconds": 500,
-                "is_black_market": True,
-            }},
+            "Fort Sterling": {
+                1: {
+                    "sell_price_min": 900_000,  # Normal
+                    "buy_price_max": 800_000,
+                    "volume_24h": 8,
+                    "data_age_seconds": 300,
+                    "is_black_market": False,
+                }
+            },
+            "Martlock": {
+                1: {
+                    "sell_price_min": 10_000_000,  # ← Manipulated (10x other cities)
+                    "buy_price_max": 800_000,
+                    "volume_24h": 1,
+                    "data_age_seconds": 300,
+                    "is_black_market": False,
+                }
+            },
+            "Lymhurst": {
+                1: {
+                    "sell_price_min": 950_000,  # Normal
+                    "buy_price_max": 820_000,
+                    "volume_24h": 3,
+                    "data_age_seconds": 600,
+                    "is_black_market": False,
+                }
+            },
+            "Black Market": {
+                1: {
+                    "sell_price_min": 0,
+                    "buy_price_max": 1_500_000,
+                    "volume_24h": 1,
+                    "data_age_seconds": 500,
+                    "is_black_market": True,
+                }
+            },
         }
     }
     names = {"T7_SPEAR": "Master's Spear"}
@@ -250,24 +283,30 @@ def test_arb_uses_buy_order_not_sell_order(scanner):
     """
     prices = {
         "T4_HIDE": {
-            "Bridgewatch": {1: {
-                "sell_price_min": 100_000,
-                "buy_price_max": 90_000,
-                "volume_24h": 50,
-                "data_age_seconds": 300,
-            }},
-            "Martlock": {1: {
-                "sell_price_min": 200_000,
-                "buy_price_max": 0,   # ← No buy order → should NOT be an arb dest
-                "volume_24h": 30,
-                "data_age_seconds": 400,
-            }},
-            "Fort Sterling": {1: {
-                "sell_price_min": 180_000,
-                "buy_price_max": 160_000,   # ← Has buy order → valid destination
-                "volume_24h": 20,
-                "data_age_seconds": 500,
-            }},
+            "Bridgewatch": {
+                1: {
+                    "sell_price_min": 100_000,
+                    "buy_price_max": 90_000,
+                    "volume_24h": 50,
+                    "data_age_seconds": 300,
+                }
+            },
+            "Martlock": {
+                1: {
+                    "sell_price_min": 200_000,
+                    "buy_price_max": 0,  # ← No buy order → should NOT be an arb dest
+                    "volume_24h": 30,
+                    "data_age_seconds": 400,
+                }
+            },
+            "Fort Sterling": {
+                1: {
+                    "sell_price_min": 180_000,
+                    "buy_price_max": 160_000,  # ← Has buy order → valid destination
+                    "volume_24h": 20,
+                    "data_age_seconds": 500,
+                }
+            },
         }
     }
     names = {"T4_HIDE": "Journeyman's Hide"}

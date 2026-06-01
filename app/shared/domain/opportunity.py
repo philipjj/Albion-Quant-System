@@ -1,5 +1,7 @@
-from app.shared.domain.signal import Signal
 from pydantic import BaseModel
+
+from app.shared.domain.signal import Signal
+
 
 class Opportunity(BaseModel):
     signal: Signal

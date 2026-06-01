@@ -22,11 +22,13 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 
 class Base(DeclarativeBase):
     """Base class for all database models."""
+
     pass
 
 
 class Item(Base):
     """Static item data parsed from ao-bin-dumps."""
+
     __tablename__ = "items"
 
     item_id = Column(String(128), primary_key=True, index=True)
@@ -39,7 +41,7 @@ class Item(Base):
     shop_subcategory = Column(String(64), nullable=True)
     weight = Column(Float, default=0.0)
     max_stack = Column(Integer, default=999)
-    item_value = Column(Float, default=0.0) # Game internal value for tax/fees
+    item_value = Column(Float, default=0.0)  # Game internal value for tax/fees
     is_craftable = Column(Boolean, default=False)
 
     # Relationships
@@ -55,6 +57,7 @@ class Item(Base):
 
 class Recipe(Base):
     """Crafting recipe ingredients."""
+
     __tablename__ = "recipes"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -90,6 +93,7 @@ class Recipe(Base):
 
 class MarketPrice(Base):
     """Live market price snapshots from the Albion Data API."""
+
     __tablename__ = "market_prices"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -104,16 +108,16 @@ class MarketPrice(Base):
     sell_price_max_date = Column(DateTime)
     buy_price_min_date = Column(DateTime)
     buy_price_max_date = Column(DateTime)
-    
+
     # [NEW] Derived from history endpoint
     volume_24h = Column(Integer, default=0)
-    
+
     data_age_seconds = Column(Float)
     confidence_score = Column(Float, default=1.0)
-    
+
     # [NEW] Coverage suspect flag
     coverage_suspect = Column(Boolean, default=False)
-    
+
     quality = Column(Integer, default=1)
     captured_at = Column(DateTime, default=datetime.utcnow, index=True)
     captured_at_bucket = Column(DateTime, index=True)
@@ -130,6 +134,7 @@ class MarketPrice(Base):
 
 class MarketHistory(Base):
     """Historical sales volume data for liquidity analysis."""
+
     __tablename__ = "market_history"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -140,9 +145,7 @@ class MarketHistory(Base):
     avg_price = Column(Float, default=0.0)
     timestamp = Column(DateTime, nullable=False, index=True)
 
-    __table_args__ = (
-        Index("ix_history_item_city_time", "item_id", "city", "timestamp"),
-    )
+    __table_args__ = (Index("ix_history_item_city_time", "item_id", "city", "timestamp"),)
 
     def __repr__(self):
         return f"<MarketHistory {self.item_id}@{self.city} count={self.item_count} at {self.timestamp}>"
@@ -150,6 +153,7 @@ class MarketHistory(Base):
 
 class ArbitrageOpportunity(Base):
     """Detected arbitrage opportunities between cities."""
+
     __tablename__ = "arbitrage_opportunities"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -189,6 +193,7 @@ class ArbitrageOpportunity(Base):
 
 class CraftingOpportunity(Base):
     """Detected crafting profit opportunities."""
+
     __tablename__ = "crafting_opportunities"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -213,7 +218,7 @@ class CraftingOpportunity(Base):
     volatility = Column(Float, default=0.0)
     persistence = Column(Integer, default=1)
     ingredients_json = Column(Text, nullable=True)
-    decision_log = Column(Text, nullable=True) # Recursive path decisions
+    decision_log = Column(Text, nullable=True)  # Recursive path decisions
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
     is_active = Column(Boolean, default=True)
 
@@ -231,6 +236,7 @@ class CraftingOpportunity(Base):
 
 class MarketSnapshot(Base):
     """Hourly market state snapshots for historical analysis."""
+
     __tablename__ = "market_snapshots"
 
     id = Column(Integer, primary_key=True)
@@ -247,8 +253,8 @@ class MarketSnapshot(Base):
 
     sell_price_min_date = Column(DateTime, nullable=True)
     sell_price_max_date = Column(DateTime, nullable=True)
-    buy_price_min_date  = Column(DateTime, nullable=True)
-    buy_price_max_date  = Column(DateTime, nullable=True)
+    buy_price_min_date = Column(DateTime, nullable=True)
+    buy_price_max_date = Column(DateTime, nullable=True)
 
     volume_24h = Column(Integer, nullable=True)
     data_age_seconds = Column(Float, nullable=True)
@@ -257,20 +263,22 @@ class MarketSnapshot(Base):
 
     captured_at = Column(DateTime, default=datetime.utcnow)
 
+
 class BlackMarketSnapshot(Base):
     """Snapshot of Black Market buy orders."""
+
     __tablename__ = "black_market_snapshots"
 
     id = Column(Integer, primary_key=True)
     item_id = Column(String, nullable=False)
     enchantment = Column(Integer, default=0)
     quality = Column(Integer, default=1)
-    
+
     buy_price_min = Column(BigInteger)
     buy_price_max = Column(BigInteger)
     buy_price_min_date = Column(DateTime)
     buy_price_max_date = Column(DateTime)
-    
+
     data_age_seconds = Column(Float)
     confidence_score = Column(Float, default=1.0)
     captured_at = Column(DateTime, default=datetime.utcnow)
@@ -280,8 +288,10 @@ class BlackMarketSnapshot(Base):
         Index("ix_bm_upsert", "item_id", "quality", "captured_at_bucket", unique=True),
     )
 
+
 class LiquidityConfidence(Base):
     """Historical liquidity confidence tracking."""
+
     __tablename__ = "liquidity_confidence"
 
     id = Column(Integer, primary_key=True)
@@ -296,6 +306,7 @@ class LiquidityConfidence(Base):
 
 class UserProfile(Base):
     """Per-user preferences for personalization (Discord + API clients)."""
+
     __tablename__ = "user_profiles"
 
     # Discord user id as stable key. (Also usable for API tokens later.)
@@ -316,10 +327,13 @@ class UserProfile(Base):
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
 
+
 # Phase 16 Models
+
 
 class MetaSnapshot(Base):
     """PvP usage snapshots."""
+
     __tablename__ = "meta_snapshots"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -328,8 +342,10 @@ class MetaSnapshot(Base):
     count = Column(Integer, default=0)
     captured_at = Column(DateTime, default=datetime.utcnow, index=True)
 
+
 class PatchEventModel(Base):
     """Buff/nerf history."""
+
     __tablename__ = "patch_events"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -337,8 +353,10 @@ class PatchEventModel(Base):
     content = Column(Text, nullable=False)
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
 
+
 class LoadoutCluster(Base):
     """Popular builds."""
+
     __tablename__ = "loadout_clusters"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -348,8 +366,10 @@ class LoadoutCluster(Base):
     meta_strength = Column(Float, default=0.0)
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
 
+
 class ItemMetaScore(Base):
     """Current meta state."""
+
     __tablename__ = "item_meta_scores"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -357,8 +377,10 @@ class ItemMetaScore(Base):
     score = Column(Float, default=0.0)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
 
+
 class PatchForecast(Base):
     """Future demand projections."""
+
     __tablename__ = "patch_forecasts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -366,4 +388,3 @@ class PatchForecast(Base):
     expected_impact = Column(String(256), nullable=True)
     confidence = Column(String(16), default="MEDIUM")
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
-

@@ -13,7 +13,8 @@ class DemandModel:
     Predicts sudden demand spikes using RandomForest.
     We classify a 'spike' as price going up significantly or volume increasing.
     """
-    def __init__(self, model_path='data/models/demand_model.pkl'):
+
+    def __init__(self, model_path="data/models/demand_model.pkl"):
         self.model_path = model_path
         self.model = None
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
@@ -24,16 +25,25 @@ class DemandModel:
             raise ValueError("Training dataframe is empty.")
 
         features = [
-            'sell_price', 'buy_price', 'sell_sma_3', 'sell_sma_7',
-            'price_volatility', 'spread_pct', 'volume',
-            'killboard_usage', 'patch_impact', 'city_supply'
+            "sell_price",
+            "buy_price",
+            "sell_sma_3",
+            "sell_sma_7",
+            "price_volatility",
+            "spread_pct",
+            "volume",
+            "killboard_usage",
+            "patch_impact",
+            "city_supply",
         ]
 
         # Define target: 1 if target_price_movement == 1 and spread < 5% (high demand, low supply), else 0
-        df['is_demand_spike'] = ((df['target_price_movement'] == 1) & (df['spread_pct'] < 5.0)).astype(int)
+        df["is_demand_spike"] = (
+            (df["target_price_movement"] == 1) & (df["spread_pct"] < 5.0)
+        ).astype(int)
 
         X = df[features]
-        y = df['is_demand_spike']
+        y = df["is_demand_spike"]
 
         # If there are no spikes to train on or it's all spikes, just return
         if len(np.unique(y)) < 2:
@@ -59,9 +69,16 @@ class DemandModel:
             self.load()
 
         features = [
-            'sell_price', 'buy_price', 'sell_sma_3', 'sell_sma_7',
-            'price_volatility', 'spread_pct', 'volume',
-            'killboard_usage', 'patch_impact', 'city_supply'
+            "sell_price",
+            "buy_price",
+            "sell_sma_3",
+            "sell_sma_7",
+            "price_volatility",
+            "spread_pct",
+            "volume",
+            "killboard_usage",
+            "patch_impact",
+            "city_supply",
         ]
 
         return self.model.predict(df[features])

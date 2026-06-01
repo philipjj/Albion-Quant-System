@@ -2,6 +2,7 @@
 Order book state management.
 """
 
+
 def get_order_book(item_id: str, location: str) -> dict:
     """
     Retrieves the current order book for an item at a location.

@@ -3,6 +3,7 @@ Hermes Market Summary.
 Provides market summarization capabilities.
 """
 
+
 def generate_market_summary() -> str:
     """
     Generates a summary of the current market state.

@@ -1,9 +1,12 @@
 """
 Substitution signal generation.
 """
+
 from datetime import datetime
-from app.signals.models import AlphaSignal
+
 from app.core.config import settings
+from app.signals.models import AlphaSignal
+
 
 def generate_substitution_signal(item_id: str, cluster_id: str, premium: float) -> AlphaSignal:
     """
@@ -18,5 +21,5 @@ def generate_substitution_signal(item_id: str, cluster_id: str, premium: float) 
         confidence=settings.substitution_default_confidence,
         persistence_score=settings.substitution_default_persistence,
         manipulation_risk=settings.substitution_default_manipulation_risk,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.utcnow(),
     )

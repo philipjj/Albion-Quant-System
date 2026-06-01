@@ -2,6 +2,7 @@
 Order book imbalance calculation.
 """
 
+
 def calculate_imbalance(v_bid: float, v_ask: float) -> float:
     """
     Calculates order book imbalance.

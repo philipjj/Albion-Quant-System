@@ -1,12 +1,14 @@
 import json
 import logging
-from typing import Optional, List
+from typing import List, Optional
+
 import redis.asyncio as redis
-from redis.exceptions import ConnectionError as RedisConnectionError
 from app.shared.domain.market_snapshot import MarketSnapshot
 from app.shared.domain.opportunity import Opportunity
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 logger = logging.getLogger(__name__)
+
 
 class RedisCache:
     """
@@ -14,11 +16,12 @@ class RedisCache:
     Uses async Redis client.
     Handles connection errors gracefully for environments without Redis.
     """
+
     def __init__(self, redis_url: str):
         self.redis = redis.from_url(redis_url)
         self._connected = True
 
-    async def get_hot_snapshot(self, item_id: str, city: str) -> Optional[MarketSnapshot]:
+    async def get_hot_snapshot(self, item_id: str, city: str) -> MarketSnapshot | None:
         if not self._connected:
             return None
         key = f"snapshot:{item_id}:{city}"
@@ -40,14 +43,16 @@ class RedisCache:
             return
         key = f"snapshot:{snapshot.item_id}:{snapshot.city}"
         try:
-            await self.redis.set(key, json.dumps(snapshot.model_dump(), default=str), ex=expire_seconds)
+            await self.redis.set(
+                key, json.dumps(snapshot.model_dump(), default=str), ex=expire_seconds
+            )
         except RedisConnectionError:
             logger.warning("Redis connection failed. Running without Redis cache.")
             self._connected = False
         except Exception as e:
             logger.error(f"Error writing to Redis: {e}")
 
-    async def get_active_opportunities(self) -> List[Opportunity]:
+    async def get_active_opportunities(self) -> list[Opportunity]:
         if not self._connected:
             return []
         key = "active_opportunities"
@@ -65,7 +70,9 @@ class RedisCache:
             logger.error(f"Error reading opportunities from Redis: {e}")
             return []
 
-    async def set_active_opportunities(self, opportunities: List[Opportunity], expire_seconds: int = 60) -> None:
+    async def set_active_opportunities(
+        self, opportunities: list[Opportunity], expire_seconds: int = 60
+    ) -> None:
         if not self._connected:
             return
         key = "active_opportunities"

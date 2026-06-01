@@ -27,7 +27,9 @@ def quality_snapshot(db: Session, lookback_hours: int = 2) -> dict[str, Any]:
     cutoff = datetime.utcnow() - timedelta(hours=lookback_hours)
     server = settings.active_server.value
 
-    last_fetch = db.query(func.max(MarketPrice.captured_at)).filter(MarketPrice.server == server).scalar()
+    last_fetch = (
+        db.query(func.max(MarketPrice.captured_at)).filter(MarketPrice.server == server).scalar()
+    )
     recent_points = (
         db.query(func.count(MarketPrice.id))
         .filter(MarketPrice.captured_at >= cutoff, MarketPrice.server == server)

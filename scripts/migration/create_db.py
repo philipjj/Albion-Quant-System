@@ -1,15 +1,18 @@
 """
 Script to create the database and enable TimescaleDB extension.
 """
-import sys
+
 import os
+import sys
+
 from sqlalchemy import create_engine, text
+
 
 def main():
     # Connect to the default 'postgres' database to create 'albion_quant'
     url = "postgresql://postgres:Jockluak0@localhost:5432/postgres"
     print(f"Connecting to {url} to create database...")
-    
+
     try:
         engine = create_engine(url, isolation_level="AUTOCOMMIT")
         with engine.connect() as conn:
@@ -19,7 +22,7 @@ def main():
             else:
                 conn.execute(text("CREATE DATABASE albion_quant"))
                 print("Database 'albion_quant' created successfully!")
-                
+
     except Exception as e:
         print(f"Error creating database: {e}")
         return
@@ -35,7 +38,10 @@ def main():
             print("Extension timescaledb verified/created successfully!")
     except Exception as e:
         print(f"Error creating extension: {e}")
-        print("\nNote: If you are using vanilla PostgreSQL, you may need to install the TimescaleDB extension package.")
+        print(
+            "\nNote: If you are using vanilla PostgreSQL, you may need to install the TimescaleDB extension package."
+        )
+
 
 if __name__ == "__main__":
     main()

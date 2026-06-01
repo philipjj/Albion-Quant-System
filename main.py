@@ -24,19 +24,21 @@ from fastapi.middleware.cors import CORSMiddleware
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.core import state
+
     log.info("[START] Albion Quant Trading System starting up...")
 
     # Initialize database tables
     init_db()
-    
+
     # [SAFETY] Model Integrity Check (Task 5.4)
     from app.db.models import Item
+
     required_fields = ["item_id", "tier", "category"]
     for field in required_fields:
         if not hasattr(Item, field):
             log.critical(f"FATAL: Item model missing required field: {field}")
             sys.exit(1)
-            
+
     log.info("[OK] Database and Models verified")
 
     if settings.disable_background_tasks:
@@ -48,18 +50,21 @@ async def lifespan(app: FastAPI):
 
     # Initialize scheduler but DON'T start — wait for !start command
     from app.workers.scheduler import QuantScheduler
+
     state.scheduler_instance = QuantScheduler()
     state.standby_mode = True
     log.info("[OK] Scheduler initialized in STANDBY mode — use !start in Discord to begin")
 
     # Start Discord Bot
     from app.alerts.bot import start_discord_bot
+
     bot_task = asyncio.create_task(start_discord_bot())
 
     yield
 
     # Shutdown
     from app.alerts.bot import stop_discord_bot
+
     await stop_discord_bot()
 
     if not bot_task.done():
@@ -95,6 +100,7 @@ app.include_router(fees.router, prefix="/api/v1/fees", tags=["Market"])
 app.include_router(user.router, prefix="/api/v1/user", tags=["System"])
 app.include_router(export.router, prefix="/api/v1/export", tags=["Alerts"])
 
+
 @app.get("/", tags=["System"])
 def root():
     return {"message": "Albion Quant Trading System API", "status": "online"}
@@ -112,12 +118,16 @@ def system_status():
     with get_db_session() as db:
         item_count = db.query(func.count(Item.item_id)).scalar()
         price_count = db.query(func.count(MarketPrice.id)).scalar()
-        arb_count = db.query(func.count(ArbitrageOpportunity.id)).filter(
-            ArbitrageOpportunity.is_active == True
-        ).scalar()
-        craft_count = db.query(func.count(CraftingOpportunity.id)).filter(
-            CraftingOpportunity.is_active == True
-        ).scalar()
+        arb_count = (
+            db.query(func.count(ArbitrageOpportunity.id))
+            .filter(ArbitrageOpportunity.is_active == True)
+            .scalar()
+        )
+        craft_count = (
+            db.query(func.count(CraftingOpportunity.id))
+            .filter(CraftingOpportunity.is_active == True)
+            .scalar()
+        )
         quality = quality_snapshot(db, lookback_hours=2)
 
     return {
@@ -134,13 +144,17 @@ def system_status():
             "orders_supported": bool(feature_gate.orders_supported),
             "is_rate_limited": bool(feature_gate.is_rate_limited),
         },
-        "scheduler": "running" if state.scheduler_instance and state.scheduler_instance._is_running else "stopped",
+        "scheduler": "running"
+        if state.scheduler_instance and state.scheduler_instance._is_running
+        else "stopped",
         "config": {
             "api_server": settings.albion_api_server,
             "min_arb_margin": settings.min_arbitrage_margin,
             "min_arb_profit": settings.min_arbitrage_profit,
             "is_premium": settings.is_premium,
-            "tax_rate": settings.premium_tax_rate if settings.is_premium else settings.non_premium_tax_rate,
+            "tax_rate": settings.premium_tax_rate
+            if settings.is_premium
+            else settings.non_premium_tax_rate,
         },
     }
 
@@ -148,6 +162,7 @@ def system_status():
 # ═══════════════════════════════════════════════════════════════
 # CLI COMMANDS
 # ═══════════════════════════════════════════════════════════════
+
 
 async def cmd_init():
     """Initialize: create DB tables + download/parse static data."""
@@ -165,12 +180,14 @@ async def cmd_init():
 
 async def cmd_collect():
     from app.ingestion.collector import MarketCollector
+
     collector = MarketCollector()
     await collector.collect_all_prices()
 
 
 async def cmd_scan():
     from app.arbitrage.scanner import ArbitrageScanner
+
     scanner = ArbitrageScanner()
     await scanner.scan()
     scanner.store_opportunities()
@@ -178,6 +195,7 @@ async def cmd_scan():
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--init", action="store_true")
     parser.add_argument("--collect", action="store_true")

@@ -13,6 +13,7 @@ class BlackMarketPredictor:
     Combines BM Tracker metrics (shortage, sink velocity) with Royal City prices
     to find the most profitable and safest transport/crafting opportunities to Caerleon.
     """
+
     def __init__(self):
         self.tracker = BlackMarketTracker()
         self.royal_cities = ["Martlock", "Lymhurst", "Bridgewatch", "Fort Sterling", "Thetford"]
@@ -26,9 +27,11 @@ class BlackMarketPredictor:
 
         with get_db_session() as db:
             # 1. Get recent Black Market prices
-            bm_query = select(MarketPrice).where(
-                MarketPrice.city == "Black Market"
-            ).order_by(MarketPrice.item_id, MarketPrice.captured_at.desc())
+            bm_query = (
+                select(MarketPrice)
+                .where(MarketPrice.city == "Black Market")
+                .order_by(MarketPrice.item_id, MarketPrice.captured_at.desc())
+            )
 
             # Subquery or distinct might be better, but we'll do a simple latest-fetch in python for demo
             bm_records = db.execute(bm_query).scalars().all()
@@ -42,16 +45,21 @@ class BlackMarketPredictor:
                 return pd.DataFrame()
 
             # 2. Get recent Royal City prices (sell_price_min to buy from market)
-            royal_query = select(MarketPrice).where(
-                MarketPrice.city.in_(self.royal_cities)
-            ).order_by(MarketPrice.item_id, MarketPrice.captured_at.desc())
+            royal_query = (
+                select(MarketPrice)
+                .where(MarketPrice.city.in_(self.royal_cities))
+                .order_by(MarketPrice.item_id, MarketPrice.captured_at.desc())
+            )
 
             royal_records = db.execute(royal_query).scalars().all()
             latest_royal = {}
             for r in royal_records:
                 # Keep the absolute cheapest royal city price for each item
-                if r.item_id not in latest_royal or r.sell_price_min < latest_royal[r.item_id]["price"]:
-                    if r.sell_price_min > 0: # Avoid zero prices
+                if (
+                    r.item_id not in latest_royal
+                    or r.sell_price_min < latest_royal[r.item_id]["price"]
+                ):
+                    if r.sell_price_min > 0:  # Avoid zero prices
                         latest_royal[r.item_id] = {"price": r.sell_price_min, "city": r.city}
 
             # 3. Calculate ROI and track metrics
@@ -64,24 +72,28 @@ class BlackMarketPredictor:
                     gross_profit = bm_price - royal_price
                     margin = (gross_profit / royal_price) * 100 if royal_price > 0 else 0
 
-                    if margin > 5.0: # Minimum 5% margin to care
+                    if margin > 5.0:  # Minimum 5% margin to care
                         # Fetch BM specific metrics for risk assessment
                         metrics = self.tracker.analyze_item_metrics(item_id, days_back=3)
 
                         # High shortage = safer transport (BM will likely still be buying)
                         # High sink velocity = riskier (someone else might fulfill it before you arrive)
-                        safety_score = metrics.get('shortage_level', 0.0) * 100 - (metrics.get('sink_velocity', 0.0) * 5)
+                        safety_score = metrics.get("shortage_level", 0.0) * 100 - (
+                            metrics.get("sink_velocity", 0.0) * 5
+                        )
 
-                        opportunities.append({
-                            "item_id": item_id,
-                            "buy_city": source_city,
-                            "buy_price": royal_price,
-                            "bm_price": bm_price,
-                            "profit": gross_profit,
-                            "roi_margin": round(margin, 2),
-                            "shortage_level": metrics.get('shortage_level', 0.0),
-                            "safety_score": round(safety_score, 2)
-                        })
+                        opportunities.append(
+                            {
+                                "item_id": item_id,
+                                "buy_city": source_city,
+                                "buy_price": royal_price,
+                                "bm_price": bm_price,
+                                "profit": gross_profit,
+                                "roi_margin": round(margin, 2),
+                                "shortage_level": metrics.get("shortage_level", 0.0),
+                                "safety_score": round(safety_score, 2),
+                            }
+                        )
 
         if not opportunities:
             return pd.DataFrame()
@@ -89,8 +101,8 @@ class BlackMarketPredictor:
         df = pd.DataFrame(opportunities)
 
         # Sort by ROI Margin primarily, but also factor in safety
-        df['weighted_score'] = df['roi_margin'] + (df['shortage_level'] * 10)
-        df = df.sort_values(by='weighted_score', ascending=False).head(top_n)
+        df["weighted_score"] = df["roi_margin"] + (df["shortage_level"] * 10)
+        df = df.sort_values(by="weighted_score", ascending=False).head(top_n)
 
         return df
 
@@ -116,18 +128,25 @@ class BlackMarketPredictor:
         table.add_column("Shortage", justify="center")
 
         for _, row in df.iterrows():
-            shortage_str = "High" if row['shortage_level'] > 0.7 else "Med" if row['shortage_level'] > 0.3 else "Low"
+            shortage_str = (
+                "High"
+                if row["shortage_level"] > 0.7
+                else "Med"
+                if row["shortage_level"] > 0.3
+                else "Low"
+            )
             table.add_row(
-                row['item_id'][:25],
-                row['buy_city'],
+                row["item_id"][:25],
+                row["buy_city"],
                 f"{row['buy_price']:,.0f}",
                 f"{row['bm_price']:,.0f}",
                 f"{row['profit']:,.0f}",
                 f"{row['roi_margin']}%",
-                shortage_str
+                shortage_str,
             )
 
         console.print(table)
+
 
 if __name__ == "__main__":
     predictor = BlackMarketPredictor()

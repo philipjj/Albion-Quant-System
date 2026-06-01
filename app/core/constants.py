@@ -64,10 +64,10 @@ CITY_CRAFTING_BONUSES = {
 # ═══════════════════════════════════════════════════════════════
 
 # Royal City RRR
-BASE_RESOURCE_RETURN_RATE = 0.18        # Was 0.152
+BASE_RESOURCE_RETURN_RATE = 0.18  # Was 0.152
 CITY_BONUS_RESOURCE_RETURN_RATE = 0.33  # Was 0.248
-FOCUS_RESOURCE_RETURN_RATE = 0.48       # Base + Focus (Royal)
-FOCUS_CITY_BONUS_RRR = 0.58             # Bonus + Focus (Royal)
+FOCUS_RESOURCE_RETURN_RATE = 0.48  # Base + Focus (Royal)
+FOCUS_CITY_BONUS_RRR = 0.58  # Bonus + Focus (Royal)
 
 # Refining RRR
 REFINING_BASE_RRR = 0.18
@@ -108,15 +108,24 @@ TRANSPORT_DISTANCES = {
     ("Thetford", "Caerleon"): 3,
 }
 
+
 def get_distance(city_a: str, city_b: str) -> int:
-    if city_a == city_b: return 0
+    if city_a == city_b:
+        return 0
     return TRANSPORT_DISTANCES.get((city_a, city_b), TRANSPORT_DISTANCES.get((city_b, city_a), 5))
 
+
 DANGEROUS_ROUTES = {
-    ("Bridgewatch", "Caerleon"), ("Martlock", "Caerleon"), ("Lymhurst", "Caerleon"),
-    ("Fort Sterling", "Caerleon"), ("Thetford", "Caerleon"),
-    ("Bridgewatch", "Black Market"), ("Martlock", "Black Market"), ("Lymhurst", "Black Market"),
-    ("Fort Sterling", "Black Market"), ("Thetford", "Black Market"),
+    ("Bridgewatch", "Caerleon"),
+    ("Martlock", "Caerleon"),
+    ("Lymhurst", "Caerleon"),
+    ("Fort Sterling", "Caerleon"),
+    ("Thetford", "Caerleon"),
+    ("Bridgewatch", "Black Market"),
+    ("Martlock", "Black Market"),
+    ("Lymhurst", "Black Market"),
+    ("Fort Sterling", "Black Market"),
+    ("Thetford", "Black Market"),
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -124,23 +133,43 @@ DANGEROUS_ROUTES = {
 # ═══════════════════════════════════════════════════════════════
 
 JOURNAL_MAPPING = {
-    "armor": "BLACKSMITH", "helmet": "BLACKSMITH", "shoes": "BLACKSMITH",
-    "weapon": "BLACKSMITH", "sword": "BLACKSMITH", "axe": "BLACKSMITH",
-    "mace": "BLACKSMITH", "hammer": "BLACKSMITH", "crossbow": "BLACKSMITH",
-    "shield": "BLACKSMITH", "bow": "FLETCHER", "dagger": "FLETCHER",
-    "spear": "FLETCHER", "nature_staff": "FLETCHER", "torch": "FLETCHER",
-    "fire_staff": "IMBUER", "holy_staff": "IMBUER", "arcane_staff": "IMBUER",
-    "frost_staff": "IMBUER", "curse_staff": "IMBUER", "off_hand": "IMBUER",
-    "furniture": "TINKER", "tool": "TINKER", "cape": "TINKER", "bag": "TINKER",
+    "armor": "BLACKSMITH",
+    "helmet": "BLACKSMITH",
+    "shoes": "BLACKSMITH",
+    "weapon": "BLACKSMITH",
+    "sword": "BLACKSMITH",
+    "axe": "BLACKSMITH",
+    "mace": "BLACKSMITH",
+    "hammer": "BLACKSMITH",
+    "crossbow": "BLACKSMITH",
+    "shield": "BLACKSMITH",
+    "bow": "FLETCHER",
+    "dagger": "FLETCHER",
+    "spear": "FLETCHER",
+    "nature_staff": "FLETCHER",
+    "torch": "FLETCHER",
+    "fire_staff": "IMBUER",
+    "holy_staff": "IMBUER",
+    "arcane_staff": "IMBUER",
+    "frost_staff": "IMBUER",
+    "curse_staff": "IMBUER",
+    "off_hand": "IMBUER",
+    "furniture": "TINKER",
+    "tool": "TINKER",
+    "cape": "TINKER",
+    "bag": "TINKER",
 }
 
 JOURNAL_FAME_REQUIRED = {4: 3600, 5: 7200, 6: 14400, 7: 28800, 8: 57600}
 JOURNAL_YIELD_MULTIPLIER = 1.5
 
+
 def get_journal_id(item_category: str, tier: int) -> str | None:
     base = JOURNAL_MAPPING.get(item_category.lower())
-    if not base: return None
+    if not base:
+        return None
     return f"T{tier}_JOURNAL_{base}_EMPTY"
+
 
 # ═══════════════════════════════════════════════════════════════
 # GAME MECHANICS HELPERS
@@ -149,30 +178,36 @@ def get_journal_id(item_category: str, tier: int) -> str | None:
 STATION_FEE_CONSTANT = 0.1125  # Updated May 2026 from 0.11
 DEFAULT_STATION_FEE = 500  # Default percentage tax (e.g. 500%)
 
+
 def calculate_station_fee(item_value: float, station_tax_percent: float) -> float:
     return (item_value * STATION_FEE_CONSTANT * station_tax_percent) / 100.0
+
 
 # ═══════════════════════════════════════════════════════════════
 # PRICE SANITY & OUTLIER DETECTION
 # ═══════════════════════════════════════════════════════════════
+
 
 def is_price_sane(price: float, item_value: float) -> bool:
     """
     Detect market manipulation, trolling, or API glitches.
     Uses ItemValue as an anchor for realism.
     """
-    if price <= 0: return False
-    if price > 500_000_000: return False # Hard cap for all items
-    
+    if price <= 0:
+        return False
+    if price > 500_000_000:
+        return False  # Hard cap for all items
+
     if item_value <= 0:
         # For items with missing metadata, use a conservative absolute cap
-        return price < 5_000_000 
-    
+        return price < 5_000_000
+
     # 2026 Economics: Realistic prices are usually 10x - 1000x ItemValue.
     # A T3 Horse (IV=112) @ 85M is ~750,000x -> Discard.
     # A rare artifact might be 2000x. We use 5000x as a safe threshold.
     ratio = price / item_value
     return ratio < 5000
+
 
 # ═══════════════════════════════════════════════════════════════
 # ITEM DATA

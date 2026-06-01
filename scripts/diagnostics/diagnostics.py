@@ -2,6 +2,7 @@
 Diagnostics for research and backtesting.
 """
 
+
 def run_diagnostics():
     """
     Runs system diagnostics for research.

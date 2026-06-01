@@ -1,5 +1,7 @@
-from app.shared.domain.opportunity import Opportunity
 from pydantic import BaseModel
+
+from app.shared.domain.opportunity import Opportunity
+
 
 class Alpha(BaseModel):
     opportunity: Opportunity

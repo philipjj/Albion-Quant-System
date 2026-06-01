@@ -1,4 +1,3 @@
-
 import pandas as pd
 
 from app.ai.features import FeatureEngineer
@@ -14,6 +13,7 @@ class AITrainer:
     """
     Orchestrates data fetching, feature engineering, and model training.
     """
+
     def __init__(self):
         self.fe = FeatureEngineer()
         self.price_model = PriceModel()
@@ -35,7 +35,7 @@ class AITrainer:
             df = self.fe.build_features(item_id, city)
             if df is not None and not df.empty:
                 # Add item_id context if needed for global models, though we drop it for training
-                df['item_id'] = item_id
+                df["item_id"] = item_id
                 all_features.append(df)
 
         if not all_features:
@@ -68,6 +68,7 @@ class AITrainer:
         self.meta_model.train(df)
 
         print("\n✅ All AI models trained successfully.")
+
 
 if __name__ == "__main__":
     trainer = AITrainer()

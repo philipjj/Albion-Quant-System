@@ -2,6 +2,7 @@
 Slippage calculation and modeling.
 """
 
+
 def estimate_market_impact(trade_volume: float, daily_volume: float) -> float:
     """
     Estimates the percentage slippage for a market order of size `trade_volume`.
@@ -11,12 +12,12 @@ def estimate_market_impact(trade_volume: float, daily_volume: float) -> float:
         return 0.0
 
     participation = trade_volume / max(daily_volume, 1.0)
-    
+
     # Square root model: let's assume 10% daily volume participation causes ~5% slippage
     # 0.05 = c * sqrt(0.1) => c = 0.158
     c = 0.158
-    slippage_pct = c * (participation ** 0.5)
-    
+    slippage_pct = c * (participation**0.5)
+
     return min(slippage_pct, 1.0)
 
 
@@ -27,7 +28,7 @@ def calculate_safe_trade_limit(daily_volume: int, max_slippage_pct: float = 0.03
     c = 0.158
     if daily_volume <= 0:
         return 1
-        
+
     safe_vol = int(daily_volume * ((max_slippage_pct / c) ** 2))
     return max(safe_vol, 1)
 

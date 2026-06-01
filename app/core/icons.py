@@ -28,4 +28,3 @@ def item_icon_url(item_id: str, *, quality: int = 1, size: int = 128) -> str:
     if s > 217:
         s = 217
     return f"https://render.albiononline.com/v1/item/{safe_identifier}.png?quality={q}&size={s}"
-

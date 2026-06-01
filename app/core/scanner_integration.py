@@ -18,16 +18,15 @@ from typing import Any, Dict, List, Tuple
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.logging import log
 from app.core.opportunity_engine import (
-    BMOpportunity,
     ArbitrageOpportunity,
+    BMOpportunity,
     CraftingOpportunity,
     OpportunityScanner,
 )
 from app.db.models import BlackMarketSnapshot, Item, MarketPrice, Recipe
 from app.db.session import get_db_session
-from app.core.logging import log
-
 
 
 class UnifiedScanner:
@@ -47,7 +46,7 @@ class UnifiedScanner:
         self.default_min_bm_profit = min_bm_profit
         self.default_min_craft_profit = min_craft_profit
         self.default_min_arb_profit = min_arb_profit
-        
+
         self.engine = OpportunityScanner(
             min_bm_profit=min_bm_profit,
             min_craft_profit=min_craft_profit,
@@ -58,13 +57,13 @@ class UnifiedScanner:
 
     # ── Data loading ────────────────────────────────────────────────────────
 
-    def _load_prices(self, db: Session, lookback_hours: float = 4.0, scan_bm: bool = False) -> Dict:
+    def _load_prices(self, db: Session, lookback_hours: float = 4.0, scan_bm: bool = False) -> dict:
         """
         Load latest prices into the nested dict structure OpportunityEngine expects.
         Structure: {item_id: {city: {quality: {fields...}}}}
         """
         cutoff = datetime.utcnow() - timedelta(hours=lookback_hours)
-        prices: Dict[str, Dict[str, Dict[int, Dict]]] = {}
+        prices: dict[str, dict[str, dict[int, dict]]] = {}
 
         rows = (
             db.query(MarketPrice)
@@ -74,8 +73,9 @@ class UnifiedScanner:
             )
             .all()
         )
-        log.info(f"[UNIFIED SCANNER] Loaded {len(rows)} rows from DB for cutoff {cutoff} and server {settings.active_server.value}")
-
+        log.info(
+            f"[UNIFIED SCANNER] Loaded {len(rows)} rows from DB for cutoff {cutoff} and server {settings.active_server.value}"
+        )
 
         for p in rows:
             item_id = p.item_id
@@ -88,8 +88,13 @@ class UnifiedScanner:
                 prices[item_id][city] = {}
 
             existing = prices[item_id][city].get(quality)
-            if existing and p.captured_at and existing.get("_ts") and p.captured_at <= existing["_ts"]:
-                continue   # Keep newest only
+            if (
+                existing
+                and p.captured_at
+                and existing.get("_ts")
+                and p.captured_at <= existing["_ts"]
+            ):
+                continue  # Keep newest only
 
             # Recompute data age dynamically: original API age + time since collection
             api_age = int(p.data_age_seconds) if p.data_age_seconds is not None else 0
@@ -112,15 +117,17 @@ class UnifiedScanner:
         if scan_bm:
             # Black Market snapshots (Caerleon buy orders)
             bm_cutoff = datetime.utcnow() - timedelta(hours=2)
-            bm_rows = db.query(BlackMarketSnapshot).filter(
-                BlackMarketSnapshot.captured_at >= bm_cutoff
-            ).all()
+            bm_rows = (
+                db.query(BlackMarketSnapshot)
+                .filter(BlackMarketSnapshot.captured_at >= bm_cutoff)
+                .all()
+            )
 
             for bm in bm_rows:
                 item_id = bm.item_id
                 if bm.enchantment and bm.enchantment > 0:
                     item_id = f"{item_id}@{bm.enchantment}"
-                    
+
                 quality = bm.quality or 1
                 city = "Black Market"
 
@@ -130,7 +137,12 @@ class UnifiedScanner:
                     prices[item_id][city] = {}
 
                 existing = prices[item_id][city].get(quality)
-                if existing and bm.captured_at and existing.get("_ts") and bm.captured_at <= existing["_ts"]:
+                if (
+                    existing
+                    and bm.captured_at
+                    and existing.get("_ts")
+                    and bm.captured_at <= existing["_ts"]
+                ):
                     continue
 
                 # Recompute BM data age dynamically
@@ -152,7 +164,7 @@ class UnifiedScanner:
 
         return prices
 
-    def _load_item_metadata(self, db: Session) -> Tuple[Dict, Dict, Dict]:
+    def _load_item_metadata(self, db: Session) -> tuple[dict, dict, dict]:
         """Returns (item_names, item_categories, item_values)"""
         rows = db.query(Item.item_id, Item.name, Item.category, Item.item_value).all()
         names = {r.item_id: r.name for r in rows}
@@ -160,30 +172,32 @@ class UnifiedScanner:
         values = {r.item_id: float(r.item_value or 0.0) for r in rows}
         return names, categories, values
 
-    def _load_recipes(self, db: Session) -> Dict:
+    def _load_recipes(self, db: Session) -> dict:
         """
         Build recipe map: {item_id: {"ingredients": [{"item_id": str, "quantity": float}]}}
         Filters out raw-resource-only ingredients for non-refining crafts (same logic
         as existing engine, but simplified and less lossy).
         """
         rows = db.query(Recipe).all()
-        recipes: Dict[str, Dict] = {}
+        recipes: dict[str, dict] = {}
         for r in rows:
             cid = r.crafted_item_id
             if cid not in recipes:
                 recipes[cid] = {"ingredients": []}
-            recipes[cid]["ingredients"].append({
-                "item_id": r.ingredient_item_id,
-                "quantity": float(r.quantity or 1),
-            })
-            
+            recipes[cid]["ingredients"].append(
+                {
+                    "item_id": r.ingredient_item_id,
+                    "quantity": float(r.quantity or 1),
+                }
+            )
+
         # Generate enchanted recipes for items that can be enchanted
         enchanted_recipes = {}
         for cid, recipe in recipes.items():
             # Skip if already enchanted (shouldn't be in DB usually, but just in case)
             if "@" in cid:
                 continue
-                
+
             for e in [1, 2, 3, 4]:
                 modified_ingredients = []
                 for ing in recipe["ingredients"]:
@@ -192,12 +206,11 @@ class UnifiedScanner:
                     if any(x in ing_id for x in ["ARTEFACT", "RUNE", "SOUL", "RELIC", "SIGIL"]):
                         modified_ingredients.append(ing)
                     else:
-                        modified_ingredients.append({
-                            "item_id": f"{ing_id}@{e}",
-                            "quantity": ing["quantity"]
-                        })
+                        modified_ingredients.append(
+                            {"item_id": f"{ing_id}@{e}", "quantity": ing["quantity"]}
+                        )
                 enchanted_recipes[f"{cid}@{e}"] = {"ingredients": modified_ingredients}
-                
+
         recipes.update(enchanted_recipes)
         return recipes
 
@@ -205,18 +218,18 @@ class UnifiedScanner:
 
     async def scan_all(
         self, db: Session = None, scan_bm: bool = False
-    ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    ) -> tuple[list[dict], list[dict], list[dict]]:
         """
         Returns (bm_opps, craft_opps, arb_opps) as plain dicts ready for DB storage
         and Discord alerts. All sorted by score descending.
         """
         from app.core import state
-        
+
         # Use dynamic thresholds from state
         self.engine.min_arb_profit = self.default_min_arb_profit
         self.engine.min_craft_profit = state.min_craft_profit
         self.engine.min_bm_profit = state.min_bm_profit
-            
+
         with get_db_session() as db:
             log.info("[UNIFIED SCANNER] Loading prices...")
             prices = self._load_prices(db, scan_bm=scan_bm)
@@ -240,7 +253,9 @@ class UnifiedScanner:
         log.info(f"[UNIFIED SCANNER] Arbitrage: {len(arb_raw)} opportunities")
 
         return (
-            [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw] if scan_bm else [],
+            [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw]
+            if scan_bm
+            else [],
             [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in craft_raw],
             [self._arb_to_dict(o, categories.get(o.item_id, "Unknown")) for o in arb_raw],
         )
@@ -258,7 +273,7 @@ class UnifiedScanner:
             display_name += f" ({quality_names.get(quality, 'Unknown')})"
         return display_name
 
-    def _bm_to_dict(self, o: BMOpportunity, category: str) -> Dict[str, Any]:
+    def _bm_to_dict(self, o: BMOpportunity, category: str) -> dict[str, Any]:
         return {
             "item_id": o.item_id,
             "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
@@ -268,7 +283,7 @@ class UnifiedScanner:
             "sell_price": o.bm_buy_price,
             "estimated_profit": o.effective_profit,
             "estimated_margin": o.profit_pct,
-            "mode": o.mode,                      # "BUY+RUN" or "CRAFT+RUN"
+            "mode": o.mode,  # "BUY+RUN" or "CRAFT+RUN"
             "craft_cost": o.craft_cost,
             "craft_city": o.craft_city,
             "can_be_crafted": o.can_be_crafted,
@@ -277,19 +292,19 @@ class UnifiedScanner:
             "data_age_bm": o.data_age_bm,
             "quality": o.quality,
             "ev_score": o.score,
-            "risk_score": 0.5,   # BM always requires Caerleon run
+            "risk_score": 0.5,  # BM always requires Caerleon run
             "type": "black_market",
             "category": category,
             "detected_at": datetime.utcnow().isoformat(),
         }
 
-    def _craft_to_dict(self, o: CraftingOpportunity, category: str) -> Dict[str, Any]:
+    def _craft_to_dict(self, o: CraftingOpportunity, category: str) -> dict[str, Any]:
         return {
             "item_id": o.item_id,
             "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
             "crafting_city": o.craft_city,
             "sell_city": o.sell_city,
-            "sell_mode": o.sell_mode,            # "BM" or "MARKET"
+            "sell_mode": o.sell_mode,  # "BM" or "MARKET"
             "craft_cost": o.material_cost_net + o.station_fee,
             "material_cost_gross": o.material_cost_gross,
             "material_cost_net": o.material_cost_net,
@@ -311,14 +326,14 @@ class UnifiedScanner:
             "detected_at": datetime.utcnow().isoformat(),
         }
 
-    def _arb_to_dict(self, o: ArbitrageOpportunity, category: str) -> Dict[str, Any]:
+    def _arb_to_dict(self, o: ArbitrageOpportunity, category: str) -> dict[str, Any]:
         return {
             "item_id": o.item_id,
             "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
             "source_city": o.buy_city,
             "destination_city": o.sell_city,
             "buy_price": o.buy_price,
-            "sell_price": o.sell_price,   # This is buy_price_max (existing buy order)
+            "sell_price": o.sell_price,  # This is buy_price_max (existing buy order)
             "estimated_profit": o.net_profit,
             "estimated_margin": o.profit_pct,
             "tax_paid": o.tax_paid,

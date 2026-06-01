@@ -2,8 +2,11 @@
 Recommendations.
 Defines the structure of a market recommendation.
 """
+
 from datetime import datetime
+
 from pydantic import BaseModel, Field
+
 
 class Recommendation(BaseModel):
     item_id: str

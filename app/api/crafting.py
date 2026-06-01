@@ -17,7 +17,9 @@ router = APIRouter(prefix="/crafting", tags=["Crafting"])
 @router.get("/top")
 def get_top_crafting(
     limit: int = Query(default=20, le=100),
-    sort_by: str = Query(default="profit_margin", enum=["profit_margin", "profit", "profit_per_focus"]),
+    sort_by: str = Query(
+        default="profit_margin", enum=["profit_margin", "profit", "profit_per_focus"]
+    ),
     db: Session = Depends(get_db),
 ):
     """Get top crafting opportunities."""

@@ -15,6 +15,7 @@ class BlackMarketTracker:
     - Refill timing (how fast buy orders are stepping up)
     - Item sink velocity
     """
+
     def __init__(self):
         self.city_name = "Black Market"
 
@@ -22,20 +23,26 @@ class BlackMarketTracker:
         """Fetch the most recent Black Market buy prices."""
         with get_db_session() as db:
             # We care about what the BM is BUYING for (buy_price_max)
-            query = select(MarketPrice).where(
-                MarketPrice.city == self.city_name
-            ).order_by(MarketPrice.captured_at.desc()).limit(limit)
+            query = (
+                select(MarketPrice)
+                .where(MarketPrice.city == self.city_name)
+                .order_by(MarketPrice.captured_at.desc())
+                .limit(limit)
+            )
 
             records = db.execute(query).scalars().all()
             if not records:
                 return pd.DataFrame()
 
-            data = [{
-                'item_id': r.item_id,
-                'buy_price': r.buy_price_max,
-                'quality': r.quality,
-                'fetched_at': r.captured_at
-            } for r in records]
+            data = [
+                {
+                    "item_id": r.item_id,
+                    "buy_price": r.buy_price_max,
+                    "quality": r.quality,
+                    "fetched_at": r.captured_at,
+                }
+                for r in records
+            ]
 
             return pd.DataFrame(data)
 
@@ -45,13 +52,17 @@ class BlackMarketTracker:
         """
         with get_db_session() as db:
             cutoff = datetime.utcnow() - timedelta(days=days_back)
-            query = select(MarketSnapshot).where(
-                and_(
-                    MarketSnapshot.item_id == item_id,
-                    MarketSnapshot.city == self.city_name,
-                    MarketSnapshot.captured_at >= cutoff
+            query = (
+                select(MarketSnapshot)
+                .where(
+                    and_(
+                        MarketSnapshot.item_id == item_id,
+                        MarketSnapshot.city == self.city_name,
+                        MarketSnapshot.captured_at >= cutoff,
+                    )
                 )
-            ).order_by(MarketSnapshot.captured_at.asc())
+                .order_by(MarketSnapshot.captured_at.asc())
+            )
 
             records = db.execute(query).scalars().all()
 
@@ -61,20 +72,23 @@ class BlackMarketTracker:
                     "status": "INSUFFICIENT_DATA",
                     "shortage_level": 0.0,
                     "refill_velocity": 0.0,
-                    "sink_velocity": 0.0
+                    "sink_velocity": 0.0,
                 }
 
-            df = pd.DataFrame([{
-                'timestamp': r.captured_at,
-                'buy_price': r.buy_price_max
-            } for r in records])
+            df = pd.DataFrame(
+                [{"timestamp": r.captured_at, "buy_price": r.buy_price_max} for r in records]
+            )
 
-            df.set_index('timestamp', inplace=True)
+            df.set_index("timestamp", inplace=True)
 
             # 1. Refill Velocity: How fast is the BM buy price rising?
             # Positive value means the BM is getting desperate (price stepping up)
-            price_change = df['buy_price'].diff().dropna()
-            avg_price_step = price_change[price_change > 0].mean() if not price_change[price_change > 0].empty else 0
+            price_change = df["buy_price"].diff().dropna()
+            avg_price_step = (
+                price_change[price_change > 0].mean()
+                if not price_change[price_change > 0].empty
+                else 0
+            )
 
             # 2. Sink Velocity: How often does the price drop?
             # A price drop means someone fulfilled the order (item was sunk)
@@ -93,8 +107,8 @@ class BlackMarketTracker:
             return {
                 "item_id": item_id,
                 "status": "TRACKED",
-                "current_bm_price": df['buy_price'].iloc[-1],
-                "shortage_level": round(shortage_level, 4),      # 0.0 to 1.0
-                "refill_velocity": round(avg_price_step, 2),     # Avg silver increase per step
-                "sink_velocity": round(sink_velocity, 2)         # Fulfillments per day
+                "current_bm_price": df["buy_price"].iloc[-1],
+                "shortage_level": round(shortage_level, 4),  # 0.0 to 1.0
+                "refill_velocity": round(avg_price_step, 2),  # Avg silver increase per step
+                "sink_velocity": round(sink_velocity, 2),  # Fulfillments per day
             }

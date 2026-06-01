@@ -1,4 +1,3 @@
-
 import pandas as pd
 from sqlalchemy import select
 
@@ -12,6 +11,7 @@ class MetaAnalyzer:
     Identifies the CURRENT meta by analyzing recent market activity
     and external usage signals (e.g. killboard presence).
     """
+
     def __init__(self):
         self.fe = FeatureEngineer()
 
@@ -43,25 +43,27 @@ class MetaAnalyzer:
 
                 price_momentum = 0.0
                 if not history_df.empty and len(history_df) >= 2:
-                    old_price = history_df['sell_price'].iloc[0]
-                    new_price = history_df['sell_price'].iloc[-1]
+                    old_price = history_df["sell_price"].iloc[0]
+                    new_price = history_df["sell_price"].iloc[-1]
                     if old_price > 0:
-                        price_momentum = ((new_price - old_price) / old_price)
+                        price_momentum = (new_price - old_price) / old_price
 
                 # Get usage and volume
                 # Note: Currently these are stubbed in FeatureEngineer
                 volume = self.fe.get_volume(item.item_id, city)
                 killboard_usage = self.fe.get_killboard_usage(item.item_id)
 
-                meta_items.append({
-                    "item_id": item.item_id,
-                    "name": item.name,
-                    "tier": item.tier,
-                    "category": item.category,
-                    "volume": volume,
-                    "killboard_usage": killboard_usage,
-                    "price_momentum": price_momentum
-                })
+                meta_items.append(
+                    {
+                        "item_id": item.item_id,
+                        "name": item.name,
+                        "tier": item.tier,
+                        "category": item.category,
+                        "volume": volume,
+                        "killboard_usage": killboard_usage,
+                        "price_momentum": price_momentum,
+                    }
+                )
 
         if not meta_items:
             return []
@@ -69,23 +71,25 @@ class MetaAnalyzer:
         df = pd.DataFrame(meta_items)
 
         # Normalize volume to 0-1 range to match killboard_usage
-        max_vol = df['volume'].max()
+        max_vol = df["volume"].max()
         if max_vol > 0:
-            df['norm_volume'] = df['volume'] / max_vol
+            df["norm_volume"] = df["volume"] / max_vol
         else:
-            df['norm_volume'] = 0.0
+            df["norm_volume"] = 0.0
 
         # Cap price momentum so it doesn't skew everything (e.g. max 100% impact)
-        df['norm_momentum'] = df['price_momentum'].clip(-1.0, 1.0)
+        df["norm_momentum"] = df["price_momentum"].clip(-1.0, 1.0)
 
         # Calculate Meta Score
-        df['meta_score'] = (df['norm_volume'] * 0.4) + (df['killboard_usage'] * 0.5) + (df['norm_momentum'] * 0.1)
+        df["meta_score"] = (
+            (df["norm_volume"] * 0.4) + (df["killboard_usage"] * 0.5) + (df["norm_momentum"] * 0.1)
+        )
 
         # Sort and get top N
-        df = df.sort_values(by='meta_score', ascending=False).head(top_n)
+        df = df.sort_values(by="meta_score", ascending=False).head(top_n)
 
         # Convert to list of dicts
-        return df.to_dict('records')
+        return df.to_dict("records")
 
     def display_current_meta(self, top_n: int = 15):
         """Helper to print out the current meta in the console."""
@@ -107,16 +111,17 @@ class MetaAnalyzer:
 
         for idx, row in enumerate(meta_results):
             table.add_row(
-                f"#{idx+1}",
-                row['name'],
-                str(row['tier']),
-                str(row['category']),
+                f"#{idx + 1}",
+                row["name"],
+                str(row["tier"]),
+                str(row["category"]),
                 f"{row['meta_score']:.3f}",
                 f"{row['killboard_usage']:.2%}",
-                f"{row['price_momentum']:+.1%}"
+                f"{row['price_momentum']:+.1%}",
             )
 
         console.print(table)
+
 
 if __name__ == "__main__":
     analyzer = MetaAnalyzer()

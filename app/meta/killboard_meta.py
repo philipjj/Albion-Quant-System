@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
 from app.core.logging import log
 
 SLOT_ORDER = [
@@ -89,7 +90,9 @@ async def fetch_events(base_url: str, *, pages: int = 3, limit: int = 51) -> lis
     """
     events: list[dict[str, Any]] = []
     timeout = httpx.Timeout(15.0)
-    async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": "AlbionQuant/0.1 meta-scanner"}) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout, headers={"User-Agent": "AlbionQuant/0.1 meta-scanner"}
+    ) as client:
         for page in range(pages):
             offset = page * limit
             url = f"{base_url.rstrip('/')}/events"
@@ -97,7 +100,13 @@ async def fetch_events(base_url: str, *, pages: int = 3, limit: int = 51) -> lis
             resp = await client.get(url, params={"limit": limit, "offset": offset})
             resp.raise_for_status()
             data = resp.json()
-            batch = data if isinstance(data, list) else data.get("Events") if isinstance(data, dict) else []
+            batch = (
+                data
+                if isinstance(data, list)
+                else data.get("Events")
+                if isinstance(data, dict)
+                else []
+            )
             log.info(f"[META] Received {len(batch)} events from API")
             if not batch:
                 break
@@ -141,7 +150,9 @@ def compute_meta(events: list[dict[str, Any]], *, top_builds_per_tier: int = 3) 
 
     tier_to_builds: dict[str, list[dict[str, Any]]] = {}
     for tier, builds in tier_build_counts.items():
-        ranked = sorted(builds.values(), key=lambda x: x["count"], reverse=True)[:top_builds_per_tier]
+        ranked = sorted(builds.values(), key=lambda x: x["count"], reverse=True)[
+            :top_builds_per_tier
+        ]
         tier_to_builds[tier] = ranked
 
     item_ranked = sorted(item_counts.items(), key=lambda x: x[1], reverse=True)
@@ -150,4 +161,3 @@ def compute_meta(events: list[dict[str, Any]], *, top_builds_per_tier: int = 3) 
         item_counts=item_ranked,
         sample_events=len(events),
     )
-

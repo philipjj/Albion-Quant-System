@@ -6,25 +6,25 @@ Handles periodic market collection, arbitrage/crafting computation, and alerts.
 import asyncio
 from datetime import datetime
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
 from app.alerts.discord import DiscordAlerter
 from app.arbitrage.scanner import ArbitrageScanner
 from app.core.config import settings
 from app.core.logging import log
+from app.core.scanner_integration import UnifiedScanner
 from app.crafting.engine import CraftingEngine
+from app.db.models import PatchEventModel
 from app.db.session import get_db_session
 from app.ingestion.collector import MarketCollector
-from app.core.scanner_integration import UnifiedScanner
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.interval import IntervalTrigger
+from app.meta.impact_forecast import PatchImpactForecaster
+from app.meta.loadouts import LoadoutTracker
+from app.meta.patch_parser import PatchParser
+from app.meta.patch_tracker import PatchTracker
 
 # Phase 15 Imports
 from app.meta.pvp_meta import PvPMetaEngine
-from app.meta.patch_tracker import PatchTracker
-from app.meta.patch_parser import PatchParser
-from app.meta.impact_forecast import PatchImpactForecaster
-from app.meta.loadouts import LoadoutTracker
-from app.db.models import PatchEventModel
-
 
 
 class QuantScheduler:
@@ -41,19 +41,22 @@ class QuantScheduler:
         self._current_partition = 0  # Rotates through scan_partitions
         self._alert_history = {}  # Tracks last alert time for (type, item, source, dest)
         self._cycle_running = False
-        
+
         # Phase 15 Initializations
         if settings.active_server.value == "europe":
-            self.meta_engine = PvPMetaEngine(base_api_url="https://gameinfo-ams.albiononline.com/api/gameinfo")
+            self.meta_engine = PvPMetaEngine(
+                base_api_url="https://gameinfo-ams.albiononline.com/api/gameinfo"
+            )
         elif settings.active_server.value == "asia":
-            self.meta_engine = PvPMetaEngine(base_api_url="https://gameinfo-sgp.albiononline.com/api/gameinfo")
+            self.meta_engine = PvPMetaEngine(
+                base_api_url="https://gameinfo-sgp.albiononline.com/api/gameinfo"
+            )
         else:
             self.meta_engine = PvPMetaEngine()
         self.patch_tracker = PatchTracker()
         self.patch_parser = PatchParser()
         self.impact_forecaster = PatchImpactForecaster()
         self.loadout_tracker = LoadoutTracker()
-
 
     async def job_collect_prices(self):
         """Collect market prices from API (High Frequency)."""
@@ -66,6 +69,7 @@ class QuantScheduler:
             return False
         except Exception:
             import traceback
+
             log.error(f"[SCHEDULER] Price collection failed:\n{traceback.format_exc()}")
             return False
 
@@ -84,7 +88,9 @@ class QuantScheduler:
             opps = await self.arb_scanner.scan(fast_sell=False)
             self.arb_scanner.store_opportunities()
             if opps:
-                await self.alerter.send_batch_alerts(opps, [], arb_limit=settings.alert_limit_per_cycle)
+                await self.alerter.send_batch_alerts(
+                    opps, [], arb_limit=settings.alert_limit_per_cycle
+                )
             log.info(f"[SCHEDULER] Arbitrage Complete: {len(opps)} opportunities found")
         except Exception as e:
             log.error(f"[SCHEDULER] Arbitrage failed: {e}")
@@ -96,7 +102,9 @@ class QuantScheduler:
             opps = await self.craft_engine.scan()
             self.craft_engine.store_opportunities()
             if opps:
-                await self.alerter.send_batch_alerts([], opps, craft_limit=settings.alert_limit_per_cycle)
+                await self.alerter.send_batch_alerts(
+                    [], opps, craft_limit=settings.alert_limit_per_cycle
+                )
             log.info(f"[SCHEDULER] Crafting Complete: {len(opps)} opportunities found")
         except Exception as e:
             log.error(f"[SCHEDULER] Crafting failed: {e}")
@@ -121,19 +129,23 @@ class QuantScheduler:
             return
 
         self._cycle_running = True
-        
+
         num_partitions = max(1, settings.scan_partitions)
         partition_idx = self._current_partition % num_partitions
 
-        log.info(f"═══ PARTITION CYCLE {partition_idx+1}/{num_partitions} ═══")
+        log.info(f"═══ PARTITION CYCLE {partition_idx + 1}/{num_partitions} ═══")
         start_time = datetime.utcnow()
 
         try:
             # 1. Ingest only this partition's items
-            log.info(f"[SCHEDULER] Step 1: Ingesting Partition {partition_idx+1}/{num_partitions}...")
+            log.info(
+                f"[SCHEDULER] Step 1: Ingesting Partition {partition_idx + 1}/{num_partitions}..."
+            )
             batches_done = await self.collector.collect_partition(partition_idx, num_partitions)
             if batches_done == 0 and not self.collector._stop_requested:
-                log.warning(f"[SCHEDULER] Partition {partition_idx+1} yielded 0 batches. Advancing to next.")
+                log.warning(
+                    f"[SCHEDULER] Partition {partition_idx + 1} yielded 0 batches. Advancing to next."
+                )
                 self._current_partition += 1
                 return
 
@@ -148,7 +160,9 @@ class QuantScheduler:
             bm, crafting, arb = await self.unified_scanner.scan_all(scan_bm=True)
 
             # 3. Alert
-            log.info(f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)})")
+            log.info(
+                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)})"
+            )
 
             # Combine Arb and BM for alerts
             all_arb = arb + bm
@@ -156,18 +170,19 @@ class QuantScheduler:
             # Cooldown filtering to prevent repeating stale alerts
             cooldown_seconds = settings.alert_cooldown_minutes * 60
             now_time = datetime.utcnow()
-            
+
             # Check for global tier lock
             from app.core import state
+
             tier_prefix = f"T{state.tier_lock}_" if state.tier_lock is not None else None
 
             # Filter Arb
             fresh_arb = []
             for o in all_arb:
-                item_id = o.get('item_id', '')
+                item_id = o.get("item_id", "")
                 if tier_prefix and not item_id.upper().startswith(tier_prefix):
                     continue
-                    
+
                 key = f"arb:{item_id}:{o['source_city']}:{o['destination_city']}"
                 if key in self._alert_history:
                     last_time = self._alert_history[key]
@@ -177,6 +192,7 @@ class QuantScheduler:
 
             # Group fresh Arb by category
             from collections import defaultdict
+
             grouped_arb = defaultdict(list)
             for key, o in fresh_arb:
                 grouped_arb[o.get("category", "Unknown")].append((key, o))
@@ -193,10 +209,10 @@ class QuantScheduler:
             # Filter Crafting
             fresh_craft = []
             for o in crafting:
-                item_id = o.get('item_id', '')
+                item_id = o.get("item_id", "")
                 if tier_prefix and not item_id.upper().startswith(tier_prefix):
                     continue
-                    
+
                 key = f"craft:{item_id}:{o['crafting_city']}:{o.get('sell_city', 'Any')}"
                 if key in self._alert_history:
                     last_time = self._alert_history[key]
@@ -224,12 +240,16 @@ class QuantScheduler:
             if final_craft:
                 limit = max(20, settings.alert_limit_per_cycle)
                 await self.alerter.send_batch_alerts([], final_craft, craft_limit=limit)
-                log.info(f"[SCHEDULER] Sent {len(final_craft)} craft alerts after cooldown filtering.")
+                log.info(
+                    f"[SCHEDULER] Sent {len(final_craft)} craft alerts after cooldown filtering."
+                )
 
             duration = (datetime.utcnow() - start_time).total_seconds()
             self._current_partition += 1
             next_part = (self._current_partition % num_partitions) + 1
-            log.info(f"═══ PARTITION {partition_idx+1}/{num_partitions} COMPLETE ({duration:.1f}s) — Next: P{next_part} ═══")
+            log.info(
+                f"═══ PARTITION {partition_idx + 1}/{num_partitions} COMPLETE ({duration:.1f}s) — Next: P{next_part} ═══"
+            )
 
         except Exception as e:
             log.error(f"❌ PARTITION CYCLE FAILED: {e}", exc_info=True)
@@ -240,6 +260,7 @@ class QuantScheduler:
     async def job_snapshot(self):
         """Archive live prices to snapshots table."""
         from app.analytics.snapshots import create_market_snapshot
+
         log.info("[SCHEDULER] Periodic Task: Market Snapshot")
         try:
             with get_db_session() as db:
@@ -253,7 +274,7 @@ class QuantScheduler:
 
         from app.db.models import MarketPrice
         from app.db.session import get_db_session
-        
+
         log.info("[SCHEDULER] Periodic Task: Database Cleanup")
         try:
             cutoff = datetime.utcnow() - timedelta(days=settings.market_data_retention_days)
@@ -282,27 +303,33 @@ class QuantScheduler:
             with get_db_session() as db:
                 for update in updates:
                     # Check if already processed
-                    exists = db.query(PatchEventModel).filter(PatchEventModel.title == update.title).first()
+                    exists = (
+                        db.query(PatchEventModel)
+                        .filter(PatchEventModel.title == update.title)
+                        .first()
+                    )
                     if exists:
                         continue
-                        
+
                     changes = self.patch_parser.parse_content(update.content)
                     forecasts = self.impact_forecaster.forecast_impact(changes)
-                    
+
                     # Send alerts for each change
                     for change in changes:
-                        await self.alerter.send_patch_alert({
-                            "title": update.title,
-                            "content": f"{change.item} was {change.change}ed.",
-                            "impact": f"Expected market impact: {change.expected_market_impact}",
-                            "confidence": "HIGH" if change.severity > 0.7 else "MEDIUM",
-                            "window": "24-72h"
-                        })
-                        
+                        await self.alerter.send_patch_alert(
+                            {
+                                "title": update.title,
+                                "content": f"{change.item} was {change.change}ed.",
+                                "impact": f"Expected market impact: {change.expected_market_impact}",
+                                "confidence": "HIGH" if change.severity > 0.7 else "MEDIUM",
+                                "window": "24-72h",
+                            }
+                        )
+
                     # Save to DB so we don't alert again
                     db.add(PatchEventModel(title=update.title, content=update.content))
                     db.commit()
-                    
+
             log.info(f"[SCHEDULER] Patch Monitor Complete: {len(updates)} updates processed")
         except Exception as e:
             log.error(f"[SCHEDULER] Patch Monitor failed: {e}")
@@ -316,12 +343,11 @@ class QuantScheduler:
         except Exception as e:
             log.error(f"[SCHEDULER] Loadout Clustering failed: {e}")
 
-
     async def _continuous_cycle_loop(self):
         log.info("[SCHEDULER] Starting continuous cycle loop.")
         while self._is_running:
             await self.master_cycle()
-            await asyncio.sleep(1) # Small pause between cycles
+            await asyncio.sleep(1)  # Small pause between cycles
 
     def start(self):
         """Start the background scheduler with sequential master cycle."""
@@ -388,24 +414,23 @@ class QuantScheduler:
 
         if not self.scheduler.running:
             self.scheduler.start()
-            
+
         self._is_running = True
         log.info("✅ AQS sequential background loop is now ACTIVE")
-
 
     def stop(self):
         """Pause the scheduler."""
         if self._is_running:
             self.scheduler.pause()
             self._is_running = False
-            if hasattr(self, '_loop_task') and self._loop_task:
+            if hasattr(self, "_loop_task") and self._loop_task:
                 self._loop_task.cancel()
             log.info("🛑 AQS background loop PAUSED")
 
     def shutdown(self):
         """Fully stop scheduler."""
         self.collector.request_stop()
-        if hasattr(self, '_loop_task') and self._loop_task:
+        if hasattr(self, "_loop_task") and self._loop_task:
             self._loop_task.cancel()
         if self.scheduler.running:
             self.scheduler.shutdown(wait=False)

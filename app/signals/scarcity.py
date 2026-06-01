@@ -1,9 +1,12 @@
 """
 Scarcity signal generation.
 """
+
 from datetime import datetime
-from app.signals.models import AlphaSignal
+
 from app.core.config import settings
+from app.signals.models import AlphaSignal
+
 
 def generate_scarcity_signal(item_id: str, cluster_id: str, supply: float) -> AlphaSignal:
     """
@@ -11,7 +14,7 @@ def generate_scarcity_signal(item_id: str, cluster_id: str, supply: float) -> Al
     """
     # Low supply -> high scarcity -> high alpha score
     alpha_score = 1.0 / (supply + 1.0)
-    
+
     return AlphaSignal(
         signal_type="scarcity",
         item_id=item_id,
@@ -20,5 +23,5 @@ def generate_scarcity_signal(item_id: str, cluster_id: str, supply: float) -> Al
         confidence=settings.scarcity_default_confidence,
         persistence_score=settings.scarcity_default_persistence,
         manipulation_risk=settings.scarcity_default_manipulation_risk,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.utcnow(),
     )

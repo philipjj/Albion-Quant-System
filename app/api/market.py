@@ -62,10 +62,5 @@ def get_latest_updates(
     db: Session = Depends(get_db),
 ):
     """Get most recently captured price records."""
-    prices = (
-        db.query(MarketPrice)
-        .order_by(desc(MarketPrice.captured_at))
-        .limit(limit)
-        .all()
-    )
+    prices = db.query(MarketPrice).order_by(desc(MarketPrice.captured_at)).limit(limit).all()
     return prices

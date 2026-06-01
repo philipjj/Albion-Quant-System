@@ -82,7 +82,9 @@ class StaticDataParser:
                         elif isinstance(value, dict):
                             self.items_raw.append(value)
                 else:
-                    self.items_raw = items_section if isinstance(items_section, list) else [items_section]
+                    self.items_raw = (
+                        items_section if isinstance(items_section, list) else [items_section]
+                    )
             else:
                 self.items_raw = [data]
         elif isinstance(data, list):
@@ -112,7 +114,7 @@ class StaticDataParser:
     def parse_item_id(unique_name: str) -> dict:
         """
         Parse a canonical item ID into its components.
-        
+
         Examples:
             T4_BAG -> tier=4, enchant=0
             T6_2H_BOW -> tier=6, enchant=0
@@ -169,7 +171,9 @@ class StaticDataParser:
                 "tier": id_parts["tier"],
                 "enchant": id_parts["enchant"],
                 "category": raw_item.get("@shopcategory", raw_item.get("shopcategory", "")),
-                "subcategory": raw_item.get("@shopsubcategory1", raw_item.get("shopsubcategory1", "")),
+                "subcategory": raw_item.get(
+                    "@shopsubcategory1", raw_item.get("shopsubcategory1", "")
+                ),
                 "shop_category": raw_item.get("@shopcategory", ""),
                 "shop_subcategory": raw_item.get("@shopsubcategory1", ""),
                 "weight": float(raw_item.get("@weight", 0) or 0),
@@ -211,7 +215,9 @@ class StaticDataParser:
 
             self.parsed_items.append(item)
 
-        log.info(f"Parsed {len(self.parsed_items)} items, {len(self.parsed_recipes)} recipe ingredients")
+        log.info(
+            f"Parsed {len(self.parsed_items)} items, {len(self.parsed_recipes)} recipe ingredients"
+        )
         return self.parsed_items
 
     def _parse_recipe(self, crafted_item_id: str, craft_req: dict | list, raw_item: dict) -> None:
@@ -241,15 +247,17 @@ class StaticDataParser:
             quantity = float(resource.get("@count", 1) or 1)
 
             if ingredient_id:
-                self.parsed_recipes.append({
-                    "crafted_item_id": crafted_item_id,
-                    "ingredient_item_id": ingredient_id,
-                    "quantity": quantity,
-                    "crafting_station": crafting_station,
-                    "nutrition_cost": nutrition,
-                    "focus_cost": focus,
-                    "crafting_fame": fame,
-                })
+                self.parsed_recipes.append(
+                    {
+                        "crafted_item_id": crafted_item_id,
+                        "ingredient_item_id": ingredient_id,
+                        "quantity": quantity,
+                        "crafting_station": crafting_station,
+                        "nutrition_cost": nutrition,
+                        "focus_cost": focus,
+                        "crafting_fame": fame,
+                    }
+                )
 
     def save_parsed_data(self) -> None:
         """Save parsed data to JSON files for inspection."""

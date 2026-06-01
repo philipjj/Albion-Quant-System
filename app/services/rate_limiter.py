@@ -10,6 +10,7 @@ class DeterministicRateLimiter:
     Deterministic Async Rate Limiter for AQS v3.1+.
     Ensures hard spacing between requests and dynamic adjustment based on server pressure.
     """
+
     def __init__(self, min_interval: float = 0.5):
         self.min_interval = min_interval
         self.slowdown_factor = 1.0
@@ -19,8 +20,8 @@ class DeterministicRateLimiter:
 
     async def acquire(self):
         """
-        Global entry point for all API calls. 
-        Guarantees min_interval * slowdown_factor spacing between the END of the last 
+        Global entry point for all API calls.
+        Guarantees min_interval * slowdown_factor spacing between the END of the last
         request's acquisition and the START of the next.
         """
         async with self._lock:
@@ -28,11 +29,11 @@ class DeterministicRateLimiter:
             # Calculate the next allowed start time
             effective_interval = self.min_interval * self.slowdown_factor
             target_time = self.last_request_time + effective_interval
-            
+
             wait_time = target_time - now
             if wait_time > 0:
                 await asyncio.sleep(wait_time)
-            
+
             self.last_request_time = time.monotonic()
 
     def report_error(self, status_code: int):
@@ -42,7 +43,9 @@ class DeterministicRateLimiter:
         """
         if status_code == 429:
             self.slowdown_factor = min(self.slowdown_factor * 1.25, self.max_slowdown)
-            log.warning(f"⚖️ RATE LIMITER: 429 Detected. Slowing down. Factor: {self.slowdown_factor:.2f}")
+            log.warning(
+                f"⚖️ RATE LIMITER: 429 Detected. Slowing down. Factor: {self.slowdown_factor:.2f}"
+            )
 
     def report_success(self):
         """
@@ -58,6 +61,7 @@ class DeterministicRateLimiter:
     def get_retry_jitter(self) -> float:
         """Standardized jitter for retry logic."""
         return random.uniform(0.1, 1.0)
+
 
 # Global Instance
 limiter = DeterministicRateLimiter()

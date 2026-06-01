@@ -51,20 +51,21 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # ─── Market Constants ────────────────────────────────────────────────────────
 
-PREMIUM_TAX = 0.04          # 4% market sales tax (premium player)
-NON_PREMIUM_TAX = 0.08      # 8%
-SETUP_FEE = 0.025           # 2.5% listing fee (only paid when YOU list, not when buying)
-BM_TAX = 0.0                # Black Market: zero fees to seller
+PREMIUM_TAX = 0.04  # 4% market sales tax (premium player)
+NON_PREMIUM_TAX = 0.08  # 8%
+SETUP_FEE = 0.025  # 2.5% listing fee (only paid when YOU list, not when buying)
+BM_TAX = 0.0  # Black Market: zero fees to seller
 
 # Station fee varies 1–15% of item value. Use conservative default.
-DEFAULT_STATION_FEE_PCT = 0.03   # 3% of item_value from DB, not sell price
+DEFAULT_STATION_FEE_PCT = 0.03  # 3% of item_value from DB, not sell price
 
 # RRR (Resource Return Rate) — how much material comes back after crafting
 # RRR = LPB / (1 + LPB)  where LPB = Local Production Bonus
-BASE_LPB = 0.18             # 18% base — all cities, all items
-CITY_BONUS_LPB = 0.33       # +33% for matching city+category (refining speciality)
-CRAFT_BONUS_LPB = 0.15      # +15% for matching city+category (crafting speciality)
-FOCUS_BONUS_LPB = 0.59      # +59% when using Focus
+BASE_LPB = 0.18  # 18% base — all cities, all items
+CITY_BONUS_LPB = 0.33  # +33% for matching city+category (refining speciality)
+CRAFT_BONUS_LPB = 0.15  # +15% for matching city+category (crafting speciality)
+FOCUS_BONUS_LPB = 0.59  # +59% when using Focus
+
 
 def rrr(city: str, category: str, use_focus: bool = False) -> float:
     """
@@ -87,7 +88,7 @@ def rrr(city: str, category: str, use_focus: bool = False) -> float:
 
 
 # Each royal city has crafting specialities — items crafted here get better RRR
-CITY_CRAFT_BONUSES: Dict[str, Dict[str, List[str]]] = {
+CITY_CRAFT_BONUSES: dict[str, dict[str, list[str]]] = {
     "Martlock": {
         "refining": ["hide"],
         "crafting": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "offhand"],
@@ -108,7 +109,7 @@ CITY_CRAFT_BONUSES: Dict[str, Dict[str, List[str]]] = {
         "refining": ["wood"],
         "crafting": ["spear", "holy_staff", "plate_armor", "cloth_shoes", "offhand"],
     },
-    "Caerleon": {},   # No crafting bonus; used for BM only
+    "Caerleon": {},  # No crafting bonus; used for BM only
 }
 
 ROYAL_CITIES = ["Bridgewatch", "Martlock", "Lymhurst", "Fort Sterling", "Thetford"]
@@ -121,15 +122,16 @@ DANGEROUS_DESTINATIONS = {CAERLEON, BM_CITY}
 
 # ─── Data Age Limits ─────────────────────────────────────────────────────────
 
-MAX_AGE_BM_SECONDS = 600         # 10 minutes — BM orders fill fast
-MAX_AGE_ROYAL_SECONDS = 7_200    # 2 hours — royal city orders last longer
+MAX_AGE_BM_SECONDS = 600  # 10 minutes — BM orders fill fast
+MAX_AGE_ROYAL_SECONDS = 7_200  # 2 hours — royal city orders last longer
 MAX_AGE_CRAFTING_SECONDS = 14_400  # 4 hours — acceptable for material cost calc
 
 # ─── Outlier / Manipulation Detection ────────────────────────────────────────
 
-MAX_SELL_TO_BUY_RATIO = 5.0    # If sell_min > buy_max * 5 → single-item manipulation
-MIN_PRICE = 100                 # Ignore anything below 100 silver (test orders)
+MAX_SELL_TO_BUY_RATIO = 5.0  # If sell_min > buy_max * 5 → single-item manipulation
+MIN_PRICE = 100  # Ignore anything below 100 silver (test orders)
 ABSOLUTE_MAX_PRICE = 500_000_000  # 500M cap — anything higher is a troll order
+
 
 def is_price_valid(sell_min: int, buy_max: int, daily_volume: int = 0) -> bool:
     """
@@ -146,6 +148,7 @@ def is_price_valid(sell_min: int, buy_max: int, daily_volume: int = 0) -> bool:
             return False
     return True
 
+
 def is_bm_price_valid(bm_buy_price: int, item_value: float = 0.0) -> bool:
     """
     BM price should always be ABOVE royal sell price.
@@ -161,7 +164,8 @@ def is_bm_price_valid(bm_buy_price: int, item_value: float = 0.0) -> bool:
             return False
     return True
 
-def cross_city_outlier_check(prices_by_city: Dict[str, int]) -> Dict[str, int]:
+
+def cross_city_outlier_check(prices_by_city: dict[str, int]) -> dict[str, int]:
     """
     If one city's sell_price_min is >3x the median of other cities → outlier.
     Replace with median. This catches single-player manipulation.
@@ -178,7 +182,7 @@ def cross_city_outlier_check(prices_by_city: Dict[str, int]) -> Dict[str, int]:
     for city, price in prices_by_city.items():
         if price > median * 3:
             # Outlier — do NOT use this price as a buy source (player trap)
-            cleaned[city] = 0   # Zeroed out = skipped by scanner
+            cleaned[city] = 0  # Zeroed out = skipped by scanner
         else:
             cleaned[city] = price
     return cleaned
@@ -186,27 +190,29 @@ def cross_city_outlier_check(prices_by_city: Dict[str, int]) -> Dict[str, int]:
 
 # ─── Opportunity Dataclasses ─────────────────────────────────────────────────
 
+
 @dataclass
 class BMOpportunity:
     """
     Black Market flip: buy in royal city, run to Caerleon, sell to BM buy order.
     No tax on the BM sell side. Risk = travel to Caerleon.
     """
+
     item_id: str
     item_name: str
-    buy_city: str               # Where to buy the item (cheapest royal city)
-    buy_price: int              # sell_price_min in buy_city (what you pay)
-    bm_buy_price: int           # Black Market buy order (what BM pays you)
-    net_profit: int             # bm_buy_price - buy_price (no fees on BM side)
-    profit_pct: float           # net_profit / buy_price * 100
-    daily_volume: int           # Volume in buy city (how many units trade daily)
-    data_age_buy: int           # Age of buy city price in seconds
-    data_age_bm: int            # Age of BM price in seconds
+    buy_city: str  # Where to buy the item (cheapest royal city)
+    buy_price: int  # sell_price_min in buy_city (what you pay)
+    bm_buy_price: int  # Black Market buy order (what BM pays you)
+    net_profit: int  # bm_buy_price - buy_price (no fees on BM side)
+    profit_pct: float  # net_profit / buy_price * 100
+    daily_volume: int  # Volume in buy city (how many units trade daily)
+    data_age_buy: int  # Age of buy city price in seconds
+    data_age_bm: int  # Age of BM price in seconds
     quality: int = 1
     can_be_crafted: bool = False  # If True, crafting route also shown
-    craft_cost: float = 0.0     # If can_be_crafted, what it costs to craft
-    craft_city: str = ""        # Best city to craft in
-    score: float = 0.0          # Ranking score
+    craft_cost: float = 0.0  # If can_be_crafted, what it costs to craft
+    craft_city: str = ""  # Best city to craft in
+    score: float = 0.0  # Ranking score
 
     @property
     def mode(self) -> str:
@@ -232,25 +238,26 @@ class CraftingOpportunity:
     Craft item using materials, sell on market or to BM.
     Profit = revenue - material_cost_after_rrr - station_fee - market_tax
     """
+
     item_id: str
     item_name: str
-    craft_city: str             # Where to craft (best RRR bonus city)
-    sell_city: str              # Where to sell (may differ from craft city)
-    sell_mode: str              # "BM" or "MARKET"
+    craft_city: str  # Where to craft (best RRR bonus city)
+    sell_city: str  # Where to sell (may differ from craft city)
+    sell_mode: str  # "BM" or "MARKET"
     material_cost_gross: float  # Total ingredient cost (before RRR)
-    rrr_used: float             # Resource return rate applied (e.g. 0.33)
-    material_cost_net: float    # Cost after RRR = gross * (1 - rrr)
-    station_fee: float          # Crafting station fee in silver
-    sell_price: int             # Price you sell at (BM buy order or market sell_min)
-    revenue_net: float          # After tax: sell_price * (1 - tax) or sell_price if BM
-    profit: float               # revenue_net - material_cost_net - station_fee
-    profit_pct: float           # profit / material_cost_gross * 100
+    rrr_used: float  # Resource return rate applied (e.g. 0.33)
+    material_cost_net: float  # Cost after RRR = gross * (1 - rrr)
+    station_fee: float  # Crafting station fee in silver
+    sell_price: int  # Price you sell at (BM buy order or market sell_min)
+    revenue_net: float  # After tax: sell_price * (1 - tax) or sell_price if BM
+    profit: float  # revenue_net - material_cost_net - station_fee
+    profit_pct: float  # profit / material_cost_gross * 100
     daily_volume: int
-    data_age_materials: int     # Age of material prices
-    data_age_sell: int          # Age of sell price
+    data_age_materials: int  # Age of material prices
+    data_age_sell: int  # Age of sell price
     quality: int = 1
     use_focus: bool = False
-    ingredients: List[Dict] = field(default_factory=list)
+    ingredients: list[dict] = field(default_factory=list)
     score: float = 0.0
 
 
@@ -261,25 +268,27 @@ class ArbitrageOpportunity:
     Buy cheapest sell_price_min → sell via instant-fill on buy_price_max in dest.
     Only counts EXISTING buy orders (buy_price_max > 0) — not listing and waiting.
     """
+
     item_id: str
     item_name: str
     buy_city: str
     sell_city: str
-    buy_price: int              # sell_price_min at source
-    sell_price: int             # buy_price_max at destination (instant fill)
-    gross_profit: int           # sell - buy
-    tax_paid: float             # 4% of sell_price
-    net_profit: float           # gross - tax
-    profit_pct: float           # net / buy * 100
+    buy_price: int  # sell_price_min at source
+    sell_price: int  # buy_price_max at destination (instant fill)
+    gross_profit: int  # sell - buy
+    tax_paid: float  # 4% of sell_price
+    net_profit: float  # gross - tax
+    profit_pct: float  # net / buy * 100
     daily_volume: int
     data_age_buy: int
     data_age_sell: int
-    is_dangerous_route: bool    # Caerleon destination = dangerous
+    is_dangerous_route: bool  # Caerleon destination = dangerous
     quality: int = 1
     score: float = 0.0
 
 
 # ─── The Scanner ─────────────────────────────────────────────────────────────
+
 
 class OpportunityScanner:
     """
@@ -305,14 +314,14 @@ class OpportunityScanner:
 
     def __init__(
         self,
-        min_bm_profit: int = 10_000,        # Minimum raw profit for BM flip (silver)
-        min_bm_profit_pct: float = 5.0,     # Minimum margin % for BM flip
-        min_craft_profit: int = 5_000,       # Minimum craft profit
+        min_bm_profit: int = 10_000,  # Minimum raw profit for BM flip (silver)
+        min_bm_profit_pct: float = 5.0,  # Minimum margin % for BM flip
+        min_craft_profit: int = 5_000,  # Minimum craft profit
         min_craft_profit_pct: float = 3.0,  # Minimum craft margin %
-        min_arb_profit: int = 5_000,         # Minimum arbitrage profit
-        min_arb_profit_pct: float = 5.0,    # Minimum arbitrage margin %
-        use_focus: bool = False,             # Whether player uses focus when crafting
-        premium: bool = True,               # Premium player (4% tax vs 8%)
+        min_arb_profit: int = 5_000,  # Minimum arbitrage profit
+        min_arb_profit_pct: float = 5.0,  # Minimum arbitrage margin %
+        use_focus: bool = False,  # Whether player uses focus when crafting
+        premium: bool = True,  # Premium player (4% tax vs 8%)
     ):
         self.min_bm_profit = min_bm_profit
         self.min_bm_profit_pct = min_bm_profit_pct
@@ -325,15 +334,13 @@ class OpportunityScanner:
 
     # ── Internal helpers ────────────────────────────────────────────────────
 
-    def _get_price(
-        self, prices: Dict, item_id: str, city: str, quality: int = 1
-    ) -> Optional[Dict]:
+    def _get_price(self, prices: dict, item_id: str, city: str, quality: int = 1) -> dict | None:
         """Safe price lookup with None if missing."""
         return prices.get(item_id, {}).get(city, {}).get(quality)
 
     def _cheapest_royal_sell(
-        self, prices: Dict, item_id: str, quality: int = 1
-    ) -> Tuple[str, int, int, int]:
+        self, prices: dict, item_id: str, quality: int = 1
+    ) -> tuple[str, int, int, int]:
         """
         Returns (city, sell_price_min, volume, data_age) for the cheapest
         valid sell order across all royal cities.
@@ -407,12 +414,12 @@ class OpportunityScanner:
 
     def scan_black_market(
         self,
-        prices: Dict,
-        item_names: Dict[str, str],
-        recipes: Dict,
-        item_categories: Dict[str, str],
-        item_values: Dict[str, float] = None,
-    ) -> List[BMOpportunity]:
+        prices: dict,
+        item_names: dict[str, str],
+        recipes: dict,
+        item_categories: dict[str, str],
+        item_values: dict[str, float] = None,
+    ) -> list[BMOpportunity]:
         """
         Find items where BM buy order > cheapest royal city sell order.
         Also checks: can we CRAFT it cheaper than buying from royal city?
@@ -491,12 +498,12 @@ class OpportunityScanner:
 
     def scan_crafting(
         self,
-        prices: Dict,
-        item_names: Dict[str, str],
-        recipes: Dict,
-        item_categories: Dict[str, str],
-        item_values: Dict[str, float],
-    ) -> List[CraftingOpportunity]:
+        prices: dict,
+        item_names: dict[str, str],
+        recipes: dict,
+        item_categories: dict[str, str],
+        item_values: dict[str, float],
+    ) -> list[CraftingOpportunity]:
         """
         For each craftable item, find the best city to craft it in and the best
         city/venue (BM or market) to sell it at. Compares net revenue vs net cost.
@@ -560,7 +567,7 @@ class OpportunityScanner:
                                 material_cost_net=round(material_cost_net, 0),
                                 station_fee=round(station_fee, 0),
                                 sell_price=bm_price,
-                                revenue_net=float(bm_price),   # no tax
+                                revenue_net=float(bm_price),  # no tax
                                 profit=round(profit, 0),
                                 profit_pct=round(pct, 2),
                                 daily_volume=bm_data.get("volume_24h", 1),
@@ -635,9 +642,9 @@ class OpportunityScanner:
 
     def scan_arbitrage(
         self,
-        prices: Dict,
-        item_names: Dict[str, str],
-    ) -> List[ArbitrageOpportunity]:
+        prices: dict,
+        item_names: dict[str, str],
+    ) -> list[ArbitrageOpportunity]:
         """
         Find items where buy_price_max at destination > sell_price_min at source.
         Only uses EXISTING BUY ORDERS (buy_price_max) as the destination price —
@@ -645,13 +652,22 @@ class OpportunityScanner:
         listing at sell_price_min in another city and waiting days for a fill.
         """
         results = []
-        seen = set()   # Dedup: same item+route
+        seen = set()  # Dedup: same item+route
 
         # Diagnostics: count how many items pass each filter stage
-        _diag = {"total_pairs": 0, "no_sources": 0, "no_dest_data": 0, 
-                 "dest_no_buy": 0, "dest_too_old": 0, "low_profit": 0, 
-                 "low_pct": 0, "outlier_filtered": 0, "src_age_filtered": 0,
-                 "src_invalid_price": 0, "passed": 0}
+        _diag = {
+            "total_pairs": 0,
+            "no_sources": 0,
+            "no_dest_data": 0,
+            "dest_no_buy": 0,
+            "dest_too_old": 0,
+            "low_profit": 0,
+            "low_pct": 0,
+            "outlier_filtered": 0,
+            "src_age_filtered": 0,
+            "src_invalid_price": 0,
+            "passed": 0,
+        }
 
         for item_id in prices:
             for quality in [1, 2, 3, 4, 5]:
@@ -749,6 +765,7 @@ class OpportunityScanner:
 
         # Log filter diagnostics
         import logging
+
         _log = logging.getLogger("app.core.opportunity_engine")
         _log.info(f"[ARB DIAG] Filter pipeline: {_diag}")
 
@@ -760,11 +777,11 @@ class OpportunityScanner:
     def _estimate_craft_cost(
         self,
         item_id: str,
-        prices: Dict,
-        recipes: Dict,
-        item_categories: Dict[str, str],
+        prices: dict,
+        recipes: dict,
+        item_categories: dict[str, str],
         quality: int = 1,
-    ) -> Tuple[float, str]:
+    ) -> tuple[float, str]:
         """
         Quick craft cost estimate for BM opportunity display.
         Returns (total_cost_after_rrr, best_craft_city).
@@ -800,11 +817,11 @@ class OpportunityScanner:
     def _calc_material_cost(
         self,
         item_id: str,
-        recipe: Dict,
-        prices: Dict,
+        recipe: dict,
+        prices: dict,
         craft_city: str,
         quality: int = 1,
-    ) -> Tuple[float, List[Dict], int]:
+    ) -> tuple[float, list[dict], int]:
         """
         Sum up ingredient costs. Checks cheapest sell_price_min across royal cities
         for each ingredient. Returns (total_gross_cost, ingredient_list, max_age).
@@ -823,7 +840,11 @@ class OpportunityScanner:
 
             # Try to find price in craft_city first
             p_local = self._get_price(prices, ing_id, craft_city, 1)
-            if p_local and p_local.get("sell_price_min", 0) > 0 and p_local.get("data_age_seconds", 9999) <= MAX_AGE_CRAFTING_SECONDS:
+            if (
+                p_local
+                and p_local.get("sell_price_min", 0) > 0
+                and p_local.get("data_age_seconds", 9999) <= MAX_AGE_CRAFTING_SECONDS
+            ):
                 sp = p_local["sell_price_min"]
                 bm = p_local.get("buy_price_max", 0)
                 if is_price_valid(sp, bm):
@@ -850,25 +871,27 @@ class OpportunityScanner:
                         best_age = age
 
             if best_price <= 0:
-                return (0.0, [], 0)   # Can't price this ingredient → skip
+                return (0.0, [], 0)  # Can't price this ingredient → skip
 
             line_cost = best_price * qty
             total += line_cost
             max_age = max(max_age, best_age)
-            
+
             # Check if returnable (RRR applies)
             is_returnable = False
             if "ARTIFACT" not in ing_id:
                 if any(r in ing_id for r in ["PLANKS", "CLOTH", "LEATHER", "BAR"]):
                     is_returnable = True
-                    
-            ingredients.append({
-                "item_id": ing_id,
-                "quantity": qty,
-                "unit_price": best_price,
-                "buy_city": best_city,
-                "line_cost": round(line_cost, 0),
-                "is_returnable": is_returnable,
-            })
+
+            ingredients.append(
+                {
+                    "item_id": ing_id,
+                    "quantity": qty,
+                    "unit_price": best_price,
+                    "buy_city": best_city,
+                    "line_cost": round(line_cost, 0),
+                    "is_returnable": is_returnable,
+                }
+            )
 
         return (total, ingredients, max_age)

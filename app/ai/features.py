@@ -20,27 +20,34 @@ class FeatureEngineer:
         """Fetch historical prices for an item in a specific city."""
         with get_db_session() as db:
             cutoff = datetime.utcnow() - timedelta(days=days)
-            query = select(MarketSnapshot).where(
-                and_(
-                    MarketSnapshot.item_id == item_id,
-                    MarketSnapshot.city == city,
-                    MarketSnapshot.captured_at >= cutoff
+            query = (
+                select(MarketSnapshot)
+                .where(
+                    and_(
+                        MarketSnapshot.item_id == item_id,
+                        MarketSnapshot.city == city,
+                        MarketSnapshot.captured_at >= cutoff,
+                    )
                 )
-            ).order_by(MarketSnapshot.captured_at.asc())
+                .order_by(MarketSnapshot.captured_at.asc())
+            )
 
             records = db.execute(query).scalars().all()
 
             if not records:
                 return pd.DataFrame()
 
-            data = [{
-                'timestamp': r.captured_at,
-                'sell_price': r.sell_price_min,
-                'buy_price': r.buy_price_max
-            } for r in records]
+            data = [
+                {
+                    "timestamp": r.captured_at,
+                    "sell_price": r.sell_price_min,
+                    "buy_price": r.buy_price_max,
+                }
+                for r in records
+            ]
 
             df = pd.DataFrame(data)
-            df.set_index('timestamp', inplace=True)
+            df.set_index("timestamp", inplace=True)
             return df
 
     def compute_spread_percentage(self, sell_price: float, buy_price: float) -> float:
@@ -53,11 +60,15 @@ class FeatureEngineer:
         """Retrieve verified 24h sales volume from collected market history."""
         with get_db_session() as db:
             cutoff = datetime.utcnow() - timedelta(hours=24)
-            records = db.query(MarketHistory.item_count).filter(
-                MarketHistory.item_id == item_id,
-                MarketHistory.city == city,
-                MarketHistory.timestamp >= cutoff,
-            ).all()
+            records = (
+                db.query(MarketHistory.item_count)
+                .filter(
+                    MarketHistory.item_id == item_id,
+                    MarketHistory.city == city,
+                    MarketHistory.timestamp >= cutoff,
+                )
+                .all()
+            )
             return int(sum(row[0] or 0 for row in records))
 
     def get_killboard_usage(self, item_id: str) -> float:
@@ -75,11 +86,11 @@ class FeatureEngineer:
 
         # simulated lookups from patch diff engine:
         if item_id == "T4_MAIN_SWORD":
-            return 0.5583 # From our PatchDiffEngine massive buff
+            return 0.5583  # From our PatchDiffEngine massive buff
         if item_id == "T4_2H_BOW":
-            return -0.9208 # From our PatchDiffEngine massive nerf
+            return -0.9208  # From our PatchDiffEngine massive nerf
 
-        return 0.0 # Unchanged item
+        return 0.0  # Unchanged item
 
     def get_city_supply(self, item_id: str, city: str) -> int:
         """Return active order supply when order-book collection is available."""
@@ -96,29 +107,32 @@ class FeatureEngineer:
 
         # Time series features
         # Moving averages
-        history_df['sell_sma_3'] = history_df['sell_price'].rolling(window=3, min_periods=1).mean()
-        history_df['sell_sma_7'] = history_df['sell_price'].rolling(window=7, min_periods=1).mean()
+        history_df["sell_sma_3"] = history_df["sell_price"].rolling(window=3, min_periods=1).mean()
+        history_df["sell_sma_7"] = history_df["sell_price"].rolling(window=7, min_periods=1).mean()
 
         # Volatility
-        history_df['price_volatility'] = history_df['sell_price'].rolling(window=7, min_periods=1).std().fillna(0)
+        history_df["price_volatility"] = (
+            history_df["sell_price"].rolling(window=7, min_periods=1).std().fillna(0)
+        )
 
         # Spread
-        history_df['spread_pct'] = history_df.apply(
-            lambda row: self.compute_spread_percentage(row['sell_price'], row['buy_price']),
-            axis=1
+        history_df["spread_pct"] = history_df.apply(
+            lambda row: self.compute_spread_percentage(row["sell_price"], row["buy_price"]), axis=1
         )
 
         # Add external features (mostly static or daily, mapping to latest)
-        history_df['volume'] = self.get_volume(item_id, city)
-        history_df['killboard_usage'] = self.get_killboard_usage(item_id)
-        history_df['patch_impact'] = self.get_patch_changes(item_id)
-        history_df['city_supply'] = self.get_city_supply(item_id, city)
+        history_df["volume"] = self.get_volume(item_id, city)
+        history_df["killboard_usage"] = self.get_killboard_usage(item_id)
+        history_df["patch_impact"] = self.get_patch_changes(item_id)
+        history_df["city_supply"] = self.get_city_supply(item_id, city)
 
         # Target creation (predicting next period's price or movement)
-        history_df['target_sell_price'] = history_df['sell_price'].shift(-1)
-        history_df['target_price_movement'] = (history_df['target_sell_price'] > history_df['sell_price']).astype(int)
+        history_df["target_sell_price"] = history_df["sell_price"].shift(-1)
+        history_df["target_price_movement"] = (
+            history_df["target_sell_price"] > history_df["sell_price"]
+        ).astype(int)
 
         # Drop NaN targets (the last row)
-        history_df.dropna(subset=['target_sell_price'], inplace=True)
+        history_df.dropna(subset=["target_sell_price"], inplace=True)
 
         return history_df

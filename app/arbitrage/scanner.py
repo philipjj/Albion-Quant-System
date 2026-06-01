@@ -3,6 +3,7 @@ Arbitrage Scanner for Albion Online v3.1.
 Finds profitable transport routes across all cities, items, and enchantments.
 Includes fee-aware scoring and risk-adjusted EV calculations.
 """
+
 import math
 from datetime import datetime, timedelta
 from itertools import permutations
@@ -42,11 +43,11 @@ class ArbitrageScanner:
         """Calculates transport risk based on distance and route danger."""
         dist = get_distance(source, dest)
         is_dangerous = (source, dest) in DANGEROUS_ROUTES
-        
+
         base_risk = dist * settings.arb_distance_weight
         if is_dangerous:
             base_risk *= settings.arb_danger_multiplier
-            
+
         # Value-at-risk penalty
         value_risk = (item_value / settings.arb_value_divisor) * settings.arb_value_weight
         return round(base_risk + value_risk, 2)
@@ -54,29 +55,33 @@ class ArbitrageScanner:
     def _get_latest_prices(self, db: Session) -> dict[tuple[str, int], dict[str, dict[str, Any]]]:
         """Fetches and groups latest prices using memory-efficient streaming."""
         cutoff = datetime.utcnow() - timedelta(hours=settings.arb_regular_hours)
-        valid_items = set([
-            i[0] for i in db.query(Item.item_id).filter(
-                Item.category != "vanity"
-            ).all()
-        ])
+        valid_items = set(
+            [i[0] for i in db.query(Item.item_id).filter(Item.category != "vanity").all()]
+        )
 
         item_meta = {i.item_id: i.item_value for i in db.query(Item.item_id, Item.item_value).all()}
-        
-        recent_prices = db.query(MarketPrice).filter(
-            MarketPrice.captured_at >= cutoff,
-            MarketPrice.server == settings.active_server.value
-        ).yield_per(5000)
-        
+
+        recent_prices = (
+            db.query(MarketPrice)
+            .filter(
+                MarketPrice.captured_at >= cutoff,
+                MarketPrice.server == settings.active_server.value,
+            )
+            .yield_per(5000)
+        )
+
         prices: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
         for p in recent_prices:
             item_id = cast(str, p.item_id)
-            if item_id not in valid_items: continue
+            if item_id not in valid_items:
+                continue
 
             key = (item_id, p.quality)
-            if key not in prices: prices[key] = {}
+            if key not in prices:
+                prices[key] = {}
 
             iv = item_meta.get(item_id, 0.0)
-            
+
             # [FIX] Only keep the latest price per (item_id, quality, city)
             existing = prices[key].get(p.city)
             if existing:
@@ -93,20 +98,22 @@ class ArbitrageScanner:
                 "confidence_score": p.confidence_score or 1.0,
                 "item_value": iv,
                 "is_black_market": False,
-                "_ts": p.captured_at
+                "_ts": p.captured_at,
             }
 
         # --- Black Market Integration ---
         bm_cutoff = datetime.utcnow() - timedelta(hours=settings.arb_bm_hours)
-        bm_snapshots = db.query(BlackMarketSnapshot).filter(
-            BlackMarketSnapshot.captured_at >= bm_cutoff
-        ).all()
-        
+        bm_snapshots = (
+            db.query(BlackMarketSnapshot).filter(BlackMarketSnapshot.captured_at >= bm_cutoff).all()
+        )
+
         for bm in bm_snapshots:
-            if bm.item_id not in valid_items: continue
+            if bm.item_id not in valid_items:
+                continue
             key = (bm.item_id, bm.quality)
-            if key not in prices: prices[key] = {}
-            
+            if key not in prices:
+                prices[key] = {}
+
             prices[key]["Black Market"] = {
                 "sell_price_min": 0,
                 "buy_price_max": bm.buy_price_max or 0,
@@ -115,7 +122,7 @@ class ArbitrageScanner:
                 "volume_24h": 1,
                 "confidence_score": 1.0,
                 "item_value": item_meta.get(bm.item_id, 0.0),
-                "is_black_market": True
+                "is_black_market": True,
             }
         return prices
 
@@ -142,31 +149,45 @@ class ArbitrageScanner:
                 log.info(f"Scanning progress: {self.stats['items_scanned']} items analyzed...")
 
             # Find cheapest regional source
-            sources = [(c, p) for c, p in city_prices.items() if p.get("sell_price_min", 0) > 0 and not p.get("is_black_market")]
-            if not sources: continue
-            
+            sources = [
+                (c, p)
+                for c, p in city_prices.items()
+                if p.get("sell_price_min", 0) > 0 and not p.get("is_black_market")
+            ]
+            if not sources:
+                continue
+
             if source_city_filter:
                 sources = [s for s in sources if s[0].lower() == source_city_filter.lower()]
-                if not sources: continue
-            
+                if not sources:
+                    continue
+
             cheapest_source_city, s_data = min(sources, key=lambda x: x[1]["sell_price_min"])
             buy_price = s_data["sell_price_min"]
-            
-            if buy_price > settings.max_capital_per_trade: continue
+
+            if buy_price > settings.max_capital_per_trade:
+                continue
 
             for dest_city, d_data in city_prices.items():
-                if dest_city == cheapest_source_city: continue
-                if dest_city == "Caerleon": continue  # same risk zone as BM; handled by BM scan
+                if dest_city == cheapest_source_city:
+                    continue
+                if dest_city == "Caerleon":
+                    continue  # same risk zone as BM; handled by BM scan
                 self.stats["pairs_evaluated"] += 1
-                
+
                 if d_data.get("is_black_market"):
                     sell_price = d_data.get("buy_price_max", 0)
                     fast_sell_actual = True
                 else:
-                    sell_price = d_data.get("buy_price_max", 0) if fast_sell else d_data.get("sell_price_min", 0)
+                    sell_price = (
+                        d_data.get("buy_price_max", 0)
+                        if fast_sell
+                        else d_data.get("sell_price_min", 0)
+                    )
                     fast_sell_actual = fast_sell
 
-                if sell_price <= buy_price: continue
+                if sell_price <= buy_price:
+                    continue
 
                 # 1. Fast path: check raw profit
                 net_profit_raw, margin_pct_raw = calculate_net_margin(
@@ -174,29 +195,31 @@ class ArbitrageScanner:
                     sell_price=sell_price,
                     is_black_market=d_data.get("is_black_market", False),
                     fast_sell=fast_sell_actual,
-                    tax_free=False 
+                    tax_free=False,
                 )
 
-                if margin_pct_raw < settings.min_arbitrage_margin: continue
-                
+                if margin_pct_raw < settings.min_arbitrage_margin:
+                    continue
+
                 # Sanitize 999 Volume Fallbacks
                 raw_vol = d_data.get("volume_24h", 0)
                 daily_vol = 1 if raw_vol == 999 or raw_vol == 0 else raw_vol
-                
-                if daily_vol <= 0 and not d_data.get("is_black_market"): continue
+
+                if daily_vol <= 0 and not d_data.get("is_black_market"):
+                    continue
 
                 # 2. VWAP & Slippage Math
                 from app.execution.slippage import calculate_safe_trade_limit
                 from app.execution.vwap import estimate_vwap
-                
+
                 if d_data.get("is_black_market"):
                     safe_limit = 1
                 else:
                     safe_limit = calculate_safe_trade_limit(daily_vol, max_slippage_pct=0.03)
-                    
+
                 s_daily_vol = s_data.get("volume_24h", 1)
                 s_daily_vol = 1 if s_daily_vol == 999 or s_daily_vol == 0 else s_daily_vol
-                
+
                 vwap_buy = estimate_vwap(buy_price, safe_limit, s_daily_vol, is_buy=True)
                 vwap_sell = estimate_vwap(sell_price, safe_limit, daily_vol, is_buy=False)
 
@@ -206,17 +229,26 @@ class ArbitrageScanner:
                     sell_price=vwap_sell,
                     is_black_market=d_data.get("is_black_market", False),
                     fast_sell=fast_sell_actual,
-                    tax_free=False 
+                    tax_free=False,
                 )
 
-                if margin_pct < settings.min_arbitrage_margin: continue
+                if margin_pct < settings.min_arbitrage_margin:
+                    continue
 
-                risk_score = self._calculate_risk_score(cheapest_source_city, dest_city, s_data["item_value"])
+                risk_score = self._calculate_risk_score(
+                    cheapest_source_city, dest_city, s_data["item_value"]
+                )
                 p_key = f"{item_id}:{cheapest_source_city}:{dest_city}"
                 persistence = self._persistence_cache.get(p_key, 0) + 1
                 self._persistence_cache[p_key] = persistence
 
-                quality_names = {1: "", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
+                quality_names = {
+                    1: "",
+                    2: "Good",
+                    3: "Outstanding",
+                    4: "Excellent",
+                    5: "Masterpiece",
+                }
                 base_name = item_names.get(item_id, item_id)
                 # [FIX] Include enchantment and quality in the display name
                 display_name = base_name
@@ -235,18 +267,18 @@ class ArbitrageScanner:
                     "destination_city": dest_city,
                     "buy_price": vwap_buy,
                     "sell_price": vwap_sell,
-                    "estimated_profit": round(net_profit, 2), # strictly unit math
+                    "estimated_profit": round(net_profit, 2),  # strictly unit math
                     "estimated_margin": round(margin_pct, 2),
                     "risk_score": risk_score,
                     "daily_volume": daily_vol,
                     "safe_limit": safe_limit,
-                    "volatility": settings.arb_default_volatility, 
+                    "volatility": settings.arb_default_volatility,
                     "persistence": persistence,
                     "data_age_seconds": d_data.get("data_age_seconds", 0),
                     "confidence_score": d_data.get("confidence_score", 1.0),
-                    "detected_at": datetime.utcnow().isoformat()
+                    "detected_at": datetime.utcnow().isoformat(),
                 }
-                
+
                 # Protect core metrics from mutation
                 opportunity["ev_score"] = scorer.score_arbitrage(opportunity.copy())
                 if opportunity["ev_score"] > 0:
@@ -257,34 +289,40 @@ class ArbitrageScanner:
         return self.opportunities
 
     def store_opportunities(self) -> int:
-        if not self.opportunities: return 0
+        if not self.opportunities:
+            return 0
         with get_db_session() as db:
             db = cast(Session, db)
             # Clear old active opportunities
-            db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True).update({"is_active": False})
-            
+            db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True).update(
+                {"is_active": False}
+            )
+
             mappings = []
             for o in self.opportunities:
-                mappings.append({
-                    "item_id": o["item_id"], 
-                    "item_name": o["item_name"], 
-                    "source_city": o["source_city"], 
-                    "destination_city": o["destination_city"], 
-                    "buy_price": o["buy_price"], 
-                    "sell_price": o["sell_price"],
-                    "estimated_profit": o["estimated_profit"], 
-                    "estimated_margin": o["estimated_margin"],
-                    "risk_score": o.get("risk_score", 0), 
-                    "daily_volume": o.get("daily_volume", 0),
-                    "safe_limit": o.get("safe_limit", 1),
-                    "ev_score": o.get("ev_score", 0.0), 
-                    "volatility": o.get("volatility", 0.0), 
-                    "persistence": o.get("persistence", 1),
-                    "detected_at": datetime.utcnow(), 
-                    "is_active": True
-                })
-                
+                mappings.append(
+                    {
+                        "item_id": o["item_id"],
+                        "item_name": o["item_name"],
+                        "source_city": o["source_city"],
+                        "destination_city": o["destination_city"],
+                        "buy_price": o["buy_price"],
+                        "sell_price": o["sell_price"],
+                        "estimated_profit": o["estimated_profit"],
+                        "estimated_margin": o["estimated_margin"],
+                        "risk_score": o.get("risk_score", 0),
+                        "daily_volume": o.get("daily_volume", 0),
+                        "safe_limit": o.get("safe_limit", 1),
+                        "ev_score": o.get("ev_score", 0.0),
+                        "volatility": o.get("volatility", 0.0),
+                        "persistence": o.get("persistence", 1),
+                        "detected_at": datetime.utcnow(),
+                        "is_active": True,
+                    }
+                )
+
             if mappings:
                 from sqlalchemy import insert
+
                 db.execute(insert(ArbitrageOpportunity), mappings)
             return len(mappings)

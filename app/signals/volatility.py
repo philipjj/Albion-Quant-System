@@ -1,9 +1,12 @@
 """
 Volatility signal generation.
 """
+
 from datetime import datetime
-from app.signals.models import AlphaSignal
+
 from app.core.config import settings
+from app.signals.models import AlphaSignal
+
 
 def generate_volatility_signal(item_id: str, cluster_id: str, volatility: float) -> AlphaSignal:
     """
@@ -17,5 +20,5 @@ def generate_volatility_signal(item_id: str, cluster_id: str, volatility: float)
         confidence=settings.volatility_default_confidence,
         persistence_score=settings.volatility_default_persistence,
         manipulation_risk=settings.volatility_default_manipulation_risk,
-        timestamp=datetime.utcnow()
+        timestamp=datetime.utcnow(),
     )

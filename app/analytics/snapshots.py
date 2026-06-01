@@ -4,8 +4,11 @@ Provides historical lookback for arbitrage/crafting trend analysis.
 """
 
 from datetime import datetime
+
 from sqlalchemy.orm import Session
+
 from app.db.models import MarketPrice, MarketSnapshot
+
 
 def create_market_snapshot(db: Session) -> int:
     """
@@ -14,7 +17,7 @@ def create_market_snapshot(db: Session) -> int:
     """
     # 1. Archive to snapshots using set-based SQL (Efficient)
     from sqlalchemy import text
-    
+
     # We use a subquery to ensure we only capture the latest unique points per item/city/quality
     sql = text("""
         INSERT INTO market_snapshots (
@@ -32,7 +35,7 @@ def create_market_snapshot(db: Session) -> int:
             :now
         FROM market_prices
     """)
-    
+
     result = db.execute(sql, {"now": datetime.utcnow()})
-    
+
     return result.rowcount if result else 0

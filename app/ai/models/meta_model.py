@@ -13,7 +13,8 @@ class MetaModel:
     Predicts Meta Shifts using XGBoost.
     A meta shift implies sudden high usage in killboards combined with patch impact.
     """
-    def __init__(self, model_path='data/models/meta_model.pkl'):
+
+    def __init__(self, model_path="data/models/meta_model.pkl"):
         self.model_path = model_path
         self.model = None
         os.makedirs(os.path.dirname(self.model_path), exist_ok=True)
@@ -24,16 +25,23 @@ class MetaModel:
             raise ValueError("Training dataframe is empty.")
 
         features = [
-            'sell_price', 'buy_price', 'sell_sma_3', 'sell_sma_7',
-            'price_volatility', 'spread_pct', 'volume',
-            'killboard_usage', 'patch_impact', 'city_supply'
+            "sell_price",
+            "buy_price",
+            "sell_sma_3",
+            "sell_sma_7",
+            "price_volatility",
+            "spread_pct",
+            "volume",
+            "killboard_usage",
+            "patch_impact",
+            "city_supply",
         ]
 
         # Meta shift is likely if killboard usage is very high and patching happened
-        df['is_meta_shift'] = ((df['killboard_usage'] > 0.8) | (df['patch_impact'] > 0)).astype(int)
+        df["is_meta_shift"] = ((df["killboard_usage"] > 0.8) | (df["patch_impact"] > 0)).astype(int)
 
         X = df[features]
-        y = df['is_meta_shift']
+        y = df["is_meta_shift"]
 
         if len(np.unique(y)) < 2:
             print("[MetaModel] Not enough class variance to train. Skipping.")
@@ -55,9 +63,16 @@ class MetaModel:
             self.load()
 
         features = [
-            'sell_price', 'buy_price', 'sell_sma_3', 'sell_sma_7',
-            'price_volatility', 'spread_pct', 'volume',
-            'killboard_usage', 'patch_impact', 'city_supply'
+            "sell_price",
+            "buy_price",
+            "sell_sma_3",
+            "sell_sma_7",
+            "price_volatility",
+            "spread_pct",
+            "volume",
+            "killboard_usage",
+            "patch_impact",
+            "city_supply",
         ]
 
         return self.model.predict(df[features])
