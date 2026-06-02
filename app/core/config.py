@@ -236,6 +236,7 @@ class Settings(BaseSettings):
     snapshot_interval: int = Field(default=60, alias="SNAPSHOT_INTERVAL_MINUTES")
     volume_refresh_interval: int = Field(default=60, alias="VOLUME_REFRESH_INTERVAL_MINUTES")
     market_data_retention_days: int = Field(default=7, alias="MARKET_DATA_RETENTION_DAYS")
+    historical_data_retention_days: int = Field(default=30, alias="HISTORICAL_DATA_RETENTION_DAYS")
     alert_limit_per_cycle: int = Field(default=5, alias="ALERT_LIMIT_PER_CYCLE")
     scan_partitions: int = Field(
         default=6,

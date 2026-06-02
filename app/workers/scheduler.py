@@ -218,6 +218,8 @@ class QuantScheduler:
     async def job_cleanup(self):
         """Delete old records."""
         from datetime import timedelta
+        import os
+        import shutil
 
         from app.db.models import (
             ArbitrageOpportunity,
@@ -227,10 +229,11 @@ class QuantScheduler:
             MarketPrice,
             MarketSnapshot,
         )
-        from app.db.session import get_db_session
+        from app.db.session import get_db_session, engine
 
-        log.info("[SCHEDULER] Periodic Task: Database Cleanup")
+        log.info("[SCHEDULER] Periodic Task: Database & File Cleanup")
         try:
+            # 1. Clean up SQLAlchemy Database records
             cutoff = datetime.utcnow() - timedelta(days=settings.market_data_retention_days)
             with get_db_session() as db:
                 d1 = db.query(MarketPrice).filter(MarketPrice.captured_at < cutoff).delete()
@@ -240,6 +243,68 @@ class QuantScheduler:
                 d5 = db.query(CraftingOpportunity).filter(CraftingOpportunity.detected_at < cutoff).delete()
                 d6 = db.query(MarketHistory).filter(MarketHistory.timestamp < cutoff).delete()
             log.info(f"[SCHEDULER] Cleanup removed old records: MP:{d1} MS:{d2} BMS:{d3} Arb:{d4} Craft:{d5} Hist:{d6}")
+
+            # 2. Reclaim SQLite file space via VACUUM
+            if settings.database_url.startswith("sqlite"):
+                from sqlalchemy import text
+                try:
+                    with engine.connect() as conn:
+                        conn.execution_options(isolation_level="AUTOCOMMIT").execute(text("VACUUM"))
+                    log.info("[SCHEDULER] SQLite database VACUUM complete.")
+                except Exception as ve:
+                    log.warning(f"[SCHEDULER] SQLite database VACUUM failed (skipping): {ve}")
+
+            # 3. Clean up stale historical Parquet files
+            hist_path = "data/historical"
+            if os.path.exists(hist_path):
+                hist_cutoff = datetime.utcnow() - timedelta(days=settings.historical_data_retention_days)
+                deleted_folders = 0
+                for yr_dir in os.listdir(hist_path):
+                    yr_path = os.path.join(hist_path, yr_dir)
+                    if not os.path.isdir(yr_path) or not yr_dir.startswith("year="):
+                        continue
+                    try:
+                        year = int(yr_dir.split("=")[1])
+                    except ValueError:
+                        continue
+                    for mo_dir in os.listdir(yr_path):
+                        mo_path = os.path.join(yr_path, mo_dir)
+                        if not os.path.isdir(mo_path) or not mo_dir.startswith("month="):
+                            continue
+                        try:
+                            month = int(mo_dir.split("=")[1])
+                        except ValueError:
+                            continue
+                        for dy_dir in os.listdir(mo_path):
+                            dy_path = os.path.join(mo_path, dy_dir)
+                            if not os.path.isdir(dy_path) or not dy_dir.startswith("day="):
+                                continue
+                            try:
+                                day = int(dy_dir.split("=")[1])
+                                folder_date = datetime(year, month, day)
+                            except ValueError:
+                                continue
+                            if folder_date < hist_cutoff:
+                                log.info(f"[SCHEDULER] Deleting stale parquet partition: {dy_path}")
+                                try:
+                                    shutil.rmtree(dy_path)
+                                    deleted_folders += 1
+                                except Exception as e:
+                                    log.error(f"[SCHEDULER] Failed to delete {dy_path}: {e}")
+                        # Clean empty month directories
+                        try:
+                            if not os.listdir(mo_path):
+                                os.rmdir(mo_path)
+                        except Exception:
+                            pass
+                    # Clean empty year directories
+                    try:
+                        if not os.listdir(yr_path):
+                            os.rmdir(yr_path)
+                    except Exception:
+                        pass
+                if deleted_folders > 0:
+                    log.info(f"[SCHEDULER] Parquet historical cleanup complete: deleted {deleted_folders} stale partition(s).")
         except Exception as e:
             log.error(f"[SCHEDULER] Cleanup failed: {e}")
 
