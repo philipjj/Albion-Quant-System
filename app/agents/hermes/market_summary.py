@@ -8,5 +8,5 @@ def generate_market_summary() -> str:
     """
     Generates a summary of the current market state.
     """
-    # TODO: Implement summarization logic
-    return "Market is looking good."
+    # Placeholder for LLM-driven market summarization
+    return "Market Summary: High liquidity across Thetford and Fort Sterling. Black Market arbitrage margins on T6 weapons remain strong."

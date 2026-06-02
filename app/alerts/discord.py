@@ -34,6 +34,16 @@ def _risk_label(score: float) -> str:
     return "⚪ UNKNOWN"
 
 
+def fmt_k(n: float) -> str:
+    if n is None:
+        return "0"
+    if n >= 1000000:
+        return f"{n/1000000:.2f}M"
+    if n >= 1000:
+        return f"{n/1000:.1f}k".replace(".0k", "k")
+    return f"{n:,.0f}"
+
+
 def _get_category_group(item_id: str) -> str:
     id_upper = item_id.upper()
     if any(k in id_upper for k in ["POTION", "FOOD", "MEAL", "SOUP", "STEW"]):
@@ -120,28 +130,23 @@ class DiscordAlerter:
         # Color coding by opportunity quality
         dest_city = opp["destination_city"]
         if dest_city == "Black Market":
-            dest_city = "☠️ Black Market"
             color = 0x9B59B6  # Purple for BM
         elif margin > 30:
-            color = 0x57F287  # Discord green — strong margin
+            color = 0x57F287  # Discord green
         elif margin > 15:
-            color = 0xFEE75C  # Discord yellow — moderate
+            color = 0xFEE75C  # Discord yellow
         else:
-            color = 0xFFAA00  # Amber — thin margin
+            color = 0xFFAA00  # Amber
 
-        # Build description with visual margin bar
-        bar_filled = min(int(margin / 5), 10)
-        bar_empty = 10 - bar_filled
-        margin_bar = "█" * bar_filled + "░" * bar_empty
-
-        desc = f"**{margin:.1f}%** `{margin_bar}` margin"
+        desc = f"-# Margin: {margin:.1f}%\n"
         if opp.get("can_be_crafted"):
-            desc += f"\n🔨 Craftable at **{opp.get('craft_city')}** (Cost: **{opp.get('craft_cost', 0):,.0f}**)"
+            desc += f"-# Craftable at {opp.get('craft_city')} (Cost: {fmt_k(opp.get('craft_cost', 0))})\n"
         if opp.get("coverage_suspect"):
-            desc += "\n⚠️ Low volume — price may be stale"
+            desc += "-# ⚠️ Low volume\n"
+        desc += f"# {opp['source_city']} ➔ {dest_city}"
 
         embed = {
-            "title": f"⚔️ {badge} {opp['item_name']}",
+            "title": f"{badge} {opp['item_name']}",
             "description": desc,
             "color": color,
             "thumbnail": {
@@ -149,26 +154,19 @@ class DiscordAlerter:
             },
             "fields": [
                 {
-                    "name": "🏙️ ROUTE",
-                    "value": f"**{opp['source_city']}** ➔ {dest_city}",
+                    "name": "Trade Math",
+                    "value": f"Buy: **{fmt_k(opp['buy_price'])}** | Sell: **{fmt_k(opp['sell_price'])}** | Profit: **{fmt_k(opp['estimated_profit'])}**",
                     "inline": False,
                 },
-                {"name": "BUY", "value": f"`{opp['buy_price']:,.0f}`", "inline": True},
-                {"name": "SELL", "value": f"`{opp['sell_price']:,.0f}`", "inline": True},
                 {
-                    "name": "💰 PROFIT",
-                    "value": f"**{opp['estimated_profit']:,.0f}**",
+                    "name": "Safe Qty",
+                    "value": f"{opp.get('safe_limit', 0):,} / {opp.get('daily_volume', 0):,} vol",
                     "inline": True,
                 },
-                {
-                    "name": "🛡️ SAFE QTY",
-                    "value": f"**{opp.get('safe_limit', 0):,}** / {opp.get('daily_volume', 0):,} vol",
-                    "inline": True,
-                },
-                {"name": "🚀 EV", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
-                {"name": "⚖️ RISK", "value": _risk_label(opp.get("risk_score", 0)), "inline": True},
+                {"name": "EV", "value": f"{fmt_k(opp.get('ev_score', 0))}", "inline": True},
+                {"name": "Risk", "value": _risk_label(opp.get("risk_score", 0)), "inline": True},
             ],
-            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()} Market"},
+            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()}"},
             "timestamp": datetime.utcnow().isoformat(),
         }
 
@@ -182,14 +180,13 @@ class DiscordAlerter:
         # Color coding
         sell_city = opp.get("sell_city", "Any")
         if sell_city == "Black Market":
-            sell_city = "☠️ Black Market"
             color = 0x9B59B6
         elif margin > 25:
-            color = 0x57F287  # Green — strong
+            color = 0x57F287
         elif margin > 10:
-            color = 0xFEE75C  # Yellow — moderate
+            color = 0xFEE75C
         else:
-            color = 0xFFAA00  # Amber
+            color = 0xFFAA00
 
         # Build Crafting Path string with proper names
         details = opp.get("details", opp.get("ingredients", []))
@@ -201,11 +198,10 @@ class DiscordAlerter:
             if not mode:
                 mode = "BUY" if d.get("buy_city") else "CRAFT"
 
-            mode_icon = "🛒" if mode == "BUY" else "🔨"
+            mode_icon = "Buy" if mode == "BUY" else "Craft"
             raw_qty = d.get("quantity", 1)
             qty = int(raw_qty) if raw_qty == int(raw_qty) else raw_qty
 
-            # Use localized name from engine, fallback to readable item_id
             name = d.get("name")
             if not name or name == d.get("id") or name == d.get("item_id"):
                 raw_id = d.get("item_id", d.get("id", "Unknown"))
@@ -216,52 +212,42 @@ class DiscordAlerter:
 
             if is_returnable and rrr > 0:
                 net_price = price * (1.0 - rrr)
-                path_lines.append(f"{mode_icon} x{qty} {name}")
-                path_lines.append(f"   └ @{price:,.0f} ➔ Net: {net_price:,.0f}")
+                path_lines.append(f"- {qty}x **{name}** ({mode_icon} @ {fmt_k(price)} ➔ Net: {fmt_k(net_price)})")
             else:
-                path_lines.append(f"{mode_icon} x{qty} {name}")
-                path_lines.append(f"   └ @{price:,.0f}")
+                path_lines.append(f"- {qty}x **{name}** ({mode_icon} @ {fmt_k(price)})")
 
         path_str = "\n".join(path_lines)
 
-        # Build margin bar
-        bar_filled = min(int(margin / 5), 10)
-        bar_empty = 10 - bar_filled
-        margin_bar = "█" * bar_filled + "░" * bar_empty
-
-        desc = f"**{margin:.1f}%** `{margin_bar}` @ {opp['crafting_city']}"
+        desc = f"-# Margin: {margin:.1f}% @ {opp['crafting_city']}\n"
+        if opp.get("use_focus"):
+            desc += "-# • Focus: On\n"
         if opp.get("coverage_suspect"):
-            desc += "\n⚠️ Low volume — price may be stale"
+            desc += "-# ⚠️ Low volume\n"
+        desc += f"# ➔ {sell_city}"
 
         embed = {
-            "title": f"🔨 {badge} {opp['item_name']}",
+            "title": f"{badge} {opp['item_name']}",
             "description": desc,
             "color": color,
             "thumbnail": {
                 "url": item_icon_url(opp["item_id"], quality=opp.get("quality", 1), size=128)
             },
             "fields": [
-                {"name": "🚢 SELL AT", "value": f"**{sell_city}**", "inline": True},
-                {"name": "💰 PROFIT", "value": f"**{opp['profit']:,.0f}**", "inline": True},
-                {"name": "🛠️ COST", "value": f"**{opp.get('craft_cost', 0):,.0f}**", "inline": True},
                 {
-                    "name": "📈 VOL",
-                    "value": f"**{opp.get('daily_volume', 0):,}**/day",
-                    "inline": True,
+                    "name": "Trade Math",
+                    "value": f"Cost: **{fmt_k(opp.get('craft_cost', 0))}** | Sell: **{fmt_k(opp.get('sell_price', 0))}** | Profit: **{fmt_k(opp['profit'])}**",
+                    "inline": False,
                 },
-                {"name": "🚀 EV", "value": f"**{opp.get('ev_score', 0):,.0f}**", "inline": True},
+                {"name": "Vol/Day", "value": f"{opp.get('daily_volume', 0):,}", "inline": True},
+                {"name": "EV", "value": f"{fmt_k(opp.get('ev_score', 0))}", "inline": True},
+                {"name": "RRR", "value": f"{opp.get('rrr_used', 0.152) * 100:.1f}%", "inline": True},
                 {
-                    "name": "♻️ RRR",
-                    "value": f"**{opp.get('rrr_used', 0.152) * 100:.1f}%** {'🔮 Focus' if opp.get('use_focus') else ''}",
-                    "inline": True,
-                },
-                {
-                    "name": "📜 INGREDIENTS",
-                    "value": f"```\n{path_str[:900]}\n```" if path_str else "No details",
+                    "name": "Ingredients",
+                    "value": f"{path_str[:1000]}" if path_str else "No details",
                     "inline": False,
                 },
             ],
-            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()} Market"},
+            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()}"},
             "timestamp": datetime.utcnow().isoformat(),
         }
 

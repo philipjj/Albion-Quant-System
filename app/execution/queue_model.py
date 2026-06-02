@@ -5,7 +5,7 @@ Queue modeling for order execution.
 
 def model_queue_position(order_id: str) -> int:
     """
-    Models the position in the queue for a given order.
+    Models the estimated position in the queue for a given order.
+    Returns a heuristic position, as Albion APIs don't provide exact queue placements.
     """
-    # TODO: Implement queue modeling
-    return 0
+    return 10

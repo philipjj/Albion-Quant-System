@@ -83,8 +83,15 @@ class Scorer:
 
         transport_cost = (dist * weight * 250) * risk_multiplier
 
-        # [v3.1] Strictly unit-based expected value to avoid Alpha hallucinations
-        erph = (net_profit * fill_prob * confidence) - transport_cost
+        # Capital At Risk Premium (Expected loss from ganks)
+        capital_risk_premium = 0.0
+        if is_dangerous:
+            buy_price = opp.get("buy_price", 0)
+            # Assume a baseline 5% gank rate on lethal routes. Actuarial cost is 5% of the capital invested.
+            capital_risk_premium = buy_price * 0.05
+
+        # Strictly unit-based expected value, now heavily penalizing high-capital / high-risk
+        erph = (net_profit * fill_prob * confidence) - transport_cost - capital_risk_premium
 
         # Apply meta and patch multipliers
         erph *= self._get_meta_multipliers(opp)

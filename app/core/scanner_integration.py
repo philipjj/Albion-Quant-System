@@ -162,6 +162,9 @@ class UnifiedScanner:
                     "_ts": bm.captured_at,
                 }
 
+        from app.core.market_utils import apply_enchantment_ceiling_crafting
+        apply_enchantment_ceiling_crafting(prices)
+
         return prices
 
     def _load_item_metadata(self, db: Session) -> tuple[dict, dict, dict]:

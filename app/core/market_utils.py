@@ -156,3 +156,70 @@ def calculate_z_score(current_price: float, historical_prices: list[float]) -> f
     if std_dev == 0:
         return 0.0
     return (current_price - mean) / std_dev
+
+
+def apply_enchantment_ceiling_scanner(prices: dict) -> None:
+    """
+    Applies price ceiling so lower enchantments cannot be priced higher than higher enchantments.
+    prices format: dict[(item_id, quality)][city] = {"sell_price_min": X, ...}
+    """
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for (item_id, quality), city_data in prices.items():
+        if '@' in item_id:
+            base_item, ench = item_id.split('@')
+            try: ench_level = int(ench)
+            except ValueError: ench_level = 0
+        else:
+            base_item = item_id
+            ench_level = 0
+        for city, p_data in city_data.items():
+            grouped[(base_item, quality, city)].append((ench_level, item_id, p_data))
+            
+    for key, items in grouped.items():
+        if len(items) <= 1:
+            continue
+        items.sort(key=lambda x: x[0], reverse=True)
+        current_ceiling = float('inf')
+        for ench_level, item_id, p_data in items:
+            sell = p_data.get("sell_price_min", 0)
+            if sell > 0:
+                if sell >= current_ceiling:
+                    new_price = max(1, int(current_ceiling - 1))
+                    p_data["sell_price_min"] = new_price
+                    current_ceiling = new_price
+                else:
+                    current_ceiling = sell
+
+def apply_enchantment_ceiling_crafting(prices: dict) -> None:
+    """
+    prices format: dict[item_id][city][quality] = {"sell_price_min": X, ...}
+    """
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for item_id, city_data in prices.items():
+        if '@' in item_id:
+            base_item, ench = item_id.split('@')
+            try: ench_level = int(ench)
+            except ValueError: ench_level = 0
+        else:
+            base_item = item_id
+            ench_level = 0
+        for city, q_data in city_data.items():
+            for quality, p_data in q_data.items():
+                grouped[(base_item, city, quality)].append((ench_level, item_id, p_data))
+                
+    for key, items in grouped.items():
+        if len(items) <= 1:
+            continue
+        items.sort(key=lambda x: x[0], reverse=True)
+        current_ceiling = float('inf')
+        for ench_level, item_id, p_data in items:
+            sell = p_data.get("sell_price_min", 0)
+            if sell > 0:
+                if sell >= current_ceiling:
+                    new_price = max(1, int(current_ceiling - 1))
+                    p_data["sell_price_min"] = new_price
+                    current_ceiling = new_price
+                else:
+                    current_ceiling = sell

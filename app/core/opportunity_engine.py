@@ -386,6 +386,24 @@ class OpportunityScanner:
             p.get("data_age_seconds", 9999),
         )
 
+    def _dynamic_min_margin(self, buy_price: float, is_dangerous: bool, default_min: float) -> float:
+        """Dynamic minimum margin curve for high-risk routes."""
+        if not is_dangerous:
+            return default_min
+
+        LOW_PRICE = 70_000
+        HIGH_PRICE = 500_000
+        MIN_MARGIN = 25.0
+        MAX_MARGIN = 50.0
+
+        if buy_price <= LOW_PRICE:
+            return MIN_MARGIN
+        if buy_price >= HIGH_PRICE:
+            return MAX_MARGIN
+
+        t = (buy_price - LOW_PRICE) / (HIGH_PRICE - LOW_PRICE)
+        return MIN_MARGIN + t * (MAX_MARGIN - MIN_MARGIN)
+
     def _score_bm(self, opp: BMOpportunity) -> float:
         """
         Rank BM opportunities.
@@ -395,7 +413,12 @@ class OpportunityScanner:
         freshness = max(0.1, 1.0 - opp.data_age_bm / MAX_AGE_BM_SECONDS)
         vol_score = min(1.0, opp.daily_volume / 50.0) if opp.daily_volume > 0 else 0.2
         margin_bonus = min(2.0, opp.profit_pct / 20.0)  # 20% margin = 1.0 multiplier
-        return round(opp.effective_profit * freshness * vol_score * margin_bonus, 2)
+        
+        # Capital At Risk Premium (5% expected loss from ganks)
+        capital_risk_premium = opp.buy_price * 0.05
+        
+        score = (opp.effective_profit * freshness * vol_score * margin_bonus) - capital_risk_premium
+        return round(max(0.0, score), 2)
 
     def _score_craft(self, opp: CraftingOpportunity) -> float:
         freshness = max(0.1, 1.0 - opp.data_age_sell / MAX_AGE_CRAFTING_SECONDS)
@@ -408,7 +431,11 @@ class OpportunityScanner:
         freshness = min(freshness_buy, freshness_sell)
         vol_score = min(1.0, opp.daily_volume / 30.0) if opp.daily_volume > 0 else 0.2
         danger_penalty = 0.5 if opp.is_dangerous_route else 1.0
-        return round(opp.net_profit * freshness * vol_score * danger_penalty, 2)
+        
+        capital_risk_premium = opp.buy_price * 0.05 if opp.is_dangerous_route else 0.0
+        
+        score = (opp.net_profit * freshness * vol_score * danger_penalty) - capital_risk_premium
+        return round(max(0.0, score), 2)
 
     # ── Public scan methods ─────────────────────────────────────────────────
 
@@ -462,7 +489,9 @@ class OpportunityScanner:
                 profit_pct = (net_profit / buy_price) * 100
                 if net_profit < self.min_bm_profit:
                     continue
-                if profit_pct < self.min_bm_profit_pct:
+                    
+                dynamic_min_pct = self._dynamic_min_margin(buy_price, is_dangerous=True, default_min=self.min_bm_profit_pct)
+                if profit_pct < dynamic_min_pct:
                     continue
 
                 # Check if item can be crafted cheaper
@@ -733,7 +762,11 @@ class OpportunityScanner:
                         if net_profit < self.min_arb_profit:
                             _diag["low_profit"] += 1
                             continue
-                        if pct < self.min_arb_profit_pct:
+                            
+                        is_dangerous = dest_city in DANGEROUS_DESTINATIONS
+                        dynamic_min_pct = self._dynamic_min_margin(src_sell, is_dangerous=is_dangerous, default_min=self.min_arb_profit_pct)
+                        
+                        if pct < dynamic_min_pct:
                             _diag["low_pct"] += 1
                             continue
 

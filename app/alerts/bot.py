@@ -40,12 +40,8 @@ async def on_ready():
                 embed = discord.Embed(
                     title="",
                     description=(
-                        "```ansi\n"
-                        "\x1b[1;33m╔══════════════════════════════════════╗\n"
-                        "║     ALBION QUANT SYSTEM  v3.2        ║\n"
-                        "║         ⏸️  STANDBY MODE              ║\n"
-                        "╚══════════════════════════════════════╝\n"
-                        "\x1b[0m```"
+                        "# ALBION QUANT SYSTEM v3.2\n"
+                        "-# ⏸️ STANDBY MODE"
                     ),
                     color=0x2B2D31,  # Discord dark embed
                 )
@@ -173,8 +169,11 @@ async def price_cmd(ctx, *, query: str):
         enchant_override = int(enchant_match.group(1))
         query = query[: enchant_match.start()].strip()
 
-    def fmt_price(p):
-        return f"{int(p):,}" if p and int(p) > 0 else "—"
+    def fmt_k(n):
+        if n is None or n <= 0: return "—"
+        if n >= 1000000: return f"{n/1000000:.2f}M"
+        if n >= 1000: return f"{n/1000:.1f}k".replace(".0k", "k")
+        return f"{n:,.0f}"
 
     def fmt_age(sec):
         if sec is None:
@@ -239,25 +238,22 @@ async def price_cmd(ctx, *, query: str):
             )
             city_rows[city] = row
 
-        lines = []
+        embed = discord.Embed(
+            title=f"{item.name}",
+            description=f"-# `{item.item_id}` · T{item.tier}.{item.enchant} · {QUALITY_NAMES.get(quality, 'Unknown')}",
+            color=0x5865F2,
+        )
         for city in ROYAL_CITIES:
             row = city_rows[city]
-            abbr = CITY_SHORT[city]
             if row and (row.sell_price_min or row.buy_price_max):
-                sell = fmt_price(row.sell_price_min)
-                buy = fmt_price(row.buy_price_max)
+                sell = fmt_k(row.sell_price_min)
+                buy = fmt_k(row.buy_price_max)
                 vol = row.volume_24h or 0
                 age = fmt_age(row.data_age_seconds)
-                lines.append(f"`{abbr}` Sell `{sell}` · Buy `{buy}` · Vol `{vol}` · `{age}` ago")
+                embed.add_field(name=city, value=f"Buy: **{sell}**\nSell: **{buy}**\nVol: {vol} ({age})", inline=True)
             else:
-                lines.append(f"`{abbr}` — no data")
-
-        embed = discord.Embed(
-            title=f"📊 {item.name}",
-            description=f"`{item.item_id}` · T{item.tier}.{item.enchant} · {QUALITY_NAMES.get(quality, 'Unknown')}",
-            color=discord.Color.blue(),
-        )
-        embed.add_field(name="Royal City Prices", value="\n".join(lines), inline=False)
+                embed.add_field(name=city, value="No data", inline=True)
+                
         embed.set_thumbnail(url=item_icon_url(item.item_id, quality=quality, size=64))
         embed.set_footer(
             text="Sell = cheapest sell order (what you pay) · Buy = highest buy order (instant sell)"
@@ -412,11 +408,8 @@ async def start(ctx):
     launch_embed = discord.Embed(
         title="",
         description=(
-            "```ansi\n"
-            "\x1b[1;32m╔══════════════════════════════════════╗\n"
-            "║       🚀  LAUNCH SEQUENCE            ║\n"
-            "╚══════════════════════════════════════╝\n"
-            "\x1b[0m```"
+            "# ALBION QUANT SYSTEM v3.2\n"
+            "-# 🚀 LAUNCH SEQUENCE"
         ),
         color=0x57F287,  # Discord green
     )
@@ -448,11 +441,8 @@ async def start(ctx):
     active_embed = discord.Embed(
         title="",
         description=(
-            "```ansi\n"
-            "\x1b[1;32m╔══════════════════════════════════════╗\n"
-            "║      ✅  ENGINE ONLINE                ║\n"
-            "╚══════════════════════════════════════╝\n"
-            "\x1b[0m```"
+            "# ALBION QUANT SYSTEM v3.2\n"
+            "-# ✅ ENGINE ONLINE"
         ),
         color=0x57F287,
     )
@@ -499,11 +489,8 @@ async def stop(ctx):
     embed = discord.Embed(
         title="",
         description=(
-            "```ansi\n"
-            "\x1b[1;31m╔══════════════════════════════════════╗\n"
-            "║       ⏸️  ENGINE PAUSED               ║\n"
-            "╚══════════════════════════════════════╝\n"
-            "\x1b[0m```"
+            "# ALBION QUANT SYSTEM v3.2\n"
+            "-# ⏸️ ENGINE PAUSED"
         ),
         color=0xED4245,  # Discord red
     )
@@ -711,12 +698,18 @@ async def caravan_cmd(ctx, source: str, dest: str, weight: float = 1000.0):
         color=discord.Color.gold(),
     )
 
+    desc_lines = []
     for item in res["items"][:15]:
-        embed.add_field(
-            name=f"{item['quantity']}x {item['item_name']}",
-            value=f"Profit: {int(item['total_profit']):,} ({int(item['profit_per_kg']):,}/kg) • Cost: {int(item['total_cost']):,}",
-            inline=False,
-        )
+        def fmt_k(n):
+            if n is None or n <= 0: return "0"
+            if n >= 1000000: return f"{n/1000000:.2f}M"
+            if n >= 1000: return f"{n/1000:.1f}k".replace(".0k", "k")
+            return f"{n:,.0f}"
+            
+        desc_lines.append(f"- **{item['quantity']}x {item['item_name']}** — Profit: **{fmt_k(item['total_profit'])}** (*{fmt_k(item['profit_per_kg'])}/kg*)")
+        
+    embed.add_field(name="Pack List", value="\n".join(desc_lines), inline=False)
+    
     if len(res["items"]) > 15:
         embed.set_footer(text=f"...and {len(res['items']) - 15} more items.")
 

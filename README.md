@@ -54,18 +54,18 @@ $$BEP = (0.7 \times \text{SellMin}) + (0.3 \times \text{BuyMax})$$
 AQS/
 ├── app/
 │   ├── alerts/         # Discord Bot & Notification Logic
-│   ├── arbitrage/      # Cross-city Transport Scanner
-│   ├── crafting/       # Recursive Crafting Cost Optimizer
-│   ├── core/           
-│   │   ├── constants.py# Game Mechanics (RRR, Taxes, Station Fees)
+│   ├── arbitrage/      # Caravan Transport Route Optimizer
+│   ├── core/           # Core Engines & Logic
+│   │   ├── opportunity_engine.py # Unified BM, Crafting & Arb Scanner
+│   │   ├── scanner_integration.py# Scanner DB Integration
 │   │   ├── scoring.py  # The Alpha Ranker (Scientific Scoring)
-│   │   └── market_utils# Price Blending & Statistical Helpers
+│   │   └── market_utils.py # Dynamic Margin & Price Ceiling Helpers
 │   ├── db/             # SQLAlchemy Models & Migrations
-│   └── ingestion/      # Multi-endpoint Market Collector
-├── workers/            # Background Schedulers & Jobs
-├── data/               # Persistent SQLite & JSON Storage
+│   ├── ingestion/      # Multi-endpoint Market Collector
+│   └── workers/        # Asyncio Schedulers & Background Jobs
+├── data/               # Persistent Storage
 ├── main.py             # System Entry Point
-└── STACKMAP.md         # Developer & CI/CD Documentation
+└── ROADMAP.md          # Long-term Architecture Vision
 ```
 
 ---

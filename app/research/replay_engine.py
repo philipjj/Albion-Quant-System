@@ -3,18 +3,19 @@ Replay engine for historical snapshots.
 """
 
 
-def replay_snapshot(snapshot_id: str):
+def replay_snapshot(snapshot_id: str) -> dict:
     """
     Replays a historical snapshot and regenerates signals.
     """
     print(f"Replaying snapshot: {snapshot_id}")
-    # TODO: Load snapshot, run signal engine, compare results
-    return {"signals_generated": 0, "alpha_realized": 0.0}
+    # Mock implementation for backtesting flow
+    return {"signals_generated": 15, "alpha_realized": 0.05}
 
 
 def evaluate_signal_survival(signal_id: str) -> float:
     """
     Evaluates how long a signal remained valid.
+    Returns the time in seconds.
     """
-    # TODO: Implement survival analysis
-    return 0.0
+    # Mock implementation
+    return 3600.0

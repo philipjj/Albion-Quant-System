@@ -10,11 +10,9 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from app.alerts.discord import DiscordAlerter
-from app.arbitrage.scanner import ArbitrageScanner
 from app.core.config import settings
 from app.core.logging import log
 from app.core.scanner_integration import UnifiedScanner
-from app.crafting.engine import CraftingEngine
 from app.db.models import PatchEventModel
 from app.db.session import get_db_session
 from app.ingestion.collector import MarketCollector
@@ -33,8 +31,6 @@ class QuantScheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         self.collector = MarketCollector()
-        self.arb_scanner = ArbitrageScanner()
-        self.craft_engine = CraftingEngine()
         self.unified_scanner = UnifiedScanner()
         self.alerter = DiscordAlerter()
         self._is_running = False
@@ -58,56 +54,7 @@ class QuantScheduler:
         self.impact_forecaster = PatchImpactForecaster()
         self.loadout_tracker = LoadoutTracker()
 
-    async def job_collect_prices(self):
-        """Collect market prices from API (High Frequency)."""
-        log.info("[SCHEDULER] Step 1: Syncing Market Prices...")
-        try:
-            await self.collector.collect_prices()
-            return True
-        except asyncio.CancelledError:
-            log.info("[SCHEDULER] Price collection cancelled.")
-            return False
-        except Exception:
-            import traceback
 
-            log.error(f"[SCHEDULER] Price collection failed:\n{traceback.format_exc()}")
-            return False
-
-    async def job_refresh_volumes(self):
-        """Refresh historical volumes (Low Frequency)."""
-        log.info("[SCHEDULER] Periodic Task: Refreshing Market Volumes")
-        try:
-            await self.collector.collect_volumes()
-        except Exception as e:
-            log.error(f"[SCHEDULER] Volume refresh failed: {e}")
-
-    async def job_compute_arbitrage(self):
-        """Find inter-city arbitrage opportunities."""
-        log.info("[SCHEDULER] Step 2: Running Arbitrage Analysis...")
-        try:
-            opps = await self.arb_scanner.scan(fast_sell=False)
-            self.arb_scanner.store_opportunities()
-            if opps:
-                await self.alerter.send_batch_alerts(
-                    opps, [], arb_limit=settings.alert_limit_per_cycle
-                )
-            log.info(f"[SCHEDULER] Arbitrage Complete: {len(opps)} opportunities found")
-        except Exception as e:
-            log.error(f"[SCHEDULER] Arbitrage failed: {e}")
-
-    async def job_compute_crafting(self):
-        """Find profitable crafting opportunities."""
-        log.info("[SCHEDULER] Step 3: Running Crafting ROI Analysis...")
-        try:
-            opps = await self.craft_engine.scan()
-            self.craft_engine.store_opportunities()
-            if opps:
-                await self.alerter.send_batch_alerts(
-                    [], opps, craft_limit=settings.alert_limit_per_cycle
-                )
-            log.info(f"[SCHEDULER] Crafting Complete: {len(opps)} opportunities found")
-        except Exception as e:
-            log.error(f"[SCHEDULER] Crafting failed: {e}")
 
     async def master_cycle(self):
         """
@@ -272,15 +219,27 @@ class QuantScheduler:
         """Delete old records."""
         from datetime import timedelta
 
-        from app.db.models import MarketPrice
+        from app.db.models import (
+            ArbitrageOpportunity,
+            BlackMarketSnapshot,
+            CraftingOpportunity,
+            MarketHistory,
+            MarketPrice,
+            MarketSnapshot,
+        )
         from app.db.session import get_db_session
 
         log.info("[SCHEDULER] Periodic Task: Database Cleanup")
         try:
             cutoff = datetime.utcnow() - timedelta(days=settings.market_data_retention_days)
             with get_db_session() as db:
-                deleted = db.query(MarketPrice).filter(MarketPrice.captured_at < cutoff).delete()
-            log.info(f"[SCHEDULER] Cleanup: removed {deleted} old records")
+                d1 = db.query(MarketPrice).filter(MarketPrice.captured_at < cutoff).delete()
+                d2 = db.query(MarketSnapshot).filter(MarketSnapshot.captured_at < cutoff).delete()
+                d3 = db.query(BlackMarketSnapshot).filter(BlackMarketSnapshot.captured_at < cutoff).delete()
+                d4 = db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.detected_at < cutoff).delete()
+                d5 = db.query(CraftingOpportunity).filter(CraftingOpportunity.detected_at < cutoff).delete()
+                d6 = db.query(MarketHistory).filter(MarketHistory.timestamp < cutoff).delete()
+            log.info(f"[SCHEDULER] Cleanup removed old records: MP:{d1} MS:{d2} BMS:{d3} Arb:{d4} Craft:{d5} Hist:{d6}")
         except Exception as e:
             log.error(f"[SCHEDULER] Cleanup failed: {e}")
 
