@@ -243,6 +243,14 @@ class QuantScheduler:
         except Exception as e:
             log.error(f"[SCHEDULER] Cleanup failed: {e}")
 
+    async def job_refresh_volumes(self):
+        """Periodic volume sync (Task 5)."""
+        log.info("[SCHEDULER] Periodic Task: Market Volume Refresh")
+        try:
+            await self.collector.collect_volumes()
+        except Exception as e:
+            log.error(f"[SCHEDULER] Volume refresh failed: {e}")
+
     # Phase 15 Jobs
     async def job_meta_scan(self):
         """Scan PvP meta and update scores."""

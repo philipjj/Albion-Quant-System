@@ -147,7 +147,7 @@ def test_bm_scan_finds_profitable_flip(scanner):
             "Black Market": {
                 1: {
                     "sell_price_min": 0,
-                    "buy_price_max": 700_000,  # BM pays 700k, cheapest buy is 480k → 220k profit
+                    "buy_price_max": 800_000,  # BM pays 800k, cheapest buy is 480k → 320k profit
                     "volume_24h": 1,
                     "data_age_seconds": 500,
                     "is_black_market": True,
@@ -164,7 +164,7 @@ def test_bm_scan_finds_profitable_flip(scanner):
     best = opps[0]
     assert best.item_id == "T6_MAIN_SWORD"
     assert best.buy_city == "Bridgewatch"  # Cheapest city
-    assert best.net_profit == 700_000 - 480_000
+    assert best.net_profit == 800_000 - 480_000
     assert best.profit_pct > 0
 
 

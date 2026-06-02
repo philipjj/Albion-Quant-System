@@ -174,7 +174,7 @@ async def cmd_init():
 
     init_db()
     parser = StaticDataParser()
-    await parser.full_rebuild()
+    await parser.run_full_pipeline()
     log.info("Initialization complete.")
 
 
@@ -182,15 +182,24 @@ async def cmd_collect():
     from app.ingestion.collector import MarketCollector
 
     collector = MarketCollector()
-    await collector.collect_all_prices()
+    await collector.collect_prices()
 
 
 async def cmd_scan():
-    from app.arbitrage.scanner import ArbitrageScanner
+    from app.core.scanner_integration import UnifiedScanner
+    from app.db.session import get_db_session
 
-    scanner = ArbitrageScanner()
-    await scanner.scan()
-    scanner.store_opportunities()
+    log.info("=" * 60)
+    log.info("AQS UNIFIED MARKET SCAN")
+    log.info("=" * 60)
+
+    scanner = UnifiedScanner()
+    bm, crafting, arb = await scanner.scan_all(scan_bm=True)
+
+    with get_db_session() as db:
+        scanner.save_opportunities(db, bm, crafting, arb)
+
+    log.info(f"Scan complete: Saved {len(bm)} BM, {len(crafting)} Crafting, and {len(arb)} Arbitrage opportunities to DB.")
 
 
 if __name__ == "__main__":

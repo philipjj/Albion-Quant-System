@@ -351,3 +351,92 @@ class UnifiedScanner:
             "category": category,
             "detected_at": datetime.utcnow().isoformat(),
         }
+
+    def save_opportunities(self, db: Session, bm_opps: list[dict], craft_opps: list[dict], arb_opps: list[dict]):
+        """Save opportunities to the database, marking old ones as inactive."""
+        from app.db.models import ArbitrageOpportunity, CraftingOpportunity
+        import json
+
+        # Deactivate old ones
+        db.query(ArbitrageOpportunity).filter(ArbitrageOpportunity.is_active == True).update({"is_active": False})
+        db.query(CraftingOpportunity).filter(CraftingOpportunity.is_active == True).update({"is_active": False})
+        db.commit()
+
+        # Save new Arbitrage & BM opportunities
+        for o in arb_opps:
+            db.add(ArbitrageOpportunity(
+                item_id=o["item_id"],
+                item_name=o["item_name"],
+                source_city=o["source_city"],
+                destination_city=o["destination_city"],
+                buy_price=o["buy_price"],
+                sell_price=o["sell_price"],
+                estimated_profit=float(o["estimated_profit"]),
+                estimated_margin=float(o["estimated_margin"]),
+                risk_score=float(o["risk_score"]),
+                daily_volume=int(o["daily_volume"]),
+                volume_source=o.get("volume_source", "ESTIMATED"),
+                safe_limit=o.get("safe_limit", 1),
+                current_supply=o.get("current_supply", 0),
+                market_gap=o.get("market_gap", 0),
+                expected_hourly_profit=o.get("expected_hourly_profit", 0.0),
+                ev_score=float(o["ev_score"]),
+                volatility=o.get("volatility", 0.0),
+                z_score=o.get("z_score", 0.0),
+                persistence=o.get("persistence", 1),
+                is_active=True
+            ))
+
+        for o in bm_opps:
+            db.add(ArbitrageOpportunity(
+                item_id=o["item_id"],
+                item_name=o["item_name"],
+                source_city=o["source_city"],
+                destination_city=o["destination_city"],
+                buy_price=o["buy_price"],
+                sell_price=o["sell_price"],
+                estimated_profit=float(o["estimated_profit"]),
+                estimated_margin=float(o["estimated_margin"]),
+                risk_score=float(o["risk_score"]),
+                daily_volume=int(o["daily_volume"]),
+                volume_source=o.get("volume_source", "ESTIMATED"),
+                safe_limit=o.get("safe_limit", 1),
+                current_supply=o.get("current_supply", 0),
+                market_gap=o.get("market_gap", 0),
+                expected_hourly_profit=o.get("expected_hourly_profit", 0.0),
+                ev_score=float(o["ev_score"]),
+                volatility=o.get("volatility", 0.0),
+                z_score=o.get("z_score", 0.0),
+                persistence=o.get("persistence", 1),
+                is_active=True
+            ))
+
+        # Save new Crafting opportunities
+        for o in craft_opps:
+            db.add(CraftingOpportunity(
+                item_id=o["item_id"],
+                item_name=o["item_name"],
+                crafting_city=o["crafting_city"],
+                sell_city=o["sell_city"],
+                craft_cost=float(o["craft_cost"]),
+                sell_price=float(o["sell_price"]),
+                profit=float(o["profit"]),
+                profit_margin=float(o["profit_margin"]),
+                focus_cost=o.get("focus_cost", 0.0),
+                profit_per_focus=o.get("profit_per_focus", 0.0),
+                silver_per_nutrition=o.get("silver_per_nutrition", 0.0),
+                journal_profit=o.get("journal_profit", 0.0),
+                daily_volume=int(o["daily_volume"]),
+                volume_source=o.get("volume_source", "ESTIMATED"),
+                safe_limit=o.get("safe_limit", 1),
+                current_supply=o.get("current_supply", 0),
+                market_gap=o.get("market_gap", 0),
+                ev_score=float(o["ev_score"]),
+                volatility=o.get("volatility", 0.0),
+                persistence=o.get("persistence", 1),
+                ingredients_json=json.dumps(o.get("ingredients", [])),
+                decision_log=o.get("decision_log", ""),
+                is_active=True
+            ))
+
+        db.commit()

@@ -32,6 +32,8 @@ PARQUET_DIR = RUNTIME_DIR / "parquet"
 REPORTS_DIR = RUNTIME_DIR / "reports"
 SNAPSHOTS_DIR = RUNTIME_DIR / "snapshots"
 TMP_DIR = RUNTIME_DIR / "tmp"
+RAW_DIR = RUNTIME_DIR / "raw"
+PARSED_DIR = PROJECT_ROOT / "app" / "staticdata"
 
 # Ensure runtime directories exist
 for d in [
@@ -44,6 +46,8 @@ for d in [
     REPORTS_DIR,
     SNAPSHOTS_DIR,
     TMP_DIR,
+    RAW_DIR,
+    PARSED_DIR,
 ]:
     d.mkdir(parents=True, exist_ok=True)
 
