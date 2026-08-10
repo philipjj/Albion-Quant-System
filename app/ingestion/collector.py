@@ -130,7 +130,7 @@ class MarketCollector:
                     "buy_price_max_date": parse_timestamp(item.get("buy_price_max_date")),
                     "quality": item.get("quality", 1),
                     "data_age_seconds": age_sec,
-                    "volume_24h": 1,  # Replaced 0 with 1 to prevent downstream fallbacks
+                    "volume_24h": item.get("volume_24h"),  # None until collect_volumes populates it
                     "coverage_suspect": False,
                 }
             )
@@ -439,7 +439,7 @@ class MarketCollector:
                 for item in real_bm_raw:
                     info = item_info.get(item["item_id"], {})
                     if not is_market_data_fresh(
-                        item["item_id"], item["data_age_seconds"], tier=info.get("tier", 4)
+                        item["item_id"], item["data_age_seconds"], volume_24h=item.get("volume_24h"), tier=info.get("tier", 4)
                     ):
                         continue
                     item["captured_at"] = datetime.utcnow()
@@ -462,7 +462,7 @@ class MarketCollector:
                     for r in city_raw:
                         info = item_info.get(r["item_id"], {})
                         if not is_market_data_fresh(
-                            r["item_id"], r["data_age_seconds"], tier=info.get("tier", 4)
+                            r["item_id"], r["data_age_seconds"], volume_24h=r.get("volume_24h"), tier=info.get("tier", 4)
                         ):
                             continue
 
@@ -598,7 +598,7 @@ class MarketCollector:
                 for item in real_bm_raw:
                     info = item_info.get(item["item_id"], {})
                     if not is_market_data_fresh(
-                        item["item_id"], item["data_age_seconds"], tier=info.get("tier", 4)
+                        item["item_id"], item["data_age_seconds"], volume_24h=item.get("volume_24h"), tier=info.get("tier", 4)
                     ):
                         continue
                     item["captured_at"] = datetime.utcnow()
@@ -620,7 +620,7 @@ class MarketCollector:
                     for r in city_raw:
                         info = item_info.get(r["item_id"], {})
                         if not is_market_data_fresh(
-                            r["item_id"], r["data_age_seconds"], tier=info.get("tier", 4)
+                            r["item_id"], r["data_age_seconds"], volume_24h=r.get("volume_24h"), tier=info.get("tier", 4)
                         ):
                             continue
                         r["captured_at"] = datetime.utcnow()
@@ -655,6 +655,9 @@ class MarketCollector:
                     await self.repository.save_snapshots(snapshots)
                     self.parquet_storage.save_snapshots(snapshots)
                     await asyncio.gather(*(self.redis_cache.set_hot_snapshot(s) for s in snapshots))
+
+                    # Process mean-reversion & cross-city signals
+                    await self.process_signals(snapshots)
 
                 # Mandatory Pacing
                 await asyncio.sleep(0.5)

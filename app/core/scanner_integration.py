@@ -45,15 +45,21 @@ class UnifiedScanner:
         min_bm_profit: int = 30_000,
         min_craft_profit: int = 5_000,
         min_arb_profit: int = 1_000,
+        min_roi: float = 2.0,
+        default_trade_volume: int = 1,
     ):
         self.default_min_bm_profit = min_bm_profit
         self.default_min_craft_profit = min_craft_profit
         self.default_min_arb_profit = min_arb_profit
+        self.min_roi = min_roi
+        self.default_trade_volume = default_trade_volume
 
         self.engine = OpportunityScanner(
             min_bm_profit=min_bm_profit,
             min_craft_profit=min_craft_profit,
             min_arb_profit=min_arb_profit,
+            min_roi=min_roi,
+            default_trade_volume=default_trade_volume,
             use_focus=use_focus,
             premium=premium,
         )
