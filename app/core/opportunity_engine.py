@@ -1061,6 +1061,7 @@ class OpportunityScanner:
                         material_cost_net += ing["line_cost"]
 
                 # Station fee: nutrition cost = item_val * 0.1125, silver fee = (nutrition * station_tax) / 100
+                item_val = item_values.get(item_id, 0.0)
                 station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
                 station_fee = calculate_station_fee(item_val, station_tax)
 
@@ -1442,6 +1443,7 @@ class OpportunityScanner:
                     
                 # 3. Calculate net costs
                 material_cost_net = total_material_gross * (1.0 - best_rrr)
+                item_value = values.get(item_id, 0.0)
                 station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
                 station_fee = calculate_station_fee(item_value, station_tax)
                 total_cost = material_cost_net + station_fee
