@@ -88,7 +88,7 @@ def calculate_rrr(lpb: float) -> float:
 BASE_PRODUCTION_BONUS = 0.18        # 18% base LPB in Royal Cities
 CRAFTING_SPECIALTY_LPB = 0.15       # +15% LPB for matching craft category
 REFINING_SPECIALTY_LPB = 0.40       # +40% LPB for matching refining resource
-FOCUS_CRAFTING_LPB = 1.00           # +100% LPB with Focus
+FOCUS_CRAFTING_LPB = 0.59           # +59% LPB with Focus
 
 # Derived RRR Constants
 BASE_RESOURCE_RETURN_RATE = calculate_rrr(BASE_PRODUCTION_BONUS)  # 0.15254 (15.25%)

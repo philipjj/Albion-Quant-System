@@ -68,14 +68,14 @@ def detect_quality_inversion(
                         "reference_quality": q_low,
                         "reference_quality_name": QUALITY_NAMES.get(q_low, f"Q{q_low}"),
                         "reference_price": low_sp,
-                        "inversion_type": "sell_undercut",
+                        "inversion_type": "MANUAL_LIST_REQUIRED",
                         "net_profit": net_profit,
                         "profit_pct": profit_pct,
                         "data_age_seconds": high_age,
                         "daily_volume": high_vol,
                     })
 
-            # Case 2: Higher quality sell price lower than lower quality buy order (Instant flip)
+            # Case 2: Higher quality sell price lower than lower quality buy order (Instant fill)
             elif low_bm > 0 and is_price_valid(low_sp or 1000, low_bm, item_id=item_id) and high_sp < low_bm:
                 net_profit = low_bm - high_sp
                 profit_pct = (net_profit / high_sp) * 100.0 if high_sp > 0 else 0.0
@@ -91,7 +91,7 @@ def detect_quality_inversion(
                         "reference_quality": q_low,
                         "reference_quality_name": QUALITY_NAMES.get(q_low, f"Q{q_low}"),
                         "reference_price": low_bm,
-                        "inversion_type": "buy_order_flip",
+                        "inversion_type": "INSTANT_BM_FILL",
                         "net_profit": net_profit,
                         "profit_pct": profit_pct,
                         "data_age_seconds": high_age,

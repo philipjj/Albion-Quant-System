@@ -182,6 +182,13 @@ class DiscordAlerter:
         route_header = f"💀 **BLACK MARKET**" if is_bm else f"⚖️ **ROYAL ARBITRAGE**"
         desc = f"-# {route_header} • {prem_info} • Risk: {risk_tag}\n"
         desc += f"-# ⏳ Data Age: Buy {age_buy} | Sell {age_sell}\n"
+        
+        b_qual = opp.get("buy_quality", opp.get("quality", 1))
+        o_qual = opp.get("order_quality", opp.get("quality", 1))
+        if is_bm and b_qual != o_qual:
+            q_names = {1: "Normal", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
+            desc += f"-# 💎 **CROSS-QUALITY FILL**: Bought **{q_names.get(b_qual, f'Q{b_qual}')}** in `{src_city}` ➔ Fulfills **{q_names.get(o_qual, f'Q{o_qual}')}** BM Order\n"
+            
         if opp.get("can_be_crafted"):
             desc += f"-# 🔨 Craftable at {opp.get('craft_city')} (Cost: {fmt_k(opp.get('craft_cost', 0))})\n"
         if opp.get("coverage_suspect"):
@@ -706,11 +713,17 @@ class DiscordAlerter:
         prem_info = _premium_badge(opp)
         age = _fmt_age(opp.get("data_age_seconds", 0))
 
-        color = 0x1ABC9C  # Teal for Quality Misprice
+        inv_type = opp.get("inversion_type", "MANUAL_LIST_REQUIRED")
+        is_instant = inv_type == "INSTANT_BM_FILL"
+        color = 0x1ABC9C if is_instant else 0xE67E22  # Teal for Instant BM Fill, Amber/Orange for Manual List
 
-        desc = f"-# 💎 **QUALITY MISPRICE ARBITRAGE** • {prem_info}\n"
+        type_header = "⚡ **QUALITY MISPRICE — INSTANT BM FILL**" if is_instant else "⚠️ **QUALITY MISPRICE — MANUAL LIST REQUIRED**"
+        desc = f"-# {type_header} • {prem_info}\n"
         desc += f"-# ⏳ Data Age: {age}\n"
-        desc += f"# {city}: Buy {opp.get('buy_quality_name', 'High Quality')} ➔ Sell/Flip @ {opp.get('reference_quality_name', 'Low Quality')} Price"
+        if is_instant:
+            desc += f"# {city}: Buy {opp.get('buy_quality_name', 'High Q')} ➔ Instant Fill @ {opp.get('reference_quality_name', 'Low Q')} BM Buy Order"
+        else:
+            desc += f"# {city}: Buy {opp.get('buy_quality_name', 'High Q')} ➔ Relist at {opp.get('reference_quality_name', 'Low Q')} Market Sell Price (Wait on Listing)"
 
         item_id = opp.get("item_id") or "T4_BAG"
         quality = opp.get("buy_quality", 1)

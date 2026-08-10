@@ -66,7 +66,7 @@ BM_TAX = 0.0  # Black Market: zero fees to seller
 BASE_LPB = 0.18  # 18% base — all royal cities, all items
 REFINING_BONUS_LPB = 0.40  # +40% for matching city refining resource
 CRAFT_BONUS_LPB = 0.15  # +15% for matching city crafting category
-FOCUS_BONUS_LPB = 1.00  # +100% when using Focus
+FOCUS_BONUS_LPB = 0.59  # +59% when using Focus
 
 
 def rrr(city: str, category: str, use_focus: bool = False) -> float:
@@ -230,7 +230,8 @@ class BMOpportunity:
     daily_volume: int  # Volume in buy city (how many units trade daily)
     data_age_buy: int  # Age of buy city price in seconds
     data_age_bm: int  # Age of BM price in seconds
-    quality: int = 1
+    quality: int = 1  # Black Market order quality
+    buy_quality: int = 1  # Fulfilling item quality (>= order quality)
     can_be_crafted: bool = False  # If True, crafting route also shown
     craft_cost: float = 0.0  # If can_be_crafted, what it costs to craft
     craft_city: str = ""  # Best city to craft in
@@ -998,7 +999,8 @@ class OpportunityScanner:
                     daily_volume=volume,
                     data_age_buy=buy_age,
                     data_age_bm=bm_age,
-                    quality=best_buy_quality,
+                    quality=quality,
+                    buy_quality=best_buy_quality,
                     can_be_crafted=can_craft and craft_cost > 0 and craft_cost < effective_buy_price,
                     craft_cost=craft_cost,
                     craft_city=craft_city,
@@ -1059,9 +1061,8 @@ class OpportunityScanner:
                         material_cost_net += ing["line_cost"]
 
                 # Station fee: nutrition cost = item_val * 0.1125, silver fee = (nutrition * station_tax) / 100
-                item_val = item_values.get(item_id, 0.0)
                 station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
-                station_fee = (item_val * 0.1125 * station_tax) / 100.0 if item_val > 0 else 0.0
+                station_fee = calculate_station_fee(item_val, station_tax)
 
                 total_cost = material_cost_net + station_fee
 
@@ -1441,9 +1442,8 @@ class OpportunityScanner:
                     
                 # 3. Calculate net costs
                 material_cost_net = total_material_gross * (1.0 - best_rrr)
-                item_value = values.get(item_id, 0.0)
                 station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
-                station_fee = (item_value * 0.1125 * station_tax) / 100.0 if item_value > 0 else 0.0
+                station_fee = calculate_station_fee(item_value, station_tax)
                 total_cost = material_cost_net + station_fee
                 
                 # 4. Find the best market to sell the refined material

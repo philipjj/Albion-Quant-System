@@ -401,6 +401,8 @@ class UnifiedScanner:
             "data_age_buy": o.data_age_buy,
             "data_age_bm": o.data_age_bm,
             "quality": o.quality,
+            "order_quality": o.quality,
+            "buy_quality": getattr(o, "buy_quality", o.quality),
             "ev_score": o.score,
             "risk_score": 0.5,  # BM always requires Caerleon run
             "type": "black_market",
