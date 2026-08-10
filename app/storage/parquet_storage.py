@@ -3,10 +3,17 @@ from datetime import datetime
 from typing import List
 
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 from app.shared.domain.market_snapshot import MarketSnapshot
 from loguru import logger
+
+try:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    HAS_PYARROW = True
+except ImportError:
+    pa = None
+    pq = None
+    HAS_PYARROW = False
 
 
 class ParquetHistoricalStorage:
@@ -18,7 +25,7 @@ class ParquetHistoricalStorage:
 
     def save_snapshots(self, snapshots: list[MarketSnapshot]):
         """Saves a list of snapshots to the Parquet dataset."""
-        if not snapshots:
+        if not snapshots or not HAS_PYARROW:
             return
 
         # Convert to DataFrame

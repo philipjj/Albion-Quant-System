@@ -17,5 +17,6 @@ tier_lock: int | None = None
 standby_mode: bool = True
 
 # Dynamic thresholds
-min_bm_profit: int = 30000
-min_craft_profit: int = 15000
+min_bm_profit: int = 5000
+min_craft_profit: int = 1000
+allow_enchant_transport: bool = False

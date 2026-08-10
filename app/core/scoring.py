@@ -61,6 +61,21 @@ class Scorer:
             multiplier *= 1.40
         return multiplier
 
+    def _apply_weight_penalty(self, score: float, profit_per_kg: float) -> float:
+        """Applies a dynamic multiplier based on transport weight efficiency."""
+        if profit_per_kg <= 0:
+            return score * 0.1
+            
+        if profit_per_kg > 1000:
+            return score * 1.1
+        elif profit_per_kg > 500:
+            return score * 1.0
+        elif profit_per_kg > 200:
+            return score * 0.8
+        else:
+            penalty = max(0.1, profit_per_kg / 250.0)
+            return score * penalty
+
     def score_arbitrage(self, opp: dict[str, Any]) -> float:
         """Calculates ERPH for Arbitrage."""
         net_profit = opp.get("estimated_profit", 0)
@@ -95,6 +110,10 @@ class Scorer:
 
         # Apply meta and patch multipliers
         erph *= self._get_meta_multipliers(opp)
+        
+        # Apply transport efficiency (Weight) penalty
+        if dist > 0:
+            erph = self._apply_weight_penalty(erph, opp.get("profit_per_kg", 0.0))
 
         opp["fill_prob"] = fill_prob
         opp["confidence"] = confidence
@@ -123,6 +142,9 @@ class Scorer:
 
         # Apply meta and patch multipliers
         erph *= self._get_meta_multipliers(opp)
+        
+        if dist > 0:
+            erph = self._apply_weight_penalty(erph, opp.get("profit_per_kg", 0.0))
 
         opp["fill_prob"] = fill_prob
         opp["confidence"] = confidence

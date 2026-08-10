@@ -2,10 +2,17 @@ import json
 import logging
 from typing import List, Optional
 
-import redis.asyncio as redis
+try:
+    import redis.asyncio as redis
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    HAS_REDIS = True
+except ImportError:
+    redis = None
+    RedisConnectionError = Exception
+    HAS_REDIS = False
+
 from app.shared.domain.market_snapshot import MarketSnapshot
 from app.shared.domain.opportunity import Opportunity
-from redis.exceptions import ConnectionError as RedisConnectionError
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +25,16 @@ class RedisCache:
     """
 
     def __init__(self, redis_url: str):
-        self.redis = redis.from_url(redis_url)
-        self._connected = True
+        if HAS_REDIS:
+            try:
+                self.redis = redis.from_url(redis_url)
+                self._connected = True
+            except Exception:
+                self.redis = None
+                self._connected = False
+        else:
+            self.redis = None
+            self._connected = False
 
     async def get_hot_snapshot(self, item_id: str, city: str) -> MarketSnapshot | None:
         if not self._connected:

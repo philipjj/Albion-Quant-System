@@ -60,19 +60,37 @@ async def lifespan(app: FastAPI):
 
     bot_task = asyncio.create_task(start_discord_bot())
 
-    yield
+    # Start NATS Ingestion
+    from app.ingestion.nats_client import nats_client
+    nats_task = asyncio.create_task(nats_client.start())
 
-    # Shutdown
-    from app.alerts.bot import stop_discord_bot
+    try:
+        yield
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        log.info("[SHUTDOWN] Cancellation signal received. Cleaning up...")
+    finally:
+        # Shutdown
+        from app.alerts.bot import stop_discord_bot
 
-    await stop_discord_bot()
+        try:
+            await stop_discord_bot()
+        except Exception:
+            pass
 
-    if not bot_task.done():
-        bot_task.cancel()
+        if 'bot_task' in locals() and not bot_task.done():
+            bot_task.cancel()
 
-    if state.scheduler_instance:
-        state.scheduler_instance.shutdown()
-    log.info("[STOP] Albion Quant Trading System shut down")
+        try:
+            await nats_client.stop()
+        except Exception:
+            pass
+
+        if 'nats_task' in locals() and not nats_task.done():
+            nats_task.cancel()
+
+        if state.scheduler_instance:
+            state.scheduler_instance.shutdown()
+        log.info("[STOP] Albion Quant Trading System shut down")
 
 
 app = FastAPI(
@@ -193,13 +211,19 @@ async def cmd_scan():
     log.info("AQS UNIFIED MARKET SCAN")
     log.info("=" * 60)
 
-    scanner = UnifiedScanner()
-    bm, crafting, arb = await scanner.scan_all(scan_bm=True)
-
     with get_db_session() as db:
-        scanner.save_opportunities(db, bm, crafting, arb)
+        from app.db.models import UserProfile
+        profile = db.query(UserProfile).first()
+        is_premium = profile.is_premium if profile else True
+        min_roi = profile.min_roi_percent if profile else 10.0
+        default_trade_vol = profile.default_trade_volume if profile else 1
+        
+        scanner = UnifiedScanner(premium=is_premium, min_roi=min_roi, default_trade_volume=default_trade_vol)
+        bm, crafting, arb, ref, mm = await scanner.scan_all(scan_bm=True)
 
-    log.info(f"Scan complete: Saved {len(bm)} BM, {len(crafting)} Crafting, and {len(arb)} Arbitrage opportunities to DB.")
+        scanner.save_opportunities(db, bm, crafting, arb, ref, mm)
+
+    log.info(f"Scan complete: Saved {len(bm)} BM, {len(crafting)} Crafting, {len(arb)} Arbitrage, {len(ref)} Refining, and {len(mm)} MM opportunities to DB.")
 
 
 if __name__ == "__main__":

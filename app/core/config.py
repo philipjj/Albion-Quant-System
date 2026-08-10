@@ -108,7 +108,17 @@ class Settings(BaseSettings):
 
     # Discord
     discord_webhook_url: str = Field(default="", alias="DISCORD_WEBHOOK_URL")
+    discord_arb_webhook_url: str = Field(default="", alias="DISCORD_ARBITRAGE_WEBHOOK_URL")
     discord_bm_webhook_url: str = Field(default="", alias="DISCORD_BM_WEBHOOK_URL")
+    discord_bm_arb_webhook_url: str = Field(default="", alias="DISCORD_BM_ARBITRAGE_WEBHOOK_URL")
+    discord_crafting_webhook_url: str = Field(default="", alias="DISCORD_CRAFTING_WEBHOOK_URL")
+    discord_bm_crafting_webhook_url: str = Field(default="", alias="DISCORD_BM_CRAFTING_WEBHOOK_URL")
+    discord_refining_webhook_url: str = Field(default="", alias="DISCORD_REFINING_WEBHOOK_URL")
+    discord_bm_refining_webhook_url: str = Field(default="", alias="DISCORD_BM_REFINING_WEBHOOK_URL")
+    discord_enchanting_webhook_url: str = Field(default="", alias="DISCORD_ENCHANTING_WEBHOOK_URL")
+    discord_bm_enchanting_webhook_url: str = Field(default="", alias="DISCORD_BM_ENCHANTING_WEBHOOK_URL")
+    discord_mm_webhook_url: str = Field(default="", alias="DISCORD_MM_WEBHOOK_URL")
+    discord_bm_mm_webhook_url: str = Field(default="", alias="DISCORD_BM_MM_WEBHOOK_URL")
     discord_bot_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")
 
     # Trading Parameters
@@ -128,24 +138,49 @@ class Settings(BaseSettings):
     target_exit_hours: float = Field(
         default=_thresholds.get("target_exit_hours", 4.0), alias="TARGET_EXIT_HOURS"
     )
-    max_capital_per_trade: int = Field(
-        default=_thresholds.get("max_capital_per_trade", 2000000), alias="MAX_CAPITAL_PER_TRADE"
+    max_investment_silver: int = Field(
+        default=_thresholds.get("max_investment_silver", 0), alias="MAX_INVESTMENT_SILVER"
+    )
+    min_revenue_silver: int = Field(
+        default=_thresholds.get("min_revenue_silver", 0), alias="MIN_REVENUE_SILVER"
     )
     max_crafting_capital: int = Field(
         default=_thresholds.get("max_crafting_capital", 2000000), alias="MAX_CRAFTING_CAPITAL"
     )
 
+    # Alert Channel Toggles
+    enable_alerts_arb: bool = Field(default=True, alias="ENABLE_ALERTS_ARBITRAGE")
+    enable_alerts_crafting: bool = Field(default=True, alias="ENABLE_ALERTS_CRAFTING")
+    enable_alerts_enchanting: bool = Field(default=True, alias="ENABLE_ALERTS_ENCHANTING")
+    enable_alerts_mm: bool = Field(default=True, alias="ENABLE_ALERTS_MM")
+    enable_alerts_refining: bool = Field(default=True, alias="ENABLE_ALERTS_REFINING")
+    
+    enable_alerts_bm_arb: bool = Field(default=True, alias="ENABLE_ALERTS_BM_ARBITRAGE")
+    enable_alerts_bm_crafting: bool = Field(default=True, alias="ENABLE_ALERTS_BM_CRAFTING")
+    enable_alerts_bm_enchanting: bool = Field(default=True, alias="ENABLE_ALERTS_BM_ENCHANTING")
+    enable_alerts_bm_mm: bool = Field(default=True, alias="ENABLE_ALERTS_BM_MM")
+    enable_alerts_bm_refining: bool = Field(default=True, alias="ENABLE_ALERTS_BM_REFINING")
+
     # Market Constants
     premium_tax_rate: float = Field(default=0.04, alias="PREMIUM_TAX_RATE")
     non_premium_tax_rate: float = Field(default=0.08, alias="NON_PREMIUM_TAX_RATE")
     setup_fee_rate: float = Field(default=0.025, alias="SETUP_FEE_RATE")
-    is_premium: bool = Field(default=True, alias="IS_PREMIUM")
+    is_premium: bool = Field(default=False, alias="IS_PREMIUM")
 
-    # [NEW] Market fee constants (Albion Online Wiki — Marketplace, 2026)
+    # NATS Ingestion
+    enable_nats_ingestion: bool = Field(default=True, alias="ENABLE_NATS_INGESTION")
+    nats_url: str = Field(default="nats://public:thenewalbiondata@nats.albion-online-data.com:4222", alias="NATS_URL")
+    anti_bait_min_volume: int = Field(default=5, alias="ANTI_BAIT_MIN_VOLUME", description="Minimum cumulative volume required to consider a sell price valid.")
+
+    # [NEW] Market fee & station tax constants (Albion Online, 2026)
     market_setup_fee_pct: float = _thresholds.get("market_setup_fee_pct", 0.025)
     market_tax_premium_pct: float = _thresholds.get("market_tax_premium_pct", 0.04)
     market_tax_non_premium_pct: float = _thresholds.get("market_tax_non_premium_pct", 0.08)
-    crafting_station_fee_default: float = _thresholds.get("crafting_station_fee_default", 0.03)
+    station_tax_per_100_nutrition: float = Field(
+        default=_thresholds.get("station_tax_per_100_nutrition", 500.0),
+        alias="STATION_TAX_PER_100_NUTRITION",
+        description="Crafting/refining station tax rate in Silver per 100 Nutrition (e.g. 500 = 500 Silver/100 nut)."
+    )
     confidence_floor: float = _thresholds.get("confidence_floor", 0.20)
 
     # Signal Defaults

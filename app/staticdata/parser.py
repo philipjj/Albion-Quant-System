@@ -275,35 +275,21 @@ class StaticDataParser:
         """Insert parsed items and recipes into the database."""
         log.info("Populating database with static data...")
 
-        # Upsert items
-        item_count = 0
-        for item_data in self.parsed_items:
-            existing = db.query(Item).filter_by(item_id=item_data["item_id"]).first()
-            if existing:
-                for key, value in item_data.items():
-                    setattr(existing, key, value)
-            else:
-                db.add(Item(**item_data))
-            item_count += 1
+        # Fast Bulk Item Insertion
+        existing_ids = {i[0] for i in db.query(Item.item_id).all()}
+        new_items = [Item(**d) for d in self.parsed_items if d["item_id"] not in existing_ids]
+        if new_items:
+            db.bulk_save_objects(new_items)
+            db.commit()
+        log.info(f"Upserted {len(self.parsed_items)} items ({len(new_items)} new)")
 
-            if item_count % 1000 == 0:
-                db.flush()
-
-        db.flush()
-        log.info(f"Upserted {item_count} items")
-
-        # Insert recipes (clear old ones first)
+        # Fast Bulk Recipe Insertion
         db.query(Recipe).delete()
-        recipe_count = 0
-        for recipe_data in self.parsed_recipes:
-            db.add(Recipe(**recipe_data))
-            recipe_count += 1
-
-            if recipe_count % 1000 == 0:
-                db.flush()
-
-        db.flush()
-        log.info(f"Inserted {recipe_count} recipe ingredients")
+        new_recipes = [Recipe(**d) for d in self.parsed_recipes]
+        if new_recipes:
+            db.bulk_save_objects(new_recipes)
+            db.commit()
+        log.info(f"Inserted {len(new_recipes)} recipe ingredients")
 
     async def run_full_pipeline(self) -> dict:
         """

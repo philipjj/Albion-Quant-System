@@ -91,13 +91,14 @@ def validate_market_record(r: dict[str, Any]) -> bool:
 
 def detect_anomaly(current_price: int, historical_avg: float | None) -> bool:
     """
-    Flags sudden price spikes (>5000% change).
+    Flags sudden price spikes (>500% change).
+    Rejects the price if historical data is completely missing.
     """
-    if not historical_avg or historical_avg == 0:
-        return False
+    if not historical_avg or historical_avg <= 0:
+        return True
 
     deviation = abs(current_price - historical_avg) / historical_avg
-    if deviation > 50.0:  # 5000%
+    if deviation > 5.0:  # 500%
         return True
 
     return False

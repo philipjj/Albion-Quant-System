@@ -179,6 +179,10 @@ class ArbitrageOpportunity(Base):
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
     is_active = Column(Boolean, default=True)
 
+    # [NEW] Profitability and logistics metrics
+    roi = Column(Float, default=0.0)
+    profit_per_kg = Column(Float, default=0.0)
+
     __table_args__ = (
         Index("ix_arb_margin", "estimated_margin"),
         Index("ix_arb_profit", "estimated_profit"),
@@ -222,6 +226,10 @@ class CraftingOpportunity(Base):
     detected_at = Column(DateTime, default=datetime.utcnow, index=True)
     is_active = Column(Boolean, default=True)
 
+    # [NEW] Profitability and logistics metrics
+    roi = Column(Float, default=0.0)
+    profit_per_kg = Column(Float, default=0.0)
+
     __table_args__ = (
         Index("ix_craft_profit", "profit"),
         Index("ix_craft_margin", "profit_margin"),
@@ -232,6 +240,88 @@ class CraftingOpportunity(Base):
             f"<CraftingOpp {self.item_id}@{self.crafting_city} "
             f"profit={self.profit} margin={self.profit_margin}%>"
         )
+
+class RefiningOpportunity(Base):
+    """Detected refining profit opportunities."""
+
+    __tablename__ = "refining_opportunities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_id = Column(String(128), nullable=False, index=True)
+    item_name = Column(String(256), nullable=True)
+    refining_city = Column(String(32), nullable=False)
+    sell_city = Column(String(32), nullable=True)
+    craft_cost = Column(Float, nullable=False)
+    sell_price = Column(Float, nullable=False)
+    profit = Column(Float, nullable=False)
+    profit_margin = Column(Float, nullable=False)
+    focus_cost = Column(Float, default=0.0)
+    profit_per_focus = Column(Float, default=0.0)
+    silver_per_nutrition = Column(Float, default=0.0)
+    journal_profit = Column(Float, default=0.0)
+    daily_volume = Column(Integer, default=0)
+    volume_source = Column(String(32), default="ESTIMATED")
+    safe_limit = Column(Integer, default=1)
+    current_supply = Column(Integer, default=0)
+    market_gap = Column(Integer, default=0)
+    ev_score = Column(Float, default=0.0, index=True)
+    volatility = Column(Float, default=0.0)
+    persistence = Column(Integer, default=1)
+    ingredients_json = Column(Text, nullable=True)
+    detected_at = Column(DateTime, default=datetime.utcnow, index=True)
+    is_active = Column(Boolean, default=True)
+
+    # [NEW] Profitability and logistics metrics
+    roi = Column(Float, default=0.0)
+    profit_per_kg = Column(Float, default=0.0)
+
+    __table_args__ = (
+        Index("ix_refine_profit", "profit"),
+        Index("ix_refine_margin", "profit_margin"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<RefiningOpp {self.item_id}@{self.refining_city} "
+            f"profit={self.profit} margin={self.profit_margin}%>"
+        )
+
+
+class MarketMakingOpportunity(Base):
+    """Detected market making (spread capture) opportunities."""
+
+    __tablename__ = "market_making_opportunities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    item_id = Column(String(128), nullable=False, index=True)
+    item_name = Column(String(256), nullable=True)
+    source_city = Column(String(32), nullable=False)
+    destination_city = Column(String(32), nullable=False)
+    buy_price = Column(Integer, nullable=False)
+    sell_price = Column(Integer, nullable=False)
+    estimated_profit = Column(Float, nullable=False)
+    estimated_margin = Column(Float, nullable=False)
+    setup_fees = Column(Float, default=0.0)
+    tax_paid = Column(Float, default=0.0)
+    daily_volume = Column(Integer, default=0)
+    ev_score = Column(Float, default=0.0, index=True)
+    detected_at = Column(DateTime, default=datetime.utcnow, index=True)
+    is_active = Column(Boolean, default=True)
+
+    roi = Column(Float, default=0.0)
+    profit_per_kg = Column(Float, default=0.0)
+
+    __table_args__ = (
+        Index("ix_mm_profit", "estimated_profit"),
+        Index("ix_mm_margin", "estimated_margin"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<MarketMakingOpp {self.item_id}: {self.source_city}->{self.destination_city} "
+            f"profit={self.estimated_profit} margin={self.estimated_margin}%>"
+        )
+
 
 
 class MarketSnapshot(Base):
@@ -313,7 +403,7 @@ class UserProfile(Base):
     discord_user_id = Column(String(32), primary_key=True)
 
     # Preferences (defaults align to app.core.config settings).
-    is_premium = Column(Boolean, default=True)
+    is_premium = Column(Boolean, default=False)
     home_city = Column(String(32), nullable=True)
     api_server = Column(String(16), nullable=True)  # west/europe/east
 
@@ -323,6 +413,8 @@ class UserProfile(Base):
     min_arbitrage_margin = Column(Float, nullable=True)
     min_arbitrage_profit = Column(Integer, nullable=True)
     min_crafting_profit = Column(Integer, nullable=True)
+    min_roi_percent = Column(Float, default=10.0)
+    default_trade_volume = Column(Integer, default=1)
 
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)

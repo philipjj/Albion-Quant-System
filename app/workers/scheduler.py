@@ -104,14 +104,27 @@ class QuantScheduler:
             #    not just this partition's items. This is the key advantage:
             #    fresh data from partition N mixes with still-valid data from N-1, N-2...
             log.info("[SCHEDULER] Step 2: Running Unified Scanner (full DB)...")
-            bm, crafting, arb = await self.unified_scanner.scan_all(scan_bm=True)
+            bm, crafting, arb, refining, mm, enchant = await self.unified_scanner.scan_all(scan_bm=True)
 
             # 3. Alert
             log.info(
-                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)})"
+                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)}, Refine: {len(refining)}, MM: {len(mm)}, Enchant: {len(enchant)})"
             )
 
-            # Combine Arb and BM for alerts
+            
+            def _is_valid_budget(o: dict) -> bool:
+                cost = o.get("buy_price", 0) or o.get("craft_cost", 0) or o.get("total_cost", 0) or o.get("material_cost_gross", 0)
+                revenue = o.get("sell_price", 0) or o.get("revenue_net", 0)
+                if revenue == 0 and cost > 0:
+                    revenue = cost + o.get("estimated_profit", o.get("profit", 0))
+                
+                if settings.max_investment_silver > 0 and cost > settings.max_investment_silver:
+                    return False
+                if settings.min_revenue_silver > 0 and revenue < settings.min_revenue_silver:
+                    return False
+                return True
+
+# Combine Arb and BM for alerts
             all_arb = arb + bm
 
             # Cooldown filtering to prevent repeating stale alerts
@@ -130,7 +143,18 @@ class QuantScheduler:
                 if tier_prefix and not item_id.upper().startswith(tier_prefix):
                     continue
 
-                key = f"arb:{item_id}:{o['source_city']}:{o['destination_city']}"
+                src = o.get("source_city", o.get("buy_city", "Unknown"))
+                dest = o.get("destination_city", o.get("sell_city", "Unknown"))
+                
+                is_bm = dest == "Black Market" or o.get("type") == "black_market"
+                if is_bm and not settings.enable_alerts_bm_arb:
+                    continue
+                if not is_bm and not settings.enable_alerts_arb:
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+                
+                key = f"arb:{item_id}:{src}:{dest}"
                 if key in self._alert_history:
                     last_time = self._alert_history[key]
                     if (now_time - last_time).total_seconds() < cooldown_seconds:
@@ -147,7 +171,7 @@ class QuantScheduler:
             final_arb = []
             for cat, ops in grouped_arb.items():
                 ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
-                top_ops = ops[:5]  # Top 5 per category to give more chances
+                top_ops = ops[:10]  # Top 10 per category
                 for key, o in top_ops:
                     final_arb.append(o)
                     self._alert_history[key] = now_time
@@ -160,7 +184,18 @@ class QuantScheduler:
                 if tier_prefix and not item_id.upper().startswith(tier_prefix):
                     continue
 
-                key = f"craft:{item_id}:{o['crafting_city']}:{o.get('sell_city', 'Any')}"
+                craft_c = o.get("crafting_city", o.get("source_city", "Unknown"))
+                sell_c = o.get("sell_city", o.get("destination_city", "Any"))
+                
+                is_bm = sell_c == "Black Market"
+                if is_bm and not settings.enable_alerts_bm_crafting:
+                    continue
+                if not is_bm and not settings.enable_alerts_crafting:
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+                
+                key = f"craft:{item_id}:{craft_c}:{sell_c}"
                 if key in self._alert_history:
                     last_time = self._alert_history[key]
                     if (now_time - last_time).total_seconds() < cooldown_seconds:
@@ -174,22 +209,152 @@ class QuantScheduler:
             final_craft = []
             for cat, ops in grouped_craft.items():
                 ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
-                top_ops = ops[:5]  # Top 5 per category
+                top_ops = ops[:10]  # Top 10 per category
                 for key, o in top_ops:
                     final_craft.append(o)
                     self._alert_history[key] = now_time
             final_craft.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
 
+            # Filter Refining
+            fresh_refine = []
+            for o in refining:
+                item_id = o.get("item_id", "")
+                if tier_prefix and not item_id.upper().startswith(tier_prefix):
+                    continue
+
+                ref_c = o.get("crafting_city", o.get("refine_city", o.get("source_city", "Unknown")))
+                sell_c = o.get("sell_city", o.get("destination_city", "Any"))
+                
+                is_bm = sell_c == "Black Market"
+                if is_bm and not settings.enable_alerts_bm_refining:
+                    continue
+                if not is_bm and not settings.enable_alerts_refining:
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+                
+                key = f"refine:{item_id}:{ref_c}:{sell_c}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                fresh_refine.append((key, o))
+
+            grouped_refine = defaultdict(list)
+            for key, o in fresh_refine:
+                grouped_refine[o.get("category", "Unknown")].append((key, o))
+
+            final_refine = []
+            for cat, ops in grouped_refine.items():
+                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
+                top_ops = ops[:10]  # Top 10 per category
+                for key, o in top_ops:
+                    final_refine.append(o)
+                    self._alert_history[key] = now_time
+            final_refine.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+
+            # Filter Market Making
+            fresh_mm = []
+            for o in mm:
+                item_id = o.get("item_id", "")
+                if tier_prefix and not item_id.upper().startswith(tier_prefix):
+                    continue
+
+                src = o.get("source_city", "Unknown")
+                is_bm = src == "Black Market"
+                if is_bm and not settings.enable_alerts_bm_mm:
+                    continue
+                if not is_bm and not settings.enable_alerts_mm:
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+                
+                key = f"mm:{item_id}:{src}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                fresh_mm.append((key, o))
+
+            grouped_mm = defaultdict(list)
+            for key, o in fresh_mm:
+                grouped_mm[o.get("category", "Unknown")].append((key, o))
+
+            final_mm = []
+            for cat, ops in grouped_mm.items():
+                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
+                top_ops = ops[:10]  # Top 10 per category
+                for key, o in top_ops:
+                    final_mm.append(o)
+                    self._alert_history[key] = now_time
+            final_mm.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+
+            # Filter Enchanting
+            fresh_enchant = []
+            for o in enchant:
+                item_id = o.get("target_item_id", "")
+                if tier_prefix and not item_id.upper().startswith(tier_prefix):
+                    continue
+
+                is_bm = o.get("destination_city") == "Black Market"
+                if is_bm and not settings.enable_alerts_bm_enchanting:
+                    continue
+                if not is_bm and not settings.enable_alerts_enchanting:
+                    continue
+                if not getattr(state, "allow_enchant_transport", False) and (o.get("source_city") != "Caerleon" and o.get("base_city") != "Caerleon"):
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+
+                key = f"enchant:{item_id}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                fresh_enchant.append((key, o))
+
+            grouped_enchant = defaultdict(list)
+            for key, o in fresh_enchant:
+                grouped_enchant[o.get("category", "Unknown")].append((key, o))
+
+            final_enchant = []
+            for cat, ops in grouped_enchant.items():
+                ops.sort(key=lambda x: x[1].get("estimated_profit", 0), reverse=True)
+                top_ops = ops[:10]  # Top 10 per category
+                for key, o in top_ops:
+                    final_enchant.append(o)
+                    self._alert_history[key] = now_time
+            final_enchant.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("estimated_profit", 0)))
+
             if final_arb:
-                limit = max(20, settings.alert_limit_per_cycle)
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
                 await self.alerter.send_batch_alerts(final_arb, [], arb_limit=limit)
                 log.info(f"[SCHEDULER] Sent {len(final_arb)} arb alerts after cooldown filtering.")
             if final_craft:
-                limit = max(20, settings.alert_limit_per_cycle)
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
                 await self.alerter.send_batch_alerts([], final_craft, craft_limit=limit)
                 log.info(
                     f"[SCHEDULER] Sent {len(final_craft)} craft alerts after cooldown filtering."
                 )
+            if final_refine:
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
+                await self.alerter.send_batch_alerts([], [], refine_opps=final_refine, refine_limit=limit)
+                log.info(
+                    f"[SCHEDULER] Sent {len(final_refine)} refine alerts after cooldown filtering."
+                )
+            if final_mm:
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
+                await self.alerter.send_batch_alerts([], [], mm_opps=final_mm, mm_limit=limit)
+                log.info(
+                    f"[SCHEDULER] Sent {len(final_mm)} MM alerts after cooldown filtering."
+                )
+            if final_enchant:
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
+                await self.alerter.send_batch_alerts([], [], enchant_opps=final_enchant, enchant_limit=limit)
+                log.info(
+                    f"[SCHEDULER] Sent {len(final_enchant)} enchant alerts after cooldown filtering."
+                )
+
 
             duration = (datetime.utcnow() - start_time).total_seconds()
             self._current_partition += 1
@@ -212,6 +377,8 @@ class QuantScheduler:
         try:
             with get_db_session() as db:
                 create_market_snapshot(db)
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] Market Snapshot task cancelled.")
         except Exception as e:
             log.error(f"[SCHEDULER] Snapshot failed: {e}")
 
@@ -305,6 +472,8 @@ class QuantScheduler:
                         pass
                 if deleted_folders > 0:
                     log.info(f"[SCHEDULER] Parquet historical cleanup complete: deleted {deleted_folders} stale partition(s).")
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] Cleanup task cancelled.")
         except Exception as e:
             log.error(f"[SCHEDULER] Cleanup failed: {e}")
 
@@ -313,6 +482,8 @@ class QuantScheduler:
         log.info("[SCHEDULER] Periodic Task: Market Volume Refresh")
         try:
             await self.collector.collect_volumes()
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] Volume refresh task cancelled.")
         except Exception as e:
             log.error(f"[SCHEDULER] Volume refresh failed: {e}")
 
@@ -324,6 +495,8 @@ class QuantScheduler:
             scores = await self.meta_engine.update_meta()
             # In a real system, we would store these in DB
             log.info(f"[SCHEDULER] Meta Scan Complete: {len(scores)} items scored")
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] Meta Scan task cancelled.")
         except Exception as e:
             log.error(f"[SCHEDULER] Meta Scan failed: {e}")
 
@@ -363,6 +536,8 @@ class QuantScheduler:
                     db.commit()
 
             log.info(f"[SCHEDULER] Patch Monitor Complete: {len(updates)} updates processed")
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] Patch Monitor task cancelled.")
         except Exception as e:
             log.error(f"[SCHEDULER] Patch Monitor failed: {e}")
 
@@ -372,14 +547,22 @@ class QuantScheduler:
         try:
             loadouts = await self.loadout_tracker.get_popular_loadouts()
             log.info(f"[SCHEDULER] Loadout Clustering Complete: {len(loadouts)} loadouts tracked")
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] Loadout Clustering task cancelled.")
         except Exception as e:
             log.error(f"[SCHEDULER] Loadout Clustering failed: {e}")
 
     async def _continuous_cycle_loop(self):
         log.info("[SCHEDULER] Starting continuous cycle loop.")
-        while self._is_running:
-            await self.master_cycle()
-            await asyncio.sleep(1)  # Small pause between cycles
+        try:
+            while self._is_running:
+                await self.master_cycle()
+                # Dynamic pause calculated to balance low CPU/disk usage with fresh market data
+                num_partitions = max(1, settings.scan_partitions)
+                target_pause = max(10.0, float(settings.market_poll_interval * 60) / float(num_partitions))
+                await asyncio.sleep(target_pause)
+        except asyncio.CancelledError:
+            log.info("[SCHEDULER] Continuous cycle loop stopped.")
 
     def start(self):
         """Start the background scheduler with sequential master cycle."""
@@ -472,12 +655,7 @@ class QuantScheduler:
     def reschedule(self, minutes: int):
         """Update the master cycle interval."""
         settings.market_poll_interval = minutes
-        if self._is_running:
-            trigger = IntervalTrigger(minutes=minutes)
-            self.scheduler.reschedule_job("master_cycle", trigger=trigger)
-            log.info(f"📅 Master cycle updated to {minutes} min")
-        else:
-            log.info(f"📅 Cycle interval set to {minutes} min")
+        log.info(f"📅 Cycle interval set to {minutes} min")
 
     def resume(self):
         """Resume if paused."""

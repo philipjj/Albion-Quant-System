@@ -8,23 +8,23 @@ from datetime import datetime
 # [CONFIRMED] City specialization bonuses
 CITY_BONUS: dict[str, dict[str, list[str]]] = {
     "Martlock": {
-        "refining": ["hide"],
+        "refining": ["hide", "leather"],
         "crafting": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "offhand"],
     },
     "Bridgewatch": {
-        "refining": ["rock"],
+        "refining": ["rock", "stoneblock"],
         "crafting": ["crossbow", "dagger", "cursed_staff", "plate_helmet", "leather_shoes"],
     },
     "Thetford": {
-        "refining": ["ore"],
+        "refining": ["ore", "metalbar"],
         "crafting": ["mace", "nature_staff", "fire_staff", "leather_armor", "cloth_headgear"],
     },
     "Lymhurst": {
-        "refining": ["fiber"],
+        "refining": ["fiber", "cloth"],
         "crafting": ["sword", "bow", "arcane_staff", "leather_helmet", "cloth_armor"],
     },
     "Fort Sterling": {
-        "refining": ["wood"],
+        "refining": ["wood", "planks"],
         "crafting": ["spear", "holy_staff", "plate_armor", "cloth_shoes", "offhand"],
     },
     # Caerleon: 18% base only, no specialization bonus
@@ -36,6 +36,15 @@ REFINING_SPECIALIZATION_BONUS = 40.0
 CRAFTING_SPECIALIZATION_BONUS = 15.0
 FOCUS_PRODUCTION_BONUS = 59.0
 
+
+def get_refining_category(item_id: str) -> str:
+    """Extracts the refining category from the item_id for bonus calculation."""
+    if "PLANKS" in item_id or "WOOD" in item_id: return "planks"
+    if "METALBAR" in item_id or "ORE" in item_id: return "metalbar"
+    if "LEATHER" in item_id or "HIDE" in item_id: return "leather"
+    if "CLOTH" in item_id or "FIBER" in item_id: return "cloth"
+    if "STONEBLOCK" in item_id or "ROCK" in item_id: return "stoneblock"
+    return ""
 
 def calculate_rrr(
     location: str,

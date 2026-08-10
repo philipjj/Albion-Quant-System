@@ -77,70 +77,87 @@ async def on_ready():
                 return  # Only send to first writable channel
 
 
+def parse_silver_amount(val_str: str) -> int | None:
+    if not val_str:
+        return None
+    val_str = val_str.strip().lower()
+    if val_str in ("0", "off", "none", "reset", "disable", "disabled", "clear"):
+        return 0
+    import re
+    m = re.match(r"^([0-9.]+)\s*([km])?$", val_str)
+    if not m:
+        return None
+    num_part = float(m.group(1))
+    suffix = m.group(2)
+    if suffix == "k":
+        return int(num_part * 1_000)
+    elif suffix == "m":
+        return int(num_part * 1_000_000)
+    else:
+        return int(num_part)
+
+
 @bot.command()
 async def help(ctx):
     """Custom help command for AQS manual controls."""
     embed = discord.Embed(
         title="📖  AQS Command Reference",
-        description="Albion Quant System v3.2 — All available commands",
+        description="Albion Quant System v3.2 — Quantitative Engine Controls",
         color=0x5865F2,  # Discord blurple
     )
 
     embed.add_field(
-        name="🔧 SYSTEM",
+        name="🔧 SYSTEM CONTROLS",
         value=(
-            "`!start` — Launch the scanning engine\n"
-            "`!stop` — Pause all background tasks\n"
-            "`!status` — System health dashboard\n"
-            "`!server [name]` — Switch region\n"
-            "`!schedule [time]` — Set poll interval"
-        ),
-        inline=True,
-    )
-    embed.add_field(
-        name="🎯 FILTERS",
-        value=(
-            "`!tier [num|all]` — Lock to tier\n"
-            "`!minbm <profit>` — BM min profit\n"
-            "`!mincraft <profit>` — Craft min profit"
-        ),
-        inline=True,
-    )
-    embed.add_field(
-        name="📊 DATA",
-        value=(
-            "`!price <item>` — City prices\n"
-            "`!scan [bm]` — Manual scan\n"
-            "`!bm` — BM shortages\n"
-            "`!meta` — PvP meta items\n"
-            "`!patch` — Patch intel"
-        ),
-        inline=True,
-    )
-    embed.add_field(
-        name="🚀 TOOLS",
-        value=(
-            "`!caravan <src> <dst> [kg]` — Trade route packer\n"
-            "`!focus [amount] [spec]` — Focus optimizer\n"
-            "`!purge <start> <end>` — Delete messages (DD/MM/YYYY)"
+            "`!start` — Launch background scanning engine\n"
+            "`!stop` — Pause background scanner\n"
+            "`!status` — View system health & database dashboard\n"
+            "`!server [west|east|europe]` — Switch server region\n"
+            "`!schedule [time]` — Set poll interval (e.g. `!schedule 15m`)"
         ),
         inline=False,
     )
-    embed.set_footer(text="AQS v3.2 • Use !price <name> for fuzzy search")
+    embed.add_field(
+        name="🎯 FILTERS & TOGGLES",
+        value=(
+            "`!toggle [channel|all|off]` — Turn alert feeds ON/OFF (e.g. `!toggle b-crafting`)\n"
+            "`!premium [on|off]` — Toggle player tax mode (4.0% Premium vs 8.0% Non-Premium)\n"
+            "`!enchanttransport [on|off]` — Toggle outer-city transport for enchanting\n"
+            "`!tier [1-8|all]` — Filter items by Tier level (e.g. `!tier 7` or `!tier all`)\n"
+            "`!maxinvest <amount|off>` — Set maximum budget cap (e.g. `!maxinvest 1m` or `off`)\n"
+            "`!minrev <amount|off>` — Set minimum revenue floor (e.g. `!minrev 1.5m` or `off`)\n"
+            "`!minbm <profit|off>` — Min profit for Black Market (e.g. `!minbm 50k` or `off`)\n"
+            "`!mincraft <profit|off>` — Min profit for Crafting (e.g. `!mincraft 20k` or `off`)"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="📊 MARKET DATA",
+        value=(
+            "`!price <item>` — Compare prices across all 8 market hubs (Royal + Caerleon + Brecilien + BM)\n"
+            "`!scan [bm]` — Trigger immediate manual scan\n"
+            "`!bm` — View top Black Market shortages\n"
+            "`!meta` — View top PvP Meta item scores\n"
+            "`!patch` — View patch forecast intelligence"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🚀 TOOLS & UTILITIES",
+        value=(
+            "`!caravan <src> <dst> [kg]` — Transport route profit optimizer\n"
+            "`!focus [amount] [spec]` — Focus points profit optimizer\n"
+            "`!purge <start> <end>` — Delete channel messages (`DD/MM` or `DD/MM/YYYY`)"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="AQS v3.2 • Tip: You can use 50k, 500k, 1m, 1.5m, off for filters")
     await ctx.send(embed=embed)
 
 
 @bot.command(name="price")
 async def price_cmd(ctx, *, query: str):
-    """Prices across all royal cities for any item.
-    Usage:
-      !price T6_MAIN_SWORD            direct ID, enchant 0, Normal quality
-      !price T6_MAIN_SWORD@2          direct ID, enchant 2, Normal quality
-      !price T6_MAIN_SWORD@2 3        direct ID, enchant 2, Outstanding quality
-      !price broadsword               name search, enchant 0, Normal quality
-      !price broadsword @2            name search, enchant 2, Normal quality
-      !price broadsword @2 3          name search, enchant 2, Outstanding quality
-    """
+    """Prices across all 8 market hubs for any item."""
     import re as _re
 
     query = query.strip()
@@ -148,14 +165,10 @@ async def price_cmd(ctx, *, query: str):
     enchant_override = None
 
     QUALITY_NAMES = {1: "Normal", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
-    ROYAL_CITIES = ["Bridgewatch", "Martlock", "Lymhurst", "Fort Sterling", "Thetford"]
-    CITY_SHORT = {
-        "Bridgewatch": "BRW",
-        "Martlock": "MRT",
-        "Lymhurst": "LYM",
-        "Fort Sterling": "FST",
-        "Thetford": "THF",
-    }
+    ALL_MARKET_CITIES = [
+        "Bridgewatch", "Martlock", "Lymhurst", "Fort Sterling", "Thetford",
+        "Caerleon", "Brecilien", "Black Market"
+    ]
 
     # Strip trailing quality number 1-5
     quality_match = _re.search(r"\s+([1-5])$", query)
@@ -225,7 +238,7 @@ async def price_cmd(ctx, *, query: str):
         item = matched[0]
 
         city_rows = {}
-        for city in ROYAL_CITIES:
+        for city in ALL_MARKET_CITIES:
             row = (
                 db.query(MarketPrice)
                 .filter(
@@ -243,7 +256,7 @@ async def price_cmd(ctx, *, query: str):
             description=f"-# `{item.item_id}` · T{item.tier}.{item.enchant} · {QUALITY_NAMES.get(quality, 'Unknown')}",
             color=0x5865F2,
         )
-        for city in ROYAL_CITIES:
+        for city in ALL_MARKET_CITIES:
             row = city_rows[city]
             if row and (row.sell_price_min or row.buy_price_max):
                 sell = fmt_k(row.sell_price_min)
@@ -256,7 +269,7 @@ async def price_cmd(ctx, *, query: str):
                 
         embed.set_thumbnail(url=item_icon_url(item.item_id, quality=quality, size=64))
         embed.set_footer(
-            text="Sell = cheapest sell order (what you pay) · Buy = highest buy order (instant sell)"
+            text="Buy = cheapest sell order (what you pay) · Sell = highest buy order (instant sell)"
         )
         await ctx.send(embed=embed)
 
@@ -265,9 +278,15 @@ async def price_cmd(ctx, *, query: str):
 async def purge(ctx, start_str: str, end_str: str):
     """
     Delete messages in a date range.
-    Usage: !purge 01/02/2026 01/04/2026
+    Usage: !purge 01/02 05/02 or !purge 01/02/2026 05/02/2026
     """
     try:
+        cur_year = datetime.now(timezone.utc).year
+        if len(start_str.split("/")) == 2:
+            start_str += f"/{cur_year}"
+        if len(end_str.split("/")) == 2:
+            end_str += f"/{cur_year}"
+
         # Parse dates (assuming DD/MM/YYYY)
         start_date = datetime.strptime(start_str, "%d/%m/%Y").replace(tzinfo=timezone.utc)
         end_date = datetime.strptime(end_str, "%d/%m/%Y").replace(
@@ -542,37 +561,202 @@ async def tier(ctx, tier_val: str = ""):
 
 
 @bot.command()
-async def minbm(ctx, profit: int = None):
+async def minbm(ctx, *, val: str = None):
     """Set minimum profit for Black Market alerts."""
     from app.core import state
-
-    if profit is None:
-        await ctx.send(
-            f"ℹ️ Current **Black Market Minimum Profit** is **{state.min_bm_profit:,}** silver."
-        )
+    if val is None:
+        amt_str = f"**{state.min_bm_profit:,}** silver" if state.min_bm_profit > 0 else "**OFF (0)**"
+        await ctx.send(f"ℹ️ Current **Black Market Minimum Profit**: {amt_str}\nUsage: `!minbm 50k` or `!minbm off`")
         return
-    if profit < 0:
-        await ctx.send("❌ Profit cannot be negative.")
+    parsed = parse_silver_amount(val)
+    if parsed is None or parsed < 0:
+        await ctx.send("❌ Invalid amount. Examples: `!minbm 50k`, `!minbm 1m`, `!minbm off`.")
         return
-    state.min_bm_profit = profit
-    await ctx.send(f"✅ **Black Market Minimum Profit** set to **{profit:,}** silver.")
+    state.min_bm_profit = parsed
+    if parsed == 0:
+        await ctx.send("✅ **Black Market Minimum Profit** filter turned **OFF**.")
+    else:
+        await ctx.send(f"✅ **Black Market Minimum Profit** set to **{parsed:,}** silver.")
 
 
 @bot.command()
-async def mincraft(ctx, profit: int = None):
+async def mincraft(ctx, *, val: str = None):
     """Set minimum profit for Crafting alerts."""
     from app.core import state
+    if val is None:
+        amt_str = f"**{state.min_craft_profit:,}** silver" if state.min_craft_profit > 0 else "**OFF (0)**"
+        await ctx.send(f"ℹ️ Current **Crafting Minimum Profit**: {amt_str}\nUsage: `!mincraft 20k` or `!mincraft off`")
+        return
+    parsed = parse_silver_amount(val)
+    if parsed is None or parsed < 0:
+        await ctx.send("❌ Invalid amount. Examples: `!mincraft 20k`, `!mincraft 500k`, `!mincraft off`.")
+        return
+    state.min_craft_profit = parsed
+    if parsed == 0:
+        await ctx.send("✅ **Crafting Minimum Profit** filter turned **OFF**.")
+    else:
+        await ctx.send(f"✅ **Crafting Minimum Profit** set to **{parsed:,}** silver.")
 
-    if profit is None:
-        await ctx.send(
-            f"ℹ️ Current **Crafting Minimum Profit** is **{state.min_craft_profit:,}** silver."
-        )
+
+@bot.command()
+async def maxinvest(ctx, *, val: str = None):
+    """Set maximum investment limit."""
+    from app.core.config import settings
+    if val is None:
+        amt_str = f"**{settings.max_investment_silver:,}** silver" if settings.max_investment_silver > 0 else "**OFF (No budget cap)**"
+        await ctx.send(f"ℹ️ Current **Max Investment**: {amt_str}\nUsage: `!maxinvest 1m` or `!maxinvest off`")
         return
-    if profit < 0:
-        await ctx.send("❌ Profit cannot be negative.")
+    parsed = parse_silver_amount(val)
+    if parsed is None or parsed < 0:
+        await ctx.send("❌ Invalid amount. Examples: `!maxinvest 1m`, `!maxinvest 500k`, `!maxinvest off`.")
         return
-    state.min_craft_profit = profit
-    await ctx.send(f"✅ **Crafting Minimum Profit** set to **{profit:,}** silver.")
+    settings.max_investment_silver = parsed
+    if parsed == 0:
+        await ctx.send("✅ **Max Investment Limit** turned **OFF** (No budget cap).")
+    else:
+        await ctx.send(f"✅ **Max Investment Limit** set to **{parsed:,}** silver.")
+
+
+@bot.command()
+async def minrev(ctx, *, val: str = None):
+    """Set minimum revenue target."""
+    from app.core.config import settings
+    if val is None:
+        amt_str = f"**{settings.min_revenue_silver:,}** silver" if settings.min_revenue_silver > 0 else "**OFF (No revenue floor)**"
+        await ctx.send(f"ℹ️ Current **Min Revenue**: {amt_str}\nUsage: `!minrev 1.5m` or `!minrev off`")
+        return
+    parsed = parse_silver_amount(val)
+    if parsed is None or parsed < 0:
+        await ctx.send("❌ Invalid amount. Examples: `!minrev 1.5m`, `!minrev 100k`, `!minrev off`.")
+        return
+    settings.min_revenue_silver = parsed
+    if parsed == 0:
+        await ctx.send("✅ **Min Revenue Filter** turned **OFF** (No revenue floor).")
+    else:
+        await ctx.send(f"✅ **Min Revenue Filter** set to **{parsed:,}** silver.")
+
+
+@bot.command()
+async def enchanttransport(ctx, mode: str = None):
+    """Toggle transport-based enchanting (e.g. Thetford -> Caerleon)."""
+    from app.core import state
+    if mode is None:
+        status = "🟢 **ENABLED** (Outer city transport allowed)" if state.allow_enchant_transport else "🔴 **DISABLED** (Caerleon local buy & enchant ONLY)"
+        await ctx.send(f"ℹ️ **Enchantment Transport Status**: {status}\nUsage: `!enchanttransport on` or `!enchanttransport off`.")
+        return
+    mode_clean = mode.strip().lower()
+    if mode_clean in ("on", "true", "enable", "enabled", "1"):
+        state.allow_enchant_transport = True
+        await ctx.send("✅ **Enchantment Transport ENABLED**: Showing outer city base items (e.g. Thetford ➔ Caerleon ➔ BM).")
+    elif mode_clean in ("off", "false", "disable", "disabled", "0"):
+        state.allow_enchant_transport = False
+        await ctx.send("✅ **Enchantment Transport DISABLED**: Showing ONLY Caerleon local buy & enchant (Caerleon ➔ BM).")
+    else:
+        await ctx.send("❌ Invalid option. Use `!enchanttransport on` or `!enchanttransport off`.")
+
+
+
+@bot.command()
+async def premium(ctx, status: str = None):
+    """View or toggle player Premium status (4% Tax with Premium vs 8% Tax without Premium)."""
+    from app.core.config import settings
+
+    if status is None:
+        mode = "👑 **PREMIUM (4.0% Market Sales Tax)**" if settings.is_premium else "🛡️ **NON-PREMIUM (8.0% Market Sales Tax)**"
+        await ctx.send(f"ℹ️ Current Tax Setting: {mode}\nUsage: `!premium on` or `!premium off` to switch.")
+        return
+
+    clean = status.strip().lower()
+    if clean in ("on", "true", "enable", "enabled", "1", "yes"):
+        settings.is_premium = True
+        await ctx.send("✅ Player tax mode set to **👑 PREMIUM (4.0% Market Sales Tax)**.")
+    elif clean in ("off", "false", "disable", "disabled", "0", "no"):
+        settings.is_premium = False
+        await ctx.send("✅ Player tax mode set to **🛡️ NON-PREMIUM (8.0% Market Sales Tax)**.")
+    else:
+        await ctx.send("❌ Invalid status. Usage: `!premium on` or `!premium off`.")
+
+
+@bot.command()
+async def toggle(ctx, channel: str = None):
+    """Toggle alert channels ON or OFF."""
+    from app.core.config import settings
+    
+    mapping = {
+        "arb": "enable_alerts_arb",
+        "arbitrage": "enable_alerts_arb",
+        "crafting": "enable_alerts_crafting",
+        "craft": "enable_alerts_crafting",
+        "enchanting": "enable_alerts_enchanting",
+        "enchant": "enable_alerts_enchanting",
+        "mm": "enable_alerts_mm",
+        "marketmaking": "enable_alerts_mm",
+        "refining": "enable_alerts_refining",
+        "refine": "enable_alerts_refining",
+        
+        "b-arb": "enable_alerts_bm_arb",
+        "b-arbitrage": "enable_alerts_bm_arb",
+        "bm-arb": "enable_alerts_bm_arb",
+        "b-crafting": "enable_alerts_bm_crafting",
+        "b-craft": "enable_alerts_bm_crafting",
+        "bm-crafting": "enable_alerts_bm_crafting",
+        "b-enchanting": "enable_alerts_bm_enchanting",
+        "b-enchant": "enable_alerts_bm_enchanting",
+        "bm-enchanting": "enable_alerts_bm_enchanting",
+        "b-mm": "enable_alerts_bm_mm",
+        "bm-mm": "enable_alerts_bm_mm",
+        "b-refining": "enable_alerts_bm_refining",
+        "b-refine": "enable_alerts_bm_refining",
+        "bm-refining": "enable_alerts_bm_refining",
+    }
+    
+    display_names = {
+        "arb": "Royal Arbitrage",
+        "crafting": "Royal Crafting",
+        "enchanting": "Royal Enchanting",
+        "mm": "Royal Market Making",
+        "refining": "Royal Refining",
+        "b-arb": "Black Market Arbitrage",
+        "b-crafting": "Black Market Crafting",
+        "b-enchanting": "Black Market Enchanting",
+        "b-mm": "Black Market MM",
+        "b-refining": "Black Market Refining",
+    }
+    
+    if not channel:
+        lines = ["# 🔔 ALERT FEED TOGGLES"]
+        for key, name in display_names.items():
+            attr = mapping[key]
+            status = getattr(settings, attr)
+            badge = "🟢 **ON**" if status else "🔴 **OFF**"
+            lines.append(f"> `{key.ljust(12)}` — {name}: {badge}")
+        lines.append("\n*Usage: `!toggle b-crafting` to switch a channel ON/OFF.*")
+        await ctx.send("\n".join(lines))
+        return
+        
+    channel_clean = channel.lower().strip()
+    
+    if channel_clean in ("all", "reset", "on"):
+        for attr in set(mapping.values()):
+            setattr(settings, attr, True)
+        await ctx.send("✅ **All 10 alert channels are now turned ON.**")
+        return
+        
+    if channel_clean in ("off", "none", "clear"):
+        for attr in set(mapping.values()):
+            setattr(settings, attr, False)
+        await ctx.send("🛑 **All 10 alert channels are now turned OFF.**")
+        return
+
+    if channel_clean not in mapping:
+        await ctx.send(f"❌ Unknown channel `{channel}`. Valid channels:\n`arb`, `crafting`, `enchanting`, `mm`, `refining`, `b-arb`, `b-crafting`, `b-enchanting`, `b-mm`, `b-refining`")
+        return
+        
+    attr = mapping[channel_clean]
+    new_val = not getattr(settings, attr)
+    setattr(settings, attr, new_val)
+    status_str = "🟢 **ON**" if new_val else "🔴 **OFF**"
+    await ctx.send(f"✅ Alert channel `{channel_clean}` is now {status_str}.")
 
 
 @bot.command()
@@ -680,20 +864,24 @@ async def patch(ctx):
         await ctx.send(embed=embed)
 
 
-@bot.command(name="caravan")
-async def caravan_cmd(ctx, source: str, dest: str, weight: float = 1000.0):
-    from app.arbitrage.caravan import optimize_caravan
+    def norm_city(c: str) -> str:
+        c_clean = c.strip()
+        if c_clean.lower() in ("bm", "blackmarket", "black_market"):
+            return "Black Market"
+        return c_clean.title()
 
-    res = optimize_caravan(source.capitalize(), dest.capitalize(), weight)
+    src_city = norm_city(source)
+    dst_city = norm_city(dest)
+    res = optimize_caravan(src_city, dst_city, weight)
 
     if not res["items"]:
         await ctx.send(
-            f"⚠️ No profitable transport routes found from {source.capitalize()} to {dest.capitalize()}."
+            f"⚠️ No profitable transport routes found from {src_city} to {dst_city}."
         )
         return
 
     embed = discord.Embed(
-        title=f"🐪 Caravan: {source.capitalize()} ➔ {dest.capitalize()}",
+        title=f"🐪 Caravan: {src_city} ➔ {dst_city}",
         description=f"Capacity: {res['used_weight']}/{res['max_weight_capacity']}kg\nTotal Profit: **{int(res['total_expected_profit']):,}**\nInvestment: **{int(res['total_investment']):,}**",
         color=discord.Color.gold(),
     )
@@ -763,11 +951,17 @@ async def start_discord_bot():
                 else:
                     log.error(f"Discord bot failed to start with HTTP error: {e}")
                     break
+            except asyncio.CancelledError:
+                log.info("Discord bot task cancelled.")
+                break
             except Exception as e:
                 log.error(f"Discord bot failed to start: {e}")
                 break
 
 
 async def stop_discord_bot():
-    if not bot.is_closed():
-        await bot.close()
+    try:
+        if not bot.is_closed():
+            await bot.close()
+    except (asyncio.CancelledError, Exception):
+        pass

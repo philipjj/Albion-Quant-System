@@ -167,7 +167,7 @@ class MarketCollector:
     def _get_tradeable_items_info(self, db: Session) -> dict[str, dict]:
         """Returns map of item_id -> {tier, category} for all scan targets."""
         # Task 5.4 - Derived tradeability logic instead of missing model field
-        material_cats = ["crafting", "gathering", "consumables", "farming"]
+        material_cats = ["crafting", "gathering", "consumables", "farming", "magic", "artefacts", "materials", "token"]
         excluded_cats = ["furniture", "vanity", "other"]
 
         query = db.query(Item.item_id, Item.tier, Item.category).filter(
@@ -218,12 +218,18 @@ class MarketCollector:
             "armors",
             "shoes",
             "offhands",
+            "artefacts", # Critical for enchanting (RUNES, SOULS, RELICS)
+            "materials",
+            "magic",
+            "token"
         ]:
             return True
 
         # Low Frequency (Every 60 min)
-        if cat in ["mounts", "artefacts", "capes", "bags"]:
-            return (current_minute % 60) < 5  # Poll only at the top of the hour
+        if cat in ["mounts", "capes", "bags"]:
+            # If the current minute is 0-10, allow it to be polled to ensure 
+            # all partitions (up to 10) get a chance to poll it.
+            return (current_minute % 60) < 15
 
         return True
 

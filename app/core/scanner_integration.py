@@ -23,6 +23,9 @@ from app.core.opportunity_engine import (
     ArbitrageOpportunity,
     BMOpportunity,
     CraftingOpportunity,
+    EnchantingOpportunity,
+    RefiningOpportunity,
+    MarketMakingOpportunity,
     OpportunityScanner,
 )
 from app.db.models import BlackMarketSnapshot, Item, MarketPrice, Recipe
@@ -38,10 +41,10 @@ class UnifiedScanner:
     def __init__(
         self,
         use_focus: bool = False,
-        premium: bool = True,
+        premium: bool = None,
         min_bm_profit: int = 30_000,
-        min_craft_profit: int = 15_000,
-        min_arb_profit: int = 5_000,
+        min_craft_profit: int = 5_000,
+        min_arb_profit: int = 1_000,
     ):
         self.default_min_bm_profit = min_bm_profit
         self.default_min_craft_profit = min_craft_profit
@@ -71,6 +74,7 @@ class UnifiedScanner:
                 MarketPrice.captured_at >= cutoff,
                 MarketPrice.server == settings.active_server.value,
             )
+            .order_by(MarketPrice.captured_at.asc())
             .all()
         )
         log.info(
@@ -88,13 +92,11 @@ class UnifiedScanner:
                 prices[item_id][city] = {}
 
             existing = prices[item_id][city].get(quality)
-            if (
-                existing
-                and p.captured_at
-                and existing.get("_ts")
-                and p.captured_at <= existing["_ts"]
-            ):
-                continue  # Keep newest only
+            if existing and existing.get("_ts"):
+                cur_ts = p.captured_at or datetime.min
+                old_ts = existing.get("_ts") or datetime.min
+                if cur_ts <= old_ts:
+                    continue  # Keep newest only
 
             # Recompute data age dynamically: original API age + time since collection
             api_age = int(p.data_age_seconds) if p.data_age_seconds is not None else 0
@@ -167,13 +169,20 @@ class UnifiedScanner:
 
         return prices
 
-    def _load_item_metadata(self, db: Session) -> tuple[dict, dict, dict]:
-        """Returns (item_names, item_categories, item_values)"""
-        rows = db.query(Item.item_id, Item.name, Item.category, Item.item_value).all()
+    def _load_item_metadata(self, db: Session) -> tuple[dict, dict, dict, dict]:
+        """Returns (item_names, item_categories, item_values, item_weights)"""
+        # Ensure your Item model has a 'weight' column (or gracefully fallback)
+        try:
+            rows = db.query(Item.item_id, Item.name, Item.category, Item.item_value, getattr(Item, "weight", None).label("weight")).all()
+        except Exception:
+            rows = db.query(Item.item_id, Item.name, Item.category, Item.item_value).all()
+            
         names = {r.item_id: r.name for r in rows}
         categories = {r.item_id: (r.category or "") for r in rows}
         values = {r.item_id: float(r.item_value or 0.0) for r in rows}
-        return names, categories, values
+        weights = {r.item_id: float(getattr(r, "weight", 0.0) or 0.0) for r in rows}
+        return names, categories, values, weights
+
 
     def _load_recipes(self, db: Session) -> dict:
         """
@@ -220,11 +229,12 @@ class UnifiedScanner:
     # ── Main entry point ────────────────────────────────────────────────────
 
     async def scan_all(
-        self, db: Session = None, scan_bm: bool = False
-    ) -> tuple[list[dict], list[dict], list[dict]]:
+        self, db: Session = None, scan_bm: bool = False, lookback_hours: float = 4.0
+    ) -> tuple[list[dict], list[dict], list[dict], list[dict], list[dict], list[dict]]:
         """
-        Returns (bm_opps, craft_opps, arb_opps) as plain dicts ready for DB storage
-        and Discord alerts. All sorted by score descending.
+        Returns (bm_opps, craft_opps, arb_opps, refining_opps, mm_opps, enchant_opps) as plain dicts
+        ready for DB storage and Discord alerts. All sorted by score descending.
+        Runs all scanners in one unified pass, optionally returning raw dicts.
         """
         from app.core import state
 
@@ -232,38 +242,97 @@ class UnifiedScanner:
         self.engine.min_arb_profit = self.default_min_arb_profit
         self.engine.min_craft_profit = state.min_craft_profit
         self.engine.min_bm_profit = state.min_bm_profit
+        self.engine.allow_enchant_transport = getattr(state, "allow_enchant_transport", False)
 
-        with get_db_session() as db:
+        if db is None:
+            db_context = get_db_session()
+            session = db_context.__enter__()
+        else:
+            session = db
+            db_context = None
+            
+        try:
             log.info("[UNIFIED SCANNER] Loading prices...")
-            prices = self._load_prices(db, scan_bm=scan_bm)
+            prices = self._load_prices(session, lookback_hours=lookback_hours, scan_bm=scan_bm)
             log.info(f"[UNIFIED SCANNER] {len(prices)} items loaded.")
 
-            names, categories, values = self._load_item_metadata(db)
-            recipes = self._load_recipes(db)
+            names, categories, values, weights = self._load_item_metadata(session)
+            recipes = self._load_recipes(session)
 
-        bm_raw = []
-        if scan_bm:
-            log.info("[UNIFIED SCANNER] Scanning Black Market...")
-            bm_raw = self.engine.scan_black_market(prices, names, recipes, categories, values)
-            log.info(f"[UNIFIED SCANNER] BM: {len(bm_raw)} opportunities")
+            bm_raw = []
+            enchant_raw = []
+            if scan_bm:
+                log.info("[UNIFIED SCANNER] Scanning Black Market...")
+                bm_raw = self.engine.scan_black_market(prices, names, recipes, categories, values, weights)
+                log.info(f"[UNIFIED SCANNER] BM: {len(bm_raw)} opportunities")
+                
+                log.info("[UNIFIED SCANNER] Scanning Enchantment Flips...")
+                enchant_raw = self.engine.scan_enchanting(prices, names, categories)
+                log.info(f"[UNIFIED SCANNER] Enchantment: {len(enchant_raw)} opportunities")
 
-        log.info("[UNIFIED SCANNER] Scanning Crafting...")
-        craft_raw = self.engine.scan_crafting(prices, names, recipes, categories, values)
-        log.info(f"[UNIFIED SCANNER] Crafting: {len(craft_raw)} opportunities")
+            log.info("[UNIFIED SCANNER] Scanning Crafting...")
+            craft_raw = self.engine.scan_crafting(prices, names, recipes, categories, values, weights)
+            log.info(f"[UNIFIED SCANNER] Crafting: {len(craft_raw)} opportunities")
 
-        log.info("[UNIFIED SCANNER] Scanning Arbitrage...")
-        arb_raw = self.engine.scan_arbitrage(prices, names)
-        log.info(f"[UNIFIED SCANNER] Arbitrage: {len(arb_raw)} opportunities")
+            log.info("[UNIFIED SCANNER] Scanning Arbitrage...")
+            arb_raw = self.engine.scan_arbitrage(prices, names, weights)
+            log.info(f"[UNIFIED SCANNER] Arbitrage: {len(arb_raw)} opportunities")
 
-        return (
-            [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw]
-            if scan_bm
-            else [],
-            [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in craft_raw],
-            [self._arb_to_dict(o, categories.get(o.item_id, "Unknown")) for o in arb_raw],
-        )
+            log.info("[UNIFIED SCANNER] Scanning Refining...")
+            refine_raw = self.engine.scan_refining(prices, names, recipes, categories, values, weights)
+            log.info(f"[UNIFIED SCANNER] Refining: {len(refine_raw)} opportunities")
+
+            log.info("[UNIFIED SCANNER] Scanning Market Making...")
+            mm_raw = self.engine.scan_market_making(prices, names, weights)
+            log.info(f"[UNIFIED SCANNER] MM: {len(mm_raw)} opportunities")
+
+            return (
+                [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw] if scan_bm else [],
+                [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in craft_raw],
+                [self._arb_to_dict(o, categories.get(o.item_id, "Unknown")) for o in arb_raw],
+                [self._refine_to_dict(o, categories.get(o.item_id, "Unknown")) for o in refine_raw],
+                [self._mm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in mm_raw],
+                [self._enchant_to_dict(o, categories.get(o.target_item_id, "Unknown")) for o in enchant_raw] if scan_bm else []
+            )
+        finally:
+            if db_context:
+                db_context.__exit__(None, None, None)
 
     # ── Dict converters for compatibility with existing DB/Discord code ─────
+
+    def _enchant_to_dict(self, o, category: str) -> dict[str, Any]:
+        base_c = getattr(o, "base_city", "Caerleon")
+        return {
+            "item_id": o.target_item_id,
+            "target_item_id": o.target_item_id,
+            "item_name": self._enhance_name(o.target_item_id, o.target_item_name, getattr(o, "quality", 1)),
+            "base_item_id": o.base_item_id,
+            "base_price": o.base_price,
+            "base_city": base_c,
+            "material_id": o.material_id,
+            "material_qty": o.material_qty,
+            "material_price": o.material_price,
+            "bm_buy_price": o.bm_buy_price,
+            "estimated_profit": o.net_profit,
+            "estimated_margin": o.profit_pct,
+            "profit": o.net_profit,
+            "profit_pct": o.profit_pct,
+            "profit_margin": o.profit_pct,
+            "source_city": base_c,
+            "destination_city": "Black Market",
+            "total_cost": o.total_cost,
+            "safe_limit": o.safe_limit,
+            "roi": o.roi,
+            "quality": o.quality,
+            "data_age_base": getattr(o, "data_age_base", 0),
+            "data_age_material": getattr(o, "data_age_material", 0),
+            "data_age_bm": getattr(o, "data_age_bm", 0),
+            "category": category,
+            "type": "enchanting",
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
+            "detected_at": datetime.utcnow().isoformat(),
+        }
 
     def _enhance_name(self, item_id: str, item_name: str, quality: int) -> str:
         display_name = item_name
@@ -286,6 +355,9 @@ class UnifiedScanner:
             "sell_price": o.bm_buy_price,
             "estimated_profit": o.effective_profit,
             "estimated_margin": o.profit_pct,
+            "profit": o.effective_profit,
+            "profit_pct": o.profit_pct,
+            "profit_margin": o.profit_pct,
             "mode": o.mode,  # "BUY+RUN" or "CRAFT+RUN"
             "craft_cost": o.craft_cost,
             "craft_city": o.craft_city,
@@ -298,6 +370,8 @@ class UnifiedScanner:
             "risk_score": 0.5,  # BM always requires Caerleon run
             "type": "black_market",
             "category": category,
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
             "detected_at": datetime.utcnow().isoformat(),
         }
 
@@ -306,7 +380,9 @@ class UnifiedScanner:
             "item_id": o.item_id,
             "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
             "crafting_city": o.craft_city,
+            "source_city": o.craft_city,
             "sell_city": o.sell_city,
+            "destination_city": o.sell_city,
             "sell_mode": o.sell_mode,  # "BM" or "MARKET"
             "craft_cost": o.material_cost_net + o.station_fee,
             "material_cost_gross": o.material_cost_gross,
@@ -316,7 +392,10 @@ class UnifiedScanner:
             "sell_price": o.sell_price,
             "revenue_net": o.revenue_net,
             "profit": o.profit,
+            "estimated_profit": o.profit,
             "profit_margin": o.profit_pct,
+            "estimated_margin": o.profit_pct,
+            "profit_pct": o.profit_pct,
             "daily_volume": o.daily_volume,
             "data_age_materials": o.data_age_materials,
             "data_age_sell": o.data_age_sell,
@@ -326,6 +405,82 @@ class UnifiedScanner:
             "ingredients": o.ingredients,
             "type": "crafting",
             "category": category,
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
+            "detected_at": datetime.utcnow().isoformat(),
+        }
+
+    def _refine_to_dict(self, o: RefiningOpportunity, category: str) -> dict[str, Any]:
+        return {
+            "item_id": o.item_id,
+            "item_name": self._enhance_name(o.item_id, o.item_name, o.quality),
+            "buy_city": getattr(o, "buy_city", ""),
+            "refine_city": o.refine_city,
+            "crafting_city": o.refine_city,
+            "source_city": getattr(o, "buy_city", "") or o.refine_city,
+            "sell_city": o.sell_city,
+            "destination_city": o.sell_city,
+            "material_cost_gross": o.material_cost_gross,
+            "rrr_used": o.rrr_used,
+            "material_cost_net": o.material_cost_net,
+            "station_fee": o.station_fee,
+            "craft_cost": o.material_cost_net + o.station_fee,
+            "sell_price": o.sell_price,
+            "revenue_net": o.revenue_net,
+            "profit": o.profit,
+            "estimated_profit": o.profit,
+            "profit_pct": o.profit_pct,
+            "profit_margin": o.profit_pct,
+            "estimated_margin": o.profit_pct,
+            "daily_volume": o.daily_volume,
+            "data_age_materials": o.data_age_materials,
+            "data_age_sell": o.data_age_sell,
+            "quality": o.quality,
+            "use_focus": o.use_focus,
+            "focus_cost": o.focus_cost,
+            "silver_per_focus": o.silver_per_focus,
+            "safe_limit": o.safe_limit,
+            "roi": o.roi,
+            "profit_per_kg": o.profit_per_kg,
+            "ev_score": o.score,
+            "ingredients": getattr(o, "ingredients", []),
+            "category": category,
+            "type": "refining",
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
+            "detected_at": datetime.utcnow().isoformat(),
+        }
+
+    def _mm_to_dict(self, o: MarketMakingOpportunity, category: str) -> dict[str, Any]:
+        return {
+            "item_id": o.item_id,
+            "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
+            "source_city": o.source_city,
+            "destination_city": o.destination_city,
+            "buy_price": o.buy_price,
+            "sell_price": o.sell_price,
+            "gross_profit": o.gross_profit,
+            "setup_fees": o.setup_fees,
+            "tax_paid": o.tax_paid,
+            "net_profit": o.net_profit,
+            "profit": o.net_profit,
+            "estimated_profit": o.net_profit,
+            "profit_pct": o.profit_pct,
+            "profit_margin": o.profit_pct,
+            "estimated_margin": o.profit_pct,
+            "daily_volume": o.daily_volume,
+            "data_age_buy": o.data_age_buy,
+            "data_age_sell": o.data_age_sell,
+            "is_dangerous_route": getattr(o, "is_dangerous_route", False),
+            "quality": getattr(o, "quality", 1),
+            "safe_limit": getattr(o, "safe_limit", 1),
+            "roi": getattr(o, "roi", 0.0),
+            "profit_per_kg": getattr(o, "profit_per_kg", 0.0),
+            "ev_score": getattr(o, "score", 0.0),
+            "category": category,
+            "type": "market_making",
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
             "detected_at": datetime.utcnow().isoformat(),
         }
 
@@ -339,6 +494,9 @@ class UnifiedScanner:
             "sell_price": o.sell_price,  # This is buy_price_max (existing buy order)
             "estimated_profit": o.net_profit,
             "estimated_margin": o.profit_pct,
+            "roi": getattr(o, "roi", o.profit_pct),
+            "safe_limit": getattr(o, "safe_limit", 1),
+            "profit_per_kg": getattr(o, "profit_per_kg", 0.0),
             "tax_paid": o.tax_paid,
             "is_dangerous": o.is_dangerous_route,
             "daily_volume": o.daily_volume,
@@ -349,6 +507,8 @@ class UnifiedScanner:
             "risk_score": 0.7 if o.is_dangerous_route else 0.2,
             "type": "arbitrage",
             "category": category,
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
             "detected_at": datetime.utcnow().isoformat(),
         }
 

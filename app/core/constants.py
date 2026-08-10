@@ -17,8 +17,9 @@ ROYAL_CITIES = [
 
 BLACK_MARKET_CITY = "Black Market"
 CAERLEON = "Caerleon"
+BRECILIEN = "Brecilien"
 
-ALL_MARKET_CITIES = ROYAL_CITIES + [CAERLEON]
+ALL_MARKET_CITIES = ROYAL_CITIES + [CAERLEON, BRECILIEN]
 ALL_CITIES_WITH_BM = ALL_MARKET_CITIES + [BLACK_MARKET_CITY]
 
 # API location strings
@@ -29,6 +30,7 @@ CITY_API_NAMES = {
     "Fort Sterling": "Fort Sterling",
     "Thetford": "Thetford",
     "Caerleon": "Caerleon",
+    "Brecilien": "Brecilien",
     "Black Market": "Black Market",
 }
 
@@ -38,53 +40,77 @@ CITY_API_NAMES = {
 
 CITY_CRAFTING_BONUSES = {
     "Bridgewatch": {
-        "bonus_categories": ["crossbow", "dagger", "curse_staff", "torch", "shield"],
-        "refining_bonus": ["rock", "ore"],
+        "bonus_categories": ["crossbow", "dagger", "cursed_staff", "curse_staff", "plate_armor", "cloth_shoes", "cloth_boots"],
+        "refining_bonus": ["rock", "stone", "block", "stoneblock"],
     },
     "Martlock": {
-        "bonus_categories": ["axe", "quarterstaff", "frost_staff", "off_hand"],
-        "refining_bonus": ["hide", "rock"],
+        "bonus_categories": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "plate_boots", "leather_armor", "offhand", "off_hand"],
+        "refining_bonus": ["hide", "leather"],
     },
     "Lymhurst": {
-        "bonus_categories": ["sword", "bow", "fire_staff", "cape"],
-        "refining_bonus": ["wood", "fiber"],
+        "bonus_categories": ["sword", "bow", "arcane_staff", "leather_helmet", "leather_hood", "leather_shoes", "leather_boots"],
+        "refining_bonus": ["fiber", "cloth"],
     },
     "Fort Sterling": {
-        "bonus_categories": ["hammer", "spear", "holy_staff", "helmet", "armor"],
-        "refining_bonus": ["wood", "ore"],
+        "bonus_categories": ["hammer", "spear", "holy_staff", "plate_helmet", "cloth_armor"],
+        "refining_bonus": ["wood", "planks"],
     },
     "Thetford": {
-        "bonus_categories": ["mace", "nature_staff", "arcane_staff", "shoes"],
-        "refining_bonus": ["fiber", "hide"],
+        "bonus_categories": ["mace", "nature_staff", "fire_staff", "cloth_helmet", "cloth_headgear", "leather_armor"],
+        "refining_bonus": ["ore", "bar", "metalbar"],
+    },
+    "Caerleon": {
+        "bonus_categories": ["cooked_food", "food", "war_gloves", "shapeshifter_staff", "gathering_gear", "gathering_tool", "tool"],
+        "refining_bonus": [],
+    },
+    "Brecilien": {
+        "bonus_categories": ["potion", "bag", "cape"],
+        "refining_bonus": [],
     },
 }
 
 # ═══════════════════════════════════════════════════════════════
-# RESOURCE RETURN RATES (RRR) - Updated May 2026
+# RESOURCE RETURN RATES (RRR) — Albion Online Mathematical Formulas
+# RRR = LPB / (1.0 + LPB)  where LPB = Local Production Bonus
 # ═══════════════════════════════════════════════════════════════
 
-# Royal City RRR
-BASE_RESOURCE_RETURN_RATE = 0.18  # Was 0.152
-CITY_BONUS_RESOURCE_RETURN_RATE = 0.33  # Was 0.248
-FOCUS_RESOURCE_RETURN_RATE = 0.48  # Base + Focus (Royal)
-FOCUS_CITY_BONUS_RRR = 0.58  # Bonus + Focus (Royal)
+def calculate_rrr(lpb: float) -> float:
+    """
+    Derives Resource Return Rate (RRR) from Local Production Bonus (LPB).
+    Formula: RRR = LPB / (1 + LPB)
+    """
+    if lpb <= 0:
+        return 0.0
+    return round(lpb / (1.0 + lpb), 5)
 
-# Refining RRR
-REFINING_BASE_RRR = 0.18
-REFINING_BONUS_RRR = 0.367
-REFINING_FOCUS_RRR = 0.539
+
+# Local Production Bonuses (LPB)
+BASE_PRODUCTION_BONUS = 0.18        # 18% base LPB in Royal Cities
+CRAFTING_SPECIALTY_LPB = 0.15       # +15% LPB for matching craft category
+REFINING_SPECIALTY_LPB = 0.40       # +40% LPB for matching refining resource
+FOCUS_CRAFTING_LPB = 1.00           # +100% LPB with Focus
+
+# Derived RRR Constants
+BASE_RESOURCE_RETURN_RATE = calculate_rrr(BASE_PRODUCTION_BONUS)  # 0.15254 (15.25%)
+CITY_BONUS_RESOURCE_RETURN_RATE = calculate_rrr(BASE_PRODUCTION_BONUS + CRAFTING_SPECIALTY_LPB)  # 0.24812 (24.81%)
+REFINING_BONUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + REFINING_SPECIALTY_LPB)  # 0.36709 (36.71%)
+
+# Focus RRR Constants
+FOCUS_RESOURCE_RETURN_RATE = calculate_rrr(BASE_PRODUCTION_BONUS + FOCUS_CRAFTING_LPB)  # 0.48000
+FOCUS_CITY_BONUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + CRAFTING_SPECIALTY_LPB + FOCUS_CRAFTING_LPB)  # 0.57082 (57.08%)
+REFINING_FOCUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + REFINING_SPECIALTY_LPB + FOCUS_CRAFTING_LPB)  # 0.61240 (61.24%)
 
 # Islands & Hideouts
 ISLAND_RESOURCE_RETURN_RATE = 0.00
-ISLAND_FOCUS_RRR = 0.37
+ISLAND_FOCUS_RRR = calculate_rrr(FOCUS_CRAFTING_LPB)  # 0.50000
 
 # ═══════════════════════════════════════════════════════════════
-# MARKET MECHANICS - Updated May 2026
+# MARKET MECHANICS
 # ═══════════════════════════════════════════════════════════════
 
-SETUP_FEE = 0.025  # 2.5% setup fee (upfront)
-PREMIUM_SALES_TAX = 0.04  # 4% sales tax
-NON_PREMIUM_SALES_TAX = 0.08  # 8% sales tax
+SETUP_FEE = 0.025  # 2.5% setup fee (upfront listing)
+PREMIUM_SALES_TAX = 0.04  # 4% sales tax (Premium)
+NON_PREMIUM_SALES_TAX = 0.08  # 8% sales tax (Non-Premium)
 
 # ═══════════════════════════════════════════════════════════════
 # TRANSPORT DISTANCES
@@ -96,16 +122,22 @@ TRANSPORT_DISTANCES = {
     ("Bridgewatch", "Fort Sterling"): 6,
     ("Bridgewatch", "Thetford"): 5,
     ("Bridgewatch", "Caerleon"): 3,
+    ("Bridgewatch", "Brecilien"): 6,
     ("Martlock", "Lymhurst"): 5,
     ("Martlock", "Fort Sterling"): 4,
     ("Martlock", "Thetford"): 6,
     ("Martlock", "Caerleon"): 3,
+    ("Martlock", "Brecilien"): 6,
     ("Lymhurst", "Fort Sterling"): 5,
     ("Lymhurst", "Thetford"): 4,
     ("Lymhurst", "Caerleon"): 3,
+    ("Lymhurst", "Brecilien"): 6,
     ("Fort Sterling", "Thetford"): 5,
     ("Fort Sterling", "Caerleon"): 3,
+    ("Fort Sterling", "Brecilien"): 6,
     ("Thetford", "Caerleon"): 3,
+    ("Thetford", "Brecilien"): 6,
+    ("Caerleon", "Brecilien"): 4,
 }
 
 
@@ -126,6 +158,8 @@ DANGEROUS_ROUTES = {
     ("Lymhurst", "Black Market"),
     ("Fort Sterling", "Black Market"),
     ("Thetford", "Black Market"),
+    ("Brecilien", "Black Market"),
+    ("Brecilien", "Caerleon"),
 }
 
 # ═══════════════════════════════════════════════════════════════

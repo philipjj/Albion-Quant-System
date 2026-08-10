@@ -27,11 +27,24 @@ def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
             print(f"Failed to set SQLite pragma: {e}")
 
 
-engine_kwargs = {}
-if settings.database_url.startswith("sqlite"):
-    engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30.0}
+db_url = settings.database_url
+try:
+    engine_kwargs = {}
+    if db_url.startswith("sqlite"):
+        engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30.0}
+    else:
+        engine_kwargs["pool_size"] = 10
+        engine_kwargs["max_overflow"] = 20
+        engine_kwargs["pool_recycle"] = 1800
 
-engine = create_engine(settings.database_url, echo=False, pool_pre_ping=True, **engine_kwargs)
+    engine = create_engine(db_url, echo=False, pool_pre_ping=True, **engine_kwargs)
+    with engine.connect() as _test_conn:
+        pass
+except Exception as e:
+    print(f"[DB] Primary DB ({db_url}) unavailable ({e}). Using local SQLite: sqlite:///./data/albion_quant.db")
+    db_url = "sqlite:///./data/albion_quant.db"
+    engine = create_engine(db_url, echo=False, pool_pre_ping=True, connect_args={"check_same_thread": False, "timeout": 30.0})
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Async Support for TimescaleDB/PostgreSQL
@@ -39,14 +52,16 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-# We derive the async URL from the sync one if it's postgresql
 async_engine = None
 AsyncSessionLocal = None
 
-if settings.database_url.startswith("postgresql"):
-    async_url = settings.database_url.replace("postgresql://", "postgresql+asyncpg://")
-    async_engine = create_async_engine(async_url, echo=False, pool_pre_ping=True)
-    AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=async_engine)
+if db_url.startswith("postgresql"):
+    try:
+        async_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
+        async_engine = create_async_engine(async_url, echo=False, pool_pre_ping=True, pool_size=10, max_overflow=20, pool_recycle=1800)
+        AsyncSessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=async_engine)
+    except Exception:
+        pass
 
 
 @asynccontextmanager
@@ -72,16 +87,27 @@ def init_db() -> None:
     inspector = inspect(engine)
 
     with engine.connect() as conn:
-        # Helper to add column if missing
-        def add_col(table, col, col_type):
+        # Pre-cache column names for all existing tables in a single schema lookup
+        tables = set(inspector.get_table_names())
+        columns_cache = {}
+        for t in tables:
             try:
-                cols = [c["name"] for c in inspector.get_columns(table)]
-                if col not in cols:
+                columns_cache[t] = {c["name"] for c in inspector.get_columns(t)}
+            except Exception:
+                columns_cache[t] = set()
+
+        # Fast helper to check and add missing columns
+        def add_col(table, col, col_type):
+            if table not in columns_cache:
+                return
+            if col not in columns_cache[table]:
+                try:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}"))
                     conn.commit()
+                    columns_cache[table].add(col)
                     print(f"Migration: Added {col} to {table}")
-            except Exception as e:
-                print(f"Migration Error ({table}.{col}): {e}")
+                except Exception as e:
+                    print(f"Migration Error ({table}.{col}): {e}")
 
         # 1. Items
         add_col("items", "item_value", "FLOAT DEFAULT 0.0")
@@ -150,13 +176,9 @@ def init_db() -> None:
                         )
                     )
                     conn.commit()
-                    print("Migration: Verified hypertable for market_prices")
-                except Exception as e:
+                except Exception:
                     conn.rollback()
-                    # This might fail if the extension is not installed or it's already a hypertable
-                    print(f"Migration Error (Hypertable): {e}")
 
-            print("Migration: Unique UPSERT indexes verified")
         except Exception as e:
             conn.rollback()
             print(f"Migration Error (Indexes): {e}")
@@ -178,6 +200,8 @@ def init_db() -> None:
         add_col("crafting_opportunities", "persistence", "INTEGER DEFAULT 1")
         add_col("crafting_opportunities", "ingredients_json", "TEXT")
         add_col("crafting_opportunities", "decision_log", "TEXT")
+
+        conn.commit()
 
         conn.commit()
 

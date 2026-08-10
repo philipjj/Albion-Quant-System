@@ -66,15 +66,49 @@ def _get_category_group(item_id: str) -> str:
         return "Resources"
     return "Equipment"
 
+def _fmt_age(seconds: int) -> str:
+    if not seconds or seconds <= 0:
+        return "<1m ago"
+    if seconds < 60:
+        return f"{int(seconds)}s ago"
+    minutes = int(seconds) // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    rem_m = minutes % 60
+    return f"{hours}h {rem_m}m ago"
+
+
+def _premium_badge(opp: dict) -> str:
+    is_prem = opp.get("is_premium", getattr(settings, "is_premium", False))
+    tax_pct = (opp.get("tax_rate", 0.04 if is_prem else 0.08)) * 100.0
+    if is_prem:
+        return f"👑 Premium ({tax_pct:.1f}% Tax)"
+    return f"🛡️ Non-Premium ({tax_pct:.1f}% Tax)"
+
 
 class DiscordAlerter:
     def __init__(self):
         self.webhook_url = settings.discord_webhook_url
+        self.arb_webhook_url = settings.discord_arb_webhook_url
         self.bm_webhook_url = settings.discord_bm_webhook_url
-        self.enabled = bool(
-            (self.webhook_url and "YOUR_WEBHOOK" not in self.webhook_url)
-            or (self.bm_webhook_url and "YOUR_WEBHOOK" not in self.bm_webhook_url)
-        )
+        self.bm_arb_webhook_url = settings.discord_bm_arb_webhook_url
+        self.crafting_webhook_url = settings.discord_crafting_webhook_url
+        self.bm_crafting_webhook_url = settings.discord_bm_crafting_webhook_url
+        self.refining_webhook_url = settings.discord_refining_webhook_url
+        self.bm_refining_webhook_url = settings.discord_bm_refining_webhook_url
+        self.enchanting_webhook_url = settings.discord_enchanting_webhook_url
+        self.bm_enchanting_webhook_url = settings.discord_bm_enchanting_webhook_url
+        self.mm_webhook_url = settings.discord_mm_webhook_url
+        self.bm_mm_webhook_url = settings.discord_bm_mm_webhook_url
+
+        all_urls = [
+            self.webhook_url, self.arb_webhook_url, self.bm_webhook_url, self.bm_arb_webhook_url,
+            self.crafting_webhook_url, self.bm_crafting_webhook_url, self.refining_webhook_url,
+            self.bm_refining_webhook_url, self.enchanting_webhook_url, self.bm_enchanting_webhook_url,
+            self.mm_webhook_url, self.bm_mm_webhook_url
+        ]
+        self.enabled = any(u and "YOUR_WEBHOOK" not in u for u in all_urls)
 
     async def _send_webhook(self, payload: dict, webhook_url: str = None) -> bool:
         if not self.enabled:
@@ -120,53 +154,90 @@ class DiscordAlerter:
 
             await asyncio.sleep(1.0)
 
-        return False
-
     def _format_arbitrage_embed(self, opp: dict) -> dict:
         confidence = scorer.calculate_data_confidence(opp)
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = opp["estimated_margin"]
+        margin = opp.get("estimated_margin", opp.get("profit_margin", opp.get("profit_pct", 0.0)))
 
-        # Color coding by opportunity quality
-        dest_city = opp["destination_city"]
-        if dest_city == "Black Market":
-            color = 0x9B59B6  # Purple for BM
+        dest_city = opp.get("destination_city", opp.get("sell_city", "Unknown"))
+        src_city = opp.get("source_city", opp.get("crafting_city", "Unknown"))
+        is_bm = (dest_city in ["Black Market", "Caerleon"] or src_city == "Caerleon")
+
+        # Visual Theme Color
+        if is_bm:
+            color = 0x8E44AD  # Royal Velvet Purple for BM
         elif margin > 30:
-            color = 0x57F287  # Discord green
+            color = 0x2ECC71  # Vibrant Emerald Green
         elif margin > 15:
-            color = 0xFEE75C  # Discord yellow
+            color = 0xF1C40F  # Cyber Yellow
         else:
-            color = 0xFFAA00  # Amber
+            color = 0xE67E22  # Amber
 
-        desc = f"-# Margin: {margin:.1f}%\n"
+        prem_info = _premium_badge(opp)
+        age_buy = _fmt_age(opp.get("data_age_buy", 0))
+        age_sell = _fmt_age(opp.get("data_age_sell", 0))
+        risk_tag = _risk_label(opp.get("risk_score", 0))
+
+        # Build visual description header
+        route_header = f"💀 **BLACK MARKET**" if is_bm else f"⚖️ **ROYAL ARBITRAGE**"
+        desc = f"-# {route_header} • {prem_info} • Risk: {risk_tag}\n"
+        desc += f"-# ⏳ Data Age: Buy {age_buy} | Sell {age_sell}\n"
         if opp.get("can_be_crafted"):
-            desc += f"-# Craftable at {opp.get('craft_city')} (Cost: {fmt_k(opp.get('craft_cost', 0))})\n"
+            desc += f"-# 🔨 Craftable at {opp.get('craft_city')} (Cost: {fmt_k(opp.get('craft_cost', 0))})\n"
         if opp.get("coverage_suspect"):
-            desc += "-# ⚠️ Low volume\n"
-        desc += f"# {opp['source_city']} ➔ {dest_city}"
+            desc += "-# ⚠️ Low volume / Thin Liquidity\n"
+        desc += f"# {src_city} ➔ {dest_city}"
+
+        item_id = opp.get("item_id") or opp.get("target_item_id") or "T4_BAG"
+        item_name = opp.get("item_name", item_id)
+        quality = opp.get("quality", 1)
+        safe_qty = opp.get("safe_limit", 1)
+        if safe_qty < 1:
+            safe_qty = 1
+
+        # Embed title with explicit target quantity for BM
+        if is_bm:
+            embed_title = f"{badge} 📦 {safe_qty}x {item_name} (BM Demand)"
+        else:
+            embed_title = f"{badge} {item_name}"
+
+        trade_math_val = (
+            f"Target Quantity Needed: **{safe_qty}x items**\n"
+            f"Buy Price: **{fmt_k(opp.get('buy_price', 0))}** (`{src_city}`)\n"
+            f"Sell Price: **{fmt_k(opp.get('sell_price', 0))}** (`{dest_city}`)\n"
+            f"Net Profit / Item: **+{fmt_k(opp.get('estimated_profit', 0))}**\n"
+            f"Total Batch Profit ({safe_qty}x): **+{fmt_k(opp.get('estimated_profit', 0) * safe_qty)}**"
+        ) if is_bm else (
+            f"Buy: **{fmt_k(opp.get('buy_price', 0))}** (`{src_city}`)\n"
+            f"Sell: **{fmt_k(opp.get('sell_price', 0))}** (`{dest_city}`)\n"
+            f"Net Profit: **+{fmt_k(opp.get('estimated_profit', 0))}**"
+        )
 
         embed = {
-            "title": f"{badge} {opp['item_name']}",
+            "title": embed_title,
             "description": desc,
             "color": color,
             "thumbnail": {
-                "url": item_icon_url(opp["item_id"], quality=opp.get("quality", 1), size=128)
+                "url": item_icon_url(item_id, quality=quality, size=128)
             },
             "fields": [
                 {
-                    "name": "Trade Math",
-                    "value": f"Buy: **{fmt_k(opp['buy_price'])}** | Sell: **{fmt_k(opp['sell_price'])}** | Profit: **{fmt_k(opp['estimated_profit'])}**",
+                    "name": "💰 Trade Execution Math",
+                    "value": trade_math_val,
                     "inline": False,
                 },
                 {
-                    "name": "Safe Qty",
-                    "value": f"{opp.get('safe_limit', 0):,} / {opp.get('daily_volume', 0):,} vol",
+                    "name": "📊 Metrics & Yield",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**",
                     "inline": True,
                 },
-                {"name": "EV", "value": f"{fmt_k(opp.get('ev_score', 0))}", "inline": True},
-                {"name": "Risk", "value": _risk_label(opp.get("risk_score", 0)), "inline": True},
+                {
+                    "name": "📦 Target Batch & Volume",
+                    "value": f"• Target Batch: **{safe_qty} units needed**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**\n• Yield/kg: **{fmt_k(opp.get('profit_per_kg', 0))}**",
+                    "inline": True,
+                },
             ],
-            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()}"},
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
             "timestamp": datetime.utcnow().isoformat(),
         }
 
@@ -175,20 +246,22 @@ class DiscordAlerter:
     def _format_crafting_embed(self, opp: dict) -> dict:
         confidence = scorer.calculate_data_confidence(opp)
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = opp["profit_margin"]
-
-        # Color coding
+        margin = opp.get("profit_margin", opp.get("estimated_margin", opp.get("profit_pct", 0.0)))
         sell_city = opp.get("sell_city", "Any")
-        if sell_city == "Black Market":
-            color = 0x9B59B6
-        elif margin > 25:
-            color = 0x57F287
-        elif margin > 10:
-            color = 0xFEE75C
-        else:
-            color = 0xFFAA00
+        craft_city = opp.get("crafting_city", opp.get("craft_city", "Unknown"))
+        is_bm = (sell_city in ["Black Market", "Caerleon"])
 
-        # Build Crafting Path string with proper names
+        # Visual Theme Color
+        if is_bm:
+            color = 0x8E44AD  # Purple for BM
+        elif margin > 25:
+            color = 0x2ECC71  # Vibrant Green
+        elif margin > 10:
+            color = 0xF1C40F  # Cyber Yellow
+        else:
+            color = 0xE67E22  # Amber
+
+        # Build Ingredients Breakdown List
         details = opp.get("details", opp.get("ingredients", []))
         path_lines = []
         rrr = opp.get("rrr_used", 0.0)
@@ -198,7 +271,7 @@ class DiscordAlerter:
             if not mode:
                 mode = "BUY" if d.get("buy_city") else "CRAFT"
 
-            mode_icon = "Buy" if mode == "BUY" else "Craft"
+            mode_icon = "🛒 Buy" if mode == "BUY" else "🔨 Craft"
             raw_qty = d.get("quantity", 1)
             qty = int(raw_qty) if raw_qty == int(raw_qty) else raw_qty
 
@@ -212,42 +285,264 @@ class DiscordAlerter:
 
             if is_returnable and rrr > 0:
                 net_price = price * (1.0 - rrr)
-                path_lines.append(f"- {qty}x **{name}** ({mode_icon} @ {fmt_k(price)} ➔ Net: {fmt_k(net_price)})")
+                path_lines.append(f"• {qty}x **{name}** ({mode_icon} @ {fmt_k(price)} ➔ Net: `{fmt_k(net_price)}`)")
             else:
-                path_lines.append(f"- {qty}x **{name}** ({mode_icon} @ {fmt_k(price)})")
+                path_lines.append(f"• {qty}x **{name}** ({mode_icon} @ {fmt_k(price)})")
 
         path_str = "\n".join(path_lines)
 
-        desc = f"-# Margin: {margin:.1f}% @ {opp['crafting_city']}\n"
-        if opp.get("use_focus"):
-            desc += "-# • Focus: On\n"
+        prem_info = _premium_badge(opp)
+        age_mat = _fmt_age(opp.get("data_age_materials", 0))
+        age_sell = _fmt_age(opp.get("data_age_sell", 0))
+        focus_str = " • 🔥 Focus: On" if opp.get("use_focus") else ""
+
+        desc = f"-# 🔨 **CRAFTING OPPORTUNITY** • {prem_info}{focus_str}\n"
+        desc += f"-# ⏳ Data Age: Materials {age_mat} | Sell {age_sell}\n"
         if opp.get("coverage_suspect"):
-            desc += "-# ⚠️ Low volume\n"
-        desc += f"# ➔ {sell_city}"
+            desc += "-# ⚠️ Thin Market Liquidity\n"
+        desc += f"# Craft @ {craft_city} ➔ Sell @ {sell_city}"
+
+        item_id = opp.get("item_id") or "T4_BAG"
+        item_name = opp.get("item_name", item_id)
+        quality = opp.get("quality", 1)
+        safe_qty = opp.get("safe_limit", 1)
+        if safe_qty < 1:
+            safe_qty = 1
+
+        if is_bm:
+            embed_title = f"{badge} 📦 {safe_qty}x {item_name} (BM Crafting Demand)"
+            craft_math_val = (
+                f"Target Quantity Needed: **{safe_qty}x items**\n"
+                f"Craft Cost / Item: **{fmt_k(opp.get('craft_cost', 0))}** (`{craft_city}`)\n"
+                f"BM Sell Value / Item: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_city}`)\n"
+                f"Net Profit / Item: **+{fmt_k(opp.get('profit', 0))}**\n"
+                f"Total Batch Profit ({safe_qty}x): **+{fmt_k(opp.get('profit', 0) * safe_qty)}**"
+            )
+        else:
+            embed_title = f"{badge} {item_name}"
+            craft_math_val = (
+                f"Craft Cost: **{fmt_k(opp.get('craft_cost', 0))}** (`{craft_city}`)\n"
+                f"Sell Value: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_city}`)\n"
+                f"Net Profit: **+{fmt_k(opp.get('profit', 0))}**"
+            )
 
         embed = {
-            "title": f"{badge} {opp['item_name']}",
+            "title": embed_title,
             "description": desc,
             "color": color,
             "thumbnail": {
-                "url": item_icon_url(opp["item_id"], quality=opp.get("quality", 1), size=128)
+                "url": item_icon_url(item_id, quality=quality, size=128)
             },
             "fields": [
                 {
-                    "name": "Trade Math",
-                    "value": f"Cost: **{fmt_k(opp.get('craft_cost', 0))}** | Sell: **{fmt_k(opp.get('sell_price', 0))}** | Profit: **{fmt_k(opp['profit'])}**",
+                    "name": "💰 Crafting Financial Math",
+                    "value": craft_math_val,
                     "inline": False,
                 },
-                {"name": "Vol/Day", "value": f"{opp.get('daily_volume', 0):,}", "inline": True},
-                {"name": "EV", "value": f"{fmt_k(opp.get('ev_score', 0))}", "inline": True},
-                {"name": "RRR", "value": f"{opp.get('rrr_used', 0.152) * 100:.1f}%", "inline": True},
                 {
-                    "name": "Ingredients",
-                    "value": f"{path_str[:1000]}" if path_str else "No details",
+                    "name": "📊 Yield & Efficiency",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**\n• RRR Used: **{rrr * 100:.1f}%**",
+                    "inline": True,
+                },
+                {
+                    "name": "📦 Target Batch & Density",
+                    "value": f"• Target Batch: **{safe_qty} units needed**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**\n• Yield/kg: **{fmt_k(opp.get('profit_per_kg', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "🧱 Material Requirements",
+                    "value": f"{path_str[:1024]}" if path_str else "No material details",
                     "inline": False,
                 },
             ],
-            "footer": {"text": f"AQS v3.2 • {settings.active_server.value.upper()}"},
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        return embed
+
+    def _format_refining_embed(self, opp: dict) -> dict:
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = opp.get("profit_margin", 0)
+        sell_city = opp.get("sell_city", "Any")
+        buy_city = opp.get("buy_city") or opp.get("crafting_city") or "Royal Market"
+        refine_city = opp.get("refine_city") or opp.get("crafting_city") or "Bonus City"
+        is_bm = (sell_city in ["Black Market", "Caerleon"])
+
+        # Visual Theme Color
+        color = 0x1ABC9C if not is_bm else 0x8E44AD  # Cyan/Teal for Refining, Purple for BM
+
+        details = opp.get("ingredients", [])
+        path_lines = []
+        rrr = opp.get("rrr_used", 0.0)
+
+        for d in details:
+            qty = d.get("quantity", 1)
+            name = d.get("name", d.get("item_id", "Unknown"))
+            ing_buy_city = d.get("buy_city", "")
+            price = d.get("unit_price", 0)
+            is_returnable = d.get("is_returnable", True)
+
+            city_str = f" @ `{ing_buy_city}`" if ing_buy_city else ""
+            if is_returnable and rrr > 0:
+                net_price = price * (1.0 - rrr)
+                path_lines.append(f"• {qty}x **{name}** (Buy{city_str} @ {fmt_k(price)} ➔ Net: `{fmt_k(net_price)}`)")
+            else:
+                path_lines.append(f"• {qty}x **{name}** (Buy{city_str} @ {fmt_k(price)})")
+
+        path_str = "\n".join(path_lines)
+
+        prem_info = _premium_badge(opp)
+        age_mat = _fmt_age(opp.get("data_age_materials", 0))
+        age_sell = _fmt_age(opp.get("data_age_sell", 0))
+
+        desc = f"-# ⚗️ **RESOURCE REFINING** • {prem_info} • Bonus RRR: **{rrr * 100:.1f}%**\n"
+        desc += f"-# ⏳ Data Age: Materials {age_mat} | Sell {age_sell}\n"
+        if opp.get("coverage_suspect"):
+            desc += "-# ⚠️ Thin Volume\n"
+        desc += f"# {buy_city} ➔ Refine @ {refine_city} ➔ Sell @ {sell_city}"
+
+        item_id = opp.get("item_id") or "T4_PLANKS"
+        quality = opp.get("quality", 1)
+
+        embed = {
+            "title": f"{badge} {opp.get('item_name', item_id)}",
+            "description": desc,
+            "color": color,
+            "thumbnail": {
+                "url": item_icon_url(item_id, quality=quality, size=128)
+            },
+            "fields": [
+                {
+                    "name": "💰 Refining Financial Math",
+                    "value": f"Raw Mat Cost: **{fmt_k(opp.get('craft_cost', 0))}**\nRefined Value: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_city}`)\nNet Profit: **+{fmt_k(opp.get('profit', 0))}**",
+                    "inline": False,
+                },
+                {
+                    "name": "📊 Yield & RRR Efficiency",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**\n• RRR Specialty: **{rrr * 100:.1f}%** (`{refine_city}`)",
+                    "inline": True,
+                },
+                {
+                    "name": "📦 Batch & Weight",
+                    "value": f"• Safe Batch: **{opp.get('safe_limit', 0):,} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**\n• Profit/kg: **{fmt_k(opp.get('profit_per_kg', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "🧪 Material Inputs",
+                    "value": f"{path_str[:1024]}" if path_str else "No material details",
+                    "inline": False,
+                },
+            ],
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        return embed
+
+    def _format_mm_embed(self, opp: dict) -> dict:
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = opp.get("estimated_margin", opp.get("profit_margin", opp.get("profit_pct", 0.0)))
+        src_city = opp.get("source_city", opp.get("destination_city", "Unknown"))
+        is_bm = (src_city in ["Black Market", "Caerleon"])
+
+        # Visual Theme Color
+        color = 0x3498DB if not is_bm else 0x8E44AD  # Azure Blue for MM, Purple for BM
+
+        prem_info = _premium_badge(opp)
+        age_buy = _fmt_age(opp.get("data_age_buy", 0))
+        age_sell = _fmt_age(opp.get("data_age_sell", 0))
+        est_profit = opp.get("estimated_profit", opp.get("profit", opp.get("net_profit", 0)))
+
+        desc = f"-# 📈 **MARKET MAKING SPREAD** • {prem_info}\n"
+        desc += f"-# ⏳ Data Age: Ask {age_sell} | Bid {age_buy}\n"
+        if opp.get("coverage_suspect"):
+            desc += "-# ⚠️ Thin Liquidity\n"
+        desc += f"# Market Making: {src_city}"
+
+        item_id = opp.get("item_id") or "T4_BAG"
+        quality = opp.get("quality", 1)
+
+        embed = {
+            "title": f"{badge} {opp.get('item_name', item_id)}",
+            "description": desc,
+            "color": color,
+            "thumbnail": {
+                "url": item_icon_url(item_id, quality=quality, size=128)
+            },
+            "fields": [
+                {
+                    "name": "💰 Bid/Ask Spread Math",
+                    "value": f"Buy Order (Bid): **{fmt_k(opp.get('buy_price', 0))}**\nSell Order (Ask): **{fmt_k(opp.get('sell_price', 0))}**\nSpread Profit: **+{fmt_k(est_profit)}**",
+                    "inline": False,
+                },
+                {
+                    "name": "📊 Metrics & Yield",
+                    "value": f"• Spread Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "🏛️ Tax & Fees Paid",
+                    "value": f"• Tax Paid: **{fmt_k(opp.get('tax_paid', 0))}**\n• Setup Fees: **{fmt_k(opp.get('setup_fees', 0))}**\n• Safe Batch: **{opp.get('safe_limit', 0):,} units**",
+                    "inline": True,
+                },
+            ],
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        return embed
+
+    def _format_enchanting_embed(self, opp: dict) -> dict:
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = opp.get("estimated_margin", opp.get("profit_margin", opp.get("profit_pct", 0.0)))
+        base_name = opp.get("base_item_id", "").replace("_", " ").title()
+        mat_name = opp.get("material_id", "").replace("_", " ").title()
+        base_city = opp.get("base_city", opp.get("source_city", "Caerleon"))
+        dest_city = opp.get("destination_city", opp.get("sell_city", "Black Market"))
+        is_bm = (dest_city in ["Black Market", "Caerleon"])
+
+        color = 0xE91E63 if not is_bm else 0x8E44AD  # Neon Pink for Enchanting, Purple for BM
+
+        prem_info = _premium_badge(opp)
+        age_base = _fmt_age(opp.get("data_age_base", 0))
+        age_bm = _fmt_age(opp.get("data_age_bm", 0))
+
+        desc = f"-# ✨ **ITEM ENCHANTING** • {prem_info}\n"
+        desc += f"-# ⏳ Data Age: Base Item {age_base} | Sell Market {age_bm}\n"
+        if base_city != "Caerleon":
+            desc += f"# {base_city} (Buy Base) ➔ Caerleon (Enchant) ➔ {dest_city} (Sell)"
+        else:
+            desc += f"# Caerleon (Buy & Enchant) ➔ {dest_city} (Sell)"
+
+        item_id = opp.get("target_item_id") or opp.get("item_id") or "T7_MAIN_SWORD@1"
+        quality = opp.get("quality", 1)
+
+        embed = {
+            "title": f"{badge} {opp.get('item_name', item_id)}",
+            "description": desc,
+            "color": color,
+            "thumbnail": {
+                "url": item_icon_url(item_id, quality=quality, size=128)
+            },
+            "fields": [
+                {
+                    "name": "💰 Enchanting Financial Math",
+                    "value": f"Base Item Cost: **{fmt_k(opp.get('base_price', 0))}** (`{base_city}`)\nMaterial Cost: **{fmt_k(opp.get('material_price', 0))}** x {opp.get('material_qty', 1)} (**{fmt_k(opp.get('material_price', 0) * opp.get('material_qty', 1))}**)\nTarget Sell Price: **{fmt_k(opp.get('bm_buy_price', opp.get('sell_price', 0)))}** (`{dest_city}`)\nNet Profit: **+{fmt_k(opp.get('estimated_profit', 0))}**",
+                    "inline": False,
+                },
+                {
+                    "name": "📊 Yield & ROI",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• Total Cost: **{fmt_k(opp.get('total_cost', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "✨ Components Required",
+                    "value": f"• Base: **{base_name}** (`{base_city}`)\n• Material: {opp.get('material_qty', 1)}x **{mat_name}**\n• Safe Batch: **{opp.get('safe_limit', 0):,} units**",
+                    "inline": True,
+                },
+            ],
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
             "timestamp": datetime.utcnow().isoformat(),
         }
 
@@ -408,31 +703,101 @@ class DiscordAlerter:
         self,
         arb_opps: list[dict],
         craft_opps: list[dict],
-        arb_limit: int = 5,
+        arb_limit: int = 10,
         craft_limit: int = 10,
+        mm_opps: list[dict] = None,
+        mm_limit: int = 10,
+        refine_opps: list[dict] = None,
+        refine_limit: int = 10,
+        enchant_opps: list[dict] = None,
+        enchant_limit: int = 10,
+        max_per_channel: int = 10,
     ):
+        from collections import defaultdict
+        channel_counts = defaultdict(int)
+
+        if mm_opps is None:
+            mm_opps = []
+        if refine_opps is None:
+            refine_opps = []
+        if enchant_opps is None:
+            enchant_opps = []
+
         # Process Arbitrage Opportunities
         for opp in arb_opps[:arb_limit]:
-            embed = self._format_arbitrage_embed(opp)
-            # Route to BM webhook if destination is Black Market
+            dest = opp.get("destination_city", "") or opp.get("sell_city", "")
+            src = opp.get("source_city", "") or opp.get("buy_city", "")
+            is_bm = (dest in ["Black Market", "Caerleon"] or src == "Caerleon")
             target_webhook = (
-                self.bm_webhook_url
-                if opp.get("destination_city") == "Black Market" and self.bm_webhook_url
-                else self.webhook_url
+                (self.bm_arb_webhook_url or self.bm_webhook_url or self.arb_webhook_url or self.webhook_url)
+                if is_bm
+                else (self.arb_webhook_url or self.webhook_url)
             )
-            if target_webhook:
+            if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                embed = self._format_arbitrage_embed(opp)
                 await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                await asyncio.sleep(4.0)  # 4-second gap to allow user to read
+                channel_counts[target_webhook] += 1
+                await asyncio.sleep(0.5)
 
         # Process Crafting Opportunities
         for opp in craft_opps[:craft_limit]:
-            embed = self._format_crafting_embed(opp)
-            # Route to BM webhook if sell city is Black Market
+            sell_c = opp.get("sell_city", "")
+            craft_c = opp.get("crafting_city", "") or opp.get("craft_city", "")
+            is_bm = (sell_c in ["Black Market", "Caerleon"] or opp.get("sell_mode") == "BM" or craft_c == "Caerleon")
             target_webhook = (
-                self.bm_webhook_url
-                if opp.get("sell_city") == "Black Market" and self.bm_webhook_url
-                else self.webhook_url
+                (self.bm_crafting_webhook_url or self.bm_webhook_url or self.crafting_webhook_url or self.webhook_url)
+                if is_bm
+                else (self.crafting_webhook_url or self.webhook_url)
             )
-            if target_webhook:
+            if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                embed = self._format_crafting_embed(opp)
                 await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                await asyncio.sleep(4.0)  # 4-second gap to allow user to read
+                channel_counts[target_webhook] += 1
+                await asyncio.sleep(0.5)
+
+        # Process Market Making Opportunities
+        for opp in mm_opps[:mm_limit]:
+            dest = opp.get("destination_city", "")
+            src = opp.get("source_city", "")
+            is_bm = (dest in ["Black Market", "Caerleon"] or src in ["Black Market", "Caerleon"])
+            target_webhook = (
+                (self.bm_mm_webhook_url or self.bm_webhook_url or self.mm_webhook_url or self.webhook_url)
+                if is_bm
+                else (self.mm_webhook_url or self.webhook_url)
+            )
+            if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                embed = self._format_mm_embed(opp)
+                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                channel_counts[target_webhook] += 1
+                await asyncio.sleep(0.5)
+
+        # Process Refining Opportunities
+        for opp in refine_opps[:refine_limit]:
+            sell_c = opp.get("sell_city", "")
+            is_bm = (sell_c in ["Black Market"] or opp.get("sell_mode") == "BM")
+            target_webhook = (
+                (self.bm_refining_webhook_url or self.bm_webhook_url or self.refining_webhook_url or self.webhook_url)
+                if is_bm
+                else (self.refining_webhook_url or self.webhook_url)
+            )
+            if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                embed = self._format_refining_embed(opp)
+                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                channel_counts[target_webhook] += 1
+                await asyncio.sleep(0.5)
+                
+        # Process Enchanting Opportunities
+        for opp in enchant_opps[:enchant_limit]:
+            dest = opp.get("destination_city", "") or opp.get("sell_city", "")
+            is_bm = (dest in ["Black Market", "Caerleon"])
+            target_webhook = (
+                (self.bm_enchanting_webhook_url or self.bm_webhook_url or self.enchanting_webhook_url or self.webhook_url)
+                if is_bm
+                else (self.enchanting_webhook_url or self.webhook_url)
+            )
+            if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                embed = self._format_enchanting_embed(opp)
+                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                channel_counts[target_webhook] += 1
+                await asyncio.sleep(0.5)
+
