@@ -286,19 +286,54 @@ class UnifiedScanner:
             mm_raw = self.engine.scan_market_making(prices, names, weights)
             log.info(f"[UNIFIED SCANNER] MM: {len(mm_raw)} opportunities")
 
+            log.info("[UNIFIED SCANNER] Scanning Quality Inversions...")
+            quality_raw = self.engine.scan_quality_inversions(prices, names)
+            log.info(f"[UNIFIED SCANNER] Quality Inversions: {len(quality_raw)} opportunities")
+
             return (
                 [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw] if scan_bm else [],
                 [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in craft_raw],
                 [self._arb_to_dict(o, categories.get(o.item_id, "Unknown")) for o in arb_raw],
                 [self._refine_to_dict(o, categories.get(o.item_id, "Unknown")) for o in refine_raw],
                 [self._mm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in mm_raw],
-                [self._enchant_to_dict(o, categories.get(o.target_item_id, "Unknown")) for o in enchant_raw] if scan_bm else []
+                [self._enchant_to_dict(o, categories.get(o.target_item_id, "Unknown")) for o in enchant_raw] if scan_bm else [],
+                [self._quality_to_dict(o, categories.get(o.item_id, "Unknown")) for o in quality_raw],
             )
         finally:
             if db_context:
                 db_context.__exit__(None, None, None)
 
     # ── Dict converters for compatibility with existing DB/Discord code ─────
+
+    def _quality_to_dict(self, o, category: str) -> dict[str, Any]:
+        return {
+            "item_id": o.item_id,
+            "item_name": f"{o.item_name} ({o.buy_quality_name})",
+            "source_city": o.city,
+            "destination_city": o.city,
+            "buy_price": o.buy_price,
+            "sell_price": o.reference_price,
+            "estimated_profit": o.net_profit,
+            "estimated_margin": o.profit_pct,
+            "profit": o.net_profit,
+            "profit_pct": o.profit_pct,
+            "profit_margin": o.profit_pct,
+            "buy_quality": o.buy_quality,
+            "buy_quality_name": o.buy_quality_name,
+            "reference_quality": o.reference_quality,
+            "reference_quality_name": o.reference_quality_name,
+            "inversion_type": o.inversion_type,
+            "safe_limit": o.safe_limit,
+            "roi": o.profit_pct,
+            "daily_volume": o.daily_volume,
+            "data_age_seconds": o.data_age_seconds,
+            "ev_score": o.score,
+            "category": category,
+            "type": "quality_misprice",
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
+            "detected_at": datetime.utcnow().isoformat(),
+        }
 
     def _enchant_to_dict(self, o, category: str) -> dict[str, Any]:
         base_c = getattr(o, "base_city", "Caerleon")
@@ -512,7 +547,17 @@ class UnifiedScanner:
             "detected_at": datetime.utcnow().isoformat(),
         }
 
-    def save_opportunities(self, db: Session, bm_opps: list[dict], craft_opps: list[dict], arb_opps: list[dict]):
+    def save_opportunities(
+        self,
+        db: Session,
+        bm_opps: list[dict],
+        craft_opps: list[dict],
+        arb_opps: list[dict],
+        refining_opps: list[dict] | None = None,
+        mm_opps: list[dict] | None = None,
+        enchant_opps: list[dict] | None = None,
+        quality_opps: list[dict] | None = None,
+    ):
         """Save opportunities to the database, marking old ones as inactive."""
         from app.db.models import ArbitrageOpportunity, CraftingOpportunity
         import json

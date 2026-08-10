@@ -72,21 +72,10 @@ FOCUS_BONUS_LPB = 1.00  # +100% when using Focus
 def rrr(city: str, category: str, use_focus: bool = False) -> float:
     """
     Returns Resource Return Rate as a fraction (0.0 – 0.99).
-    Derived from Local Production Bonus: RRR = LPB / (1 + LPB).
+    Delegates to authoritative calculate_rrr in app.core.market_utils.
     """
-    lpb = BASE_LPB
-
-    city_data = CITY_CRAFT_BONUSES.get(city, {})
-    if category.lower() in [c.lower() for c in city_data.get("refining", [])]:
-        lpb += REFINING_BONUS_LPB
-    elif category.lower() in [c.lower() for c in city_data.get("crafting", [])]:
-        lpb += CRAFT_BONUS_LPB
-
-    if use_focus:
-        lpb += FOCUS_BONUS_LPB
-
-    rate = lpb / (1.0 + lpb)
-    return round(min(0.99, rate), 4)
+    from app.core.market_utils import calculate_rrr
+    return calculate_rrr(city, category, tier=4, use_focus=use_focus)
 
 
 # Each city has crafting & refining specialities — items crafted here get higher RRR
@@ -417,6 +406,30 @@ class MarketMakingOpportunity:
     safe_limit: int = 1
     roi: float = 0.0
     profit_per_kg: float = 0.0
+    score: float = 0.0
+
+
+@dataclass
+class QualityInversionOpportunity:
+    """
+    Quality Mispricing Arbitrage.
+    Buy higher quality item (e.g. Q2/Q3/Q4/Q5) listed cheaper than a lower quality item in the same city.
+    """
+    item_id: str
+    item_name: str
+    city: str
+    buy_quality: int
+    buy_quality_name: str
+    buy_price: int
+    reference_quality: int
+    reference_quality_name: str
+    reference_price: int
+    inversion_type: str  # "sell_undercut" or "buy_order_flip"
+    net_profit: float
+    profit_pct: float
+    data_age_seconds: int
+    daily_volume: int
+    safe_limit: int = 1
     score: float = 0.0
 
 
@@ -1934,3 +1947,54 @@ class OpportunityScanner:
             )
 
         return (total, ingredients, max_age)
+
+    def scan_quality_inversions(
+        self,
+        prices: dict,
+        item_names: dict[str, str],
+    ) -> list[QualityInversionOpportunity]:
+        """
+        Scans for quality mispricings within each city.
+        Returns list of QualityInversionOpportunity objects.
+        """
+        from app.features.quality_arbitrage import detect_quality_inversion
+
+        results = []
+        for item_id, city_map in prices.items():
+            item_name = item_names.get(item_id, item_id)
+            for city, quality_map in city_map.items():
+                if len(quality_map) < 2:
+                    continue
+                invs = detect_quality_inversion(
+                    quality_map,
+                    item_id=item_id,
+                    city=city,
+                    item_name=item_name,
+                    min_profit=self.min_arb_profit,
+                    min_margin=self.min_arb_profit_pct,
+                )
+                for inv in invs:
+                    vol = inv["daily_volume"]
+                    limit = calculate_safe_trade_limit(vol, default_limit=1)
+                    opp = QualityInversionOpportunity(
+                        item_id=inv["item_id"],
+                        item_name=inv["item_name"],
+                        city=inv["city"],
+                        buy_quality=inv["buy_quality"],
+                        buy_quality_name=inv["buy_quality_name"],
+                        buy_price=inv["buy_price"],
+                        reference_quality=inv["reference_quality"],
+                        reference_quality_name=inv["reference_quality_name"],
+                        reference_price=inv["reference_price"],
+                        inversion_type=inv["inversion_type"],
+                        net_profit=inv["net_profit"],
+                        profit_pct=inv["profit_pct"],
+                        data_age_seconds=inv["data_age_seconds"],
+                        daily_volume=vol,
+                        safe_limit=limit,
+                        score=round(inv["net_profit"] * (vol / 50.0 + 0.1), 2),
+                    )
+                    results.append(opp)
+
+        results.sort(key=lambda x: x.score, reverse=True)
+        return results

@@ -27,7 +27,14 @@ CITY_BONUS: dict[str, dict[str, list[str]]] = {
         "refining": ["wood", "planks"],
         "crafting": ["spear", "holy_staff", "plate_armor", "cloth_shoes", "offhand"],
     },
-    # Caerleon: 18% base only, no specialization bonus
+    "Caerleon": {
+        "refining": [],
+        "crafting": ["cooked_food", "food", "war_gloves", "shapeshifter_staff", "gathering_gear", "gathering_tool", "tool"],
+    },
+    "Brecilien": {
+        "refining": [],
+        "crafting": ["potion", "bag", "cape"],
+    },
 }
 
 # [CONFIRMED] Production bonus constants

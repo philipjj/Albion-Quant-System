@@ -699,6 +699,52 @@ class DiscordAlerter:
 
         return await self._send_webhook({"embeds": [embed]})
 
+    def _format_quality_inversion_embed(self, opp: dict) -> dict:
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = opp.get("estimated_margin", opp.get("profit_pct", 0.0))
+        city = opp.get("source_city", opp.get("city", "Caerleon"))
+        prem_info = _premium_badge(opp)
+        age = _fmt_age(opp.get("data_age_seconds", 0))
+
+        color = 0x1ABC9C  # Teal for Quality Misprice
+
+        desc = f"-# 💎 **QUALITY MISPRICE ARBITRAGE** • {prem_info}\n"
+        desc += f"-# ⏳ Data Age: {age}\n"
+        desc += f"# {city}: Buy {opp.get('buy_quality_name', 'High Quality')} ➔ Sell/Flip @ {opp.get('reference_quality_name', 'Low Quality')} Price"
+
+        item_id = opp.get("item_id") or "T4_BAG"
+        quality = opp.get("buy_quality", 1)
+
+        embed = {
+            "title": f"{badge} {opp.get('item_name', item_id)}",
+            "description": desc,
+            "color": color,
+            "thumbnail": {
+                "url": item_icon_url(item_id, quality=quality, size=128)
+            },
+            "fields": [
+                {
+                    "name": "💎 Quality Inversion Math",
+                    "value": f"Buy Price ({opp.get('buy_quality_name')}): **{fmt_k(opp.get('buy_price', 0))}**\nReference Price ({opp.get('reference_quality_name')}): **{fmt_k(opp.get('sell_price', 0))}**\nNet Profit: **+{fmt_k(opp.get('estimated_profit', 0))}**",
+                    "inline": False,
+                },
+                {
+                    "name": "📊 Yield & ROI",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', margin):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "📦 Execution",
+                    "value": f"• Safe Batch: **{opp.get('safe_limit', 1):,} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**",
+                    "inline": True,
+                },
+            ],
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        return embed
+
     async def send_batch_alerts(
         self,
         arb_opps: list[dict],
@@ -711,6 +757,8 @@ class DiscordAlerter:
         refine_limit: int = 10,
         enchant_opps: list[dict] = None,
         enchant_limit: int = 10,
+        quality_opps: list[dict] = None,
+        quality_limit: int = 10,
         max_per_channel: int = 10,
     ):
         from collections import defaultdict
@@ -722,6 +770,8 @@ class DiscordAlerter:
             refine_opps = []
         if enchant_opps is None:
             enchant_opps = []
+        if quality_opps is None:
+            quality_opps = []
 
         # Process Arbitrage Opportunities
         for opp in arb_opps[:arb_limit]:
@@ -797,6 +847,21 @@ class DiscordAlerter:
             )
             if target_webhook and channel_counts[target_webhook] < max_per_channel:
                 embed = self._format_enchanting_embed(opp)
+                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                channel_counts[target_webhook] += 1
+                await asyncio.sleep(0.5)
+
+        # Process Quality Misprice Opportunities
+        for opp in quality_opps[:quality_limit]:
+            src = opp.get("source_city", "") or opp.get("city", "")
+            is_bm = (src in ["Black Market", "Caerleon"])
+            target_webhook = (
+                (self.bm_arb_webhook_url or self.bm_webhook_url or self.arb_webhook_url or self.webhook_url)
+                if is_bm
+                else (self.arb_webhook_url or self.webhook_url)
+            )
+            if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                embed = self._format_quality_inversion_embed(opp)
                 await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
                 channel_counts[target_webhook] += 1
                 await asyncio.sleep(0.5)

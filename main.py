@@ -215,15 +215,13 @@ async def cmd_scan():
         from app.db.models import UserProfile
         profile = db.query(UserProfile).first()
         is_premium = profile.is_premium if profile else True
-        min_roi = profile.min_roi_percent if profile else 10.0
-        default_trade_vol = profile.default_trade_volume if profile else 1
         
-        scanner = UnifiedScanner(premium=is_premium, min_roi=min_roi, default_trade_volume=default_trade_vol)
-        bm, crafting, arb, ref, mm = await scanner.scan_all(scan_bm=True)
+        scanner = UnifiedScanner(premium=is_premium)
+        bm, crafting, arb, ref, mm, enchant = await scanner.scan_all(scan_bm=True)
 
-        scanner.save_opportunities(db, bm, crafting, arb, ref, mm)
+        scanner.save_opportunities(db, bm, crafting, arb, ref, mm, enchant)
 
-    log.info(f"Scan complete: Saved {len(bm)} BM, {len(crafting)} Crafting, {len(arb)} Arbitrage, {len(ref)} Refining, and {len(mm)} MM opportunities to DB.")
+    log.info(f"Scan complete: Saved {len(bm)} BM, {len(crafting)} Crafting, {len(arb)} Arbitrage, {len(ref)} Refining, {len(mm)} MM, and {len(enchant)} Enchanting opportunities to DB.")
 
 
 if __name__ == "__main__":

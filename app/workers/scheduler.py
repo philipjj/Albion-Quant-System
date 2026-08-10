@@ -104,11 +104,11 @@ class QuantScheduler:
             #    not just this partition's items. This is the key advantage:
             #    fresh data from partition N mixes with still-valid data from N-1, N-2...
             log.info("[SCHEDULER] Step 2: Running Unified Scanner (full DB)...")
-            bm, crafting, arb, refining, mm, enchant = await self.unified_scanner.scan_all(scan_bm=True)
+            bm, crafting, arb, refining, mm, enchant, quality = await self.unified_scanner.scan_all(scan_bm=True)
 
             # 3. Alert
             log.info(
-                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)}, Refine: {len(refining)}, MM: {len(mm)}, Enchant: {len(enchant)})"
+                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)}, Refine: {len(refining)}, MM: {len(mm)}, Enchant: {len(enchant)}, Quality: {len(quality)})"
             )
 
             
@@ -353,6 +353,41 @@ class QuantScheduler:
                 await self.alerter.send_batch_alerts([], [], enchant_opps=final_enchant, enchant_limit=limit)
                 log.info(
                     f"[SCHEDULER] Sent {len(final_enchant)} enchant alerts after cooldown filtering."
+                )
+
+            # Filter Quality Misprice
+            fresh_quality = []
+            for o in quality:
+                item_id = o.get("item_id", "")
+                if tier_prefix and not item_id.upper().startswith(tier_prefix):
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+                city = o.get("source_city", "") or o.get("city", "")
+                key = f"quality:{item_id}:{city}:{o.get('buy_quality', 1)}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                fresh_quality.append((key, o))
+
+            grouped_quality = defaultdict(list)
+            for key, o in fresh_quality:
+                grouped_quality[o.get("category", "Unknown")].append((key, o))
+
+            final_quality = []
+            for cat, ops in grouped_quality.items():
+                ops.sort(key=lambda x: x[1].get("estimated_profit", 0), reverse=True)
+                top_ops = ops[:10]
+                for key, o in top_ops:
+                    final_quality.append(o)
+                    self._alert_history[key] = now_time
+
+            if final_quality:
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
+                await self.alerter.send_batch_alerts([], [], quality_opps=final_quality, quality_limit=limit)
+                log.info(
+                    f"[SCHEDULER] Sent {len(final_quality)} quality misprice alerts after cooldown filtering."
                 )
 
 
