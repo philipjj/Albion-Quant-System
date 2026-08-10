@@ -22,16 +22,18 @@ def estimate_market_impact(trade_volume: float, daily_volume: float) -> float:
     return min(slippage_pct, 1.0)
 
 
-def calculate_safe_trade_limit(daily_volume: int, max_slippage_pct: float = 0.03) -> int:
+def calculate_safe_trade_limit(
+    daily_volume: int, max_slippage_pct: float = 0.03, default_limit: int = 1
+) -> int:
     """
     Returns the maximum number of items to trade to stay under a given slippage threshold (e.g. 3%).
     """
     c = 0.158
     if daily_volume <= 0:
-        return 1
+        return default_limit
 
     safe_vol = int(daily_volume * ((max_slippage_pct / c) ** 2))
-    return max(safe_vol, 1)
+    return max(safe_vol, default_limit)
 
 
 def calculate_slippage(base_price: float, executed_price: float) -> float:
