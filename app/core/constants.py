@@ -44,19 +44,19 @@ CITY_CRAFTING_BONUSES = {
         "refining_bonus": ["rock", "stone", "block", "stoneblock"],
     },
     "Martlock": {
-        "bonus_categories": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "plate_boots", "leather_armor", "offhand", "off_hand"],
+        "bonus_categories": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "plate_boots", "leather_shoes", "leather_boots"],
         "refining_bonus": ["hide", "leather"],
     },
     "Lymhurst": {
-        "bonus_categories": ["sword", "bow", "arcane_staff", "leather_helmet", "leather_hood", "leather_shoes", "leather_boots"],
+        "bonus_categories": ["sword", "bow", "arcane_staff", "leather_helmet", "leather_hood", "leather_armor", "leather_jacket"],
         "refining_bonus": ["fiber", "cloth"],
     },
     "Fort Sterling": {
-        "bonus_categories": ["hammer", "spear", "holy_staff", "plate_helmet", "cloth_armor"],
+        "bonus_categories": ["hammer", "spear", "holy_staff", "plate_helmet", "plate_headgear", "cloth_armor", "cloth_robe"],
         "refining_bonus": ["wood", "planks"],
     },
     "Thetford": {
-        "bonus_categories": ["mace", "nature_staff", "fire_staff", "cloth_helmet", "cloth_headgear", "leather_armor"],
+        "bonus_categories": ["mace", "nature_staff", "fire_staff", "cloth_helmet", "cloth_headgear", "cloth_cowl", "leather_boots"],
         "refining_bonus": ["ore", "bar", "metalbar"],
     },
     "Caerleon": {
@@ -96,13 +96,13 @@ CITY_BONUS_RESOURCE_RETURN_RATE = calculate_rrr(BASE_PRODUCTION_BONUS + CRAFTING
 REFINING_BONUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + REFINING_SPECIALTY_LPB)  # 0.36709 (36.71%)
 
 # Focus RRR Constants
-FOCUS_RESOURCE_RETURN_RATE = calculate_rrr(BASE_PRODUCTION_BONUS + FOCUS_CRAFTING_LPB)  # 0.48000
-FOCUS_CITY_BONUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + CRAFTING_SPECIALTY_LPB + FOCUS_CRAFTING_LPB)  # 0.57082 (57.08%)
-REFINING_FOCUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + REFINING_SPECIALTY_LPB + FOCUS_CRAFTING_LPB)  # 0.61240 (61.24%)
+FOCUS_RESOURCE_RETURN_RATE = calculate_rrr(BASE_PRODUCTION_BONUS + FOCUS_CRAFTING_LPB)  # 0.43503 (43.50%)
+FOCUS_CITY_BONUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + CRAFTING_SPECIALTY_LPB + FOCUS_CRAFTING_LPB)  # 0.47917 (47.92%)
+REFINING_FOCUS_RRR = calculate_rrr(BASE_PRODUCTION_BONUS + REFINING_SPECIALTY_LPB + FOCUS_CRAFTING_LPB)  # 0.53917 (53.92%)
 
 # Islands & Hideouts
 ISLAND_RESOURCE_RETURN_RATE = 0.00
-ISLAND_FOCUS_RRR = calculate_rrr(FOCUS_CRAFTING_LPB)  # 0.50000
+ISLAND_FOCUS_RRR = calculate_rrr(FOCUS_CRAFTING_LPB)  # 0.37107 (37.11%)
 
 # ═══════════════════════════════════════════════════════════════
 # MARKET MECHANICS

@@ -5,37 +5,17 @@ Volume simulation, liquidity scoring, and RRR calculation.
 
 from datetime import datetime
 
-# [CONFIRMED] City specialization bonuses
+from app.core.constants import CITY_CRAFTING_BONUSES
+
+# Derive city specialization bonuses from authoritative central constants
 CITY_BONUS: dict[str, dict[str, list[str]]] = {
-    "Martlock": {
-        "refining": ["hide", "leather"],
-        "crafting": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "offhand"],
-    },
-    "Bridgewatch": {
-        "refining": ["rock", "stoneblock"],
-        "crafting": ["crossbow", "dagger", "cursed_staff", "plate_helmet", "leather_shoes"],
-    },
-    "Thetford": {
-        "refining": ["ore", "metalbar"],
-        "crafting": ["mace", "nature_staff", "fire_staff", "leather_armor", "cloth_headgear"],
-    },
-    "Lymhurst": {
-        "refining": ["fiber", "cloth"],
-        "crafting": ["sword", "bow", "arcane_staff", "leather_helmet", "cloth_armor"],
-    },
-    "Fort Sterling": {
-        "refining": ["wood", "planks"],
-        "crafting": ["spear", "holy_staff", "plate_armor", "cloth_shoes", "offhand"],
-    },
-    "Caerleon": {
-        "refining": [],
-        "crafting": ["cooked_food", "food", "war_gloves", "shapeshifter_staff", "gathering_gear", "gathering_tool", "tool"],
-    },
-    "Brecilien": {
-        "refining": [],
-        "crafting": ["potion", "bag", "cape"],
-    },
+    city: {
+        "refining": data["refining_bonus"],
+        "crafting": data["bonus_categories"],
+    }
+    for city, data in CITY_CRAFTING_BONUSES.items()
 }
+
 
 # [CONFIRMED] Production bonus constants
 BASE_CITY_PRODUCTION_BONUS = 18.0

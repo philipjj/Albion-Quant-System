@@ -112,10 +112,14 @@ class UnifiedScanner:
                 db_age = 0
             effective_age = api_age + db_age
 
+            vol = p.volume_24h or 0
+            if vol == 0 and existing and existing.get("volume_24h", 0) > 0:
+                vol = existing["volume_24h"]
+
             prices[item_id][city][quality] = {
                 "sell_price_min": p.sell_price_min or 0,
                 "buy_price_max": p.buy_price_max or 0,
-                "volume_24h": p.volume_24h or 0,
+                "volume_24h": vol,
                 "data_age_seconds": int(effective_age),
                 "is_black_market": (city == "Black Market"),
                 "item_value": 0.0,  # Filled below
@@ -186,8 +190,26 @@ class UnifiedScanner:
         names = {r.item_id: r.name for r in rows}
         categories = {r.item_id: (r.category or "") for r in rows}
         values = {r.item_id: float(r.item_value or 0.0) for r in rows}
-        weights = {r.item_id: float(getattr(r, "weight", 0.0) or 0.0) for r in rows}
+        
+        def _estimate_fallback_weight(item_id: str, category: str = "") -> float:
+            id_upper = item_id.upper()
+            cat_lower = (category or "").lower()
+            if any(r in id_upper for r in ["PLANKS", "CLOTH", "LEATHER", "BAR", "METALBAR", "STONEBLOCK", "WOOD", "ORE", "HIDE", "FIBER", "ROCK"]):
+                return 0.8
+            if any(w in id_upper for w in ["2H_", "BOW", "CROSSBOW", "STAFF", "HAMMER", "AXE", "SWORD", "MACE"]):
+                return 3.5
+            if any(a in id_upper for a in ["ARMOR", "ROBE", "JACKET", "HEAD", "HELMET", "SHOES", "BOOTS"]):
+                return 2.0
+            if "MOUNT" in id_upper or "mount" in cat_lower:
+                return 15.0
+            return 1.5
+
+        weights = {
+            r.item_id: (float(getattr(r, "weight", 0.0) or 0.0) or _estimate_fallback_weight(r.item_id, r.category or ""))
+            for r in rows
+        }
         return names, categories, values, weights
+
 
 
     def _load_recipes(self, db: Session) -> dict:
@@ -350,6 +372,7 @@ class UnifiedScanner:
             "base_item_id": o.base_item_id,
             "base_price": o.base_price,
             "base_city": base_c,
+            "base_quality": getattr(o, "base_quality", o.quality),
             "material_id": o.material_id,
             "material_qty": o.material_qty,
             "material_price": o.material_price,

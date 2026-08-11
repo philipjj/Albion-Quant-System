@@ -50,7 +50,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import settings
-from app.core.constants import calculate_station_fee
+from app.core.constants import CITY_CRAFTING_BONUSES, calculate_station_fee
 
 from app.execution.slippage import estimate_market_impact, calculate_safe_trade_limit, calculate_effective_price
 
@@ -80,35 +80,13 @@ def rrr(city: str, category: str, use_focus: bool = False) -> float:
 
 # Each city has crafting & refining specialities — items crafted here get higher RRR
 CITY_CRAFT_BONUSES: dict[str, dict[str, list[str]]] = {
-    "Martlock": {
-        "refining": ["hide", "leather"],
-        "crafting": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "plate_boots", "leather_armor", "offhand", "off_hand"],
-    },
-    "Bridgewatch": {
-        "refining": ["rock", "stone", "block", "stoneblock"],
-        "crafting": ["crossbow", "dagger", "cursed_staff", "curse_staff", "plate_armor", "cloth_shoes", "cloth_boots"],
-    },
-    "Thetford": {
-        "refining": ["ore", "bar", "metalbar"],
-        "crafting": ["mace", "nature_staff", "fire_staff", "cloth_helmet", "cloth_headgear", "leather_armor"],
-    },
-    "Lymhurst": {
-        "refining": ["fiber", "cloth"],
-        "crafting": ["sword", "bow", "arcane_staff", "leather_helmet", "leather_hood", "leather_shoes", "leather_boots"],
-    },
-    "Fort Sterling": {
-        "refining": ["wood", "planks"],
-        "crafting": ["hammer", "spear", "holy_staff", "plate_helmet", "cloth_armor"],
-    },
-    "Caerleon": {
-        "refining": [],
-        "crafting": ["cooked_food", "food", "war_gloves", "shapeshifter_staff", "gathering_gear", "gathering_tool", "tool"],
-    },
-    "Brecilien": {
-        "refining": [],
-        "crafting": ["potion", "bag", "cape"],
-    },
+    city: {
+        "refining": data["refining_bonus"],
+        "crafting": data["bonus_categories"],
+    }
+    for city, data in CITY_CRAFTING_BONUSES.items()
 }
+
 
 ROYAL_CITIES = ["Bridgewatch", "Martlock", "Lymhurst", "Fort Sterling", "Thetford"]
 BM_CITY = "Black Market"
@@ -123,6 +101,7 @@ DANGEROUS_DESTINATIONS = {CAERLEON, BM_CITY, BRECILIEN}
 
 MAX_AGE_BM_SECONDS = 3600  # 1 hour — BM orders clear quickly
 MAX_AGE_ROYAL_SECONDS = 7_200  # 2 hours — royal city market limit
+MAX_AGE_MM_SECONDS = 1_800  # 30 minutes — active market making requires fresh order book data
 MAX_AGE_CRAFTING_SECONDS = 14_400  # 4 hours — acceptable for material cost calc
 
 # ─── Outlier / Manipulation Detection ────────────────────────────────────────
@@ -138,9 +117,20 @@ def get_min_realistic_price(item_id: str = "") -> int:
     """
     Returns minimum realistic market price based on item tier in Albion Online.
     Prevents corrupt 100-200 silver listings for high-tier equipment (T5-T8) from poisoning cost calculations.
+    Excludes materials, runes, souls, relics, and consumables.
     """
     if not item_id or not item_id.startswith("T"):
         return MIN_PRICE
+
+    # Exclude non-equipment items (materials, runes, souls, relics, map fragments, consumables)
+    item_upper = item_id.upper()
+    if any(x in item_upper for x in [
+        "_RUNE", "_SOUL", "_RELIC", "_SHARD", "_MAP", "_PLAN", "_LOG", "_ORE",
+        "_FIBER", "_HIDE", "_CLOTH", "_LEATHER", "_PLANKS", "_BAR", "_STONE",
+        "_BLOCK", "_MEAT", "_MILK", "_BUTTER", "_EGG", "_BREAD", "_POTION", "_MEAL"
+    ]):
+        return MIN_PRICE
+
     try:
         tier = int(item_id[1])
         tier_min_map = {
@@ -155,20 +145,47 @@ def get_min_realistic_price(item_id: str = "") -> int:
         return MIN_PRICE
 
 
+def get_fallback_item_value(item_id: str = "") -> float:
+    """
+    Returns estimated minimum ItemValue based on item tier if missing from DB metadata.
+    Prevents station fees from calculating as 0 silver for crafted equipment and resources.
+    """
+    if not item_id or not item_id.startswith("T"):
+        return 32.0
+    try:
+        tier = int(item_id[1])
+        tier_val_map = {
+            4: 64.0,
+            5: 128.0,
+            6: 256.0,
+            7: 512.0,
+            8: 1024.0,
+        }
+        return tier_val_map.get(tier, 32.0)
+    except (ValueError, IndexError):
+        return 32.0
+
+
+
 def is_price_valid(sell_min: int, buy_max: int, daily_volume: int = 0, item_id: str = "") -> bool:
     """
     Returns True if the price pair looks like a real market, not manipulation or corrupt test data.
     """
     min_allowed = get_min_realistic_price(item_id) if item_id else MIN_PRICE
-    if sell_min <= min_allowed:
+    if sell_min > 0 and sell_min <= min_allowed:
         return False
     if sell_min > ABSOLUTE_MAX_PRICE:
         return False
     if buy_max > 0:
-        if (sell_min / buy_max) > 8.0:
+        if buy_max <= min_allowed:
             return False
-        if (buy_max / sell_min) > 8.0:
+        if buy_max > ABSOLUTE_MAX_PRICE:
             return False
+        if sell_min > 0:
+            if (sell_min / buy_max) > 5.0:
+                return False
+            if (buy_max / sell_min) > 5.0:
+                return False
 
     return True
 
@@ -279,6 +296,7 @@ class EnchantingOpportunity:
     roi: float = 0.0
     score: float = 0.0
     quality: int = 1
+    base_quality: int = 1
     data_age_base: int = 9999
     data_age_material: int = 9999
     data_age_bm: int = 9999
@@ -599,9 +617,10 @@ class OpportunityScanner:
         Rank BM opportunities.
         Factors: profit, margin, volume, data freshness.
         A player cares most about: absolute profit × how fast it sells × how confident the price is.
+        Note: Black Market volume is NPC driven, so default vol_score = 0.5 when 24h volume is un-tracked.
         """
         freshness = max(0.1, 1.0 - opp.data_age_bm / MAX_AGE_BM_SECONDS)
-        vol_score = min(1.0, opp.daily_volume / 50.0) if opp.daily_volume > 0 else 0.2
+        vol_score = min(1.0, opp.daily_volume / 50.0) if opp.daily_volume > 0 else 0.5
         margin_bonus = min(2.0, opp.profit_pct / 20.0)  # 20% margin = 1.0 multiplier
         
         # Capital At Risk Premium (5% expected loss from ganks)
@@ -612,8 +631,10 @@ class OpportunityScanner:
         return round(max(0.0, score), 2)
 
     def _score_craft(self, opp: CraftingOpportunity) -> float:
+        if opp.daily_volume <= 0:
+            return 0.0
         freshness = max(0.1, 1.0 - opp.data_age_sell / MAX_AGE_CRAFTING_SECONDS)
-        vol_score = min(1.0, opp.daily_volume / 30.0) if opp.daily_volume > 0 else 0.2
+        vol_score = min(1.0, opp.daily_volume / 30.0) if opp.daily_volume > 0 else 0.0
         score = opp.profit * freshness * vol_score
         
         # Only apply weight penalty if we are transporting it to a different city
@@ -623,10 +644,12 @@ class OpportunityScanner:
         return round(score, 2)
 
     def _score_arb(self, opp: ArbitrageOpportunity) -> float:
+        if opp.daily_volume <= 0:
+            return 0.0
         freshness_buy = max(0.1, 1.0 - opp.data_age_buy / MAX_AGE_ROYAL_SECONDS)
         freshness_sell = max(0.1, 1.0 - opp.data_age_sell / MAX_AGE_ROYAL_SECONDS)
         freshness = min(freshness_buy, freshness_sell)
-        vol_score = min(1.0, opp.daily_volume / 30.0) if opp.daily_volume > 0 else 0.2
+        vol_score = min(1.0, opp.daily_volume / 30.0) if opp.daily_volume > 0 else 0.0
         danger_penalty = 0.5 if opp.is_dangerous_route else 1.0
         
         capital_risk_premium = opp.buy_price * 0.05 if opp.is_dangerous_route else 0.0
@@ -636,22 +659,26 @@ class OpportunityScanner:
         return round(max(0.0, score), 2)
 
     def _score_refining(self, opp: RefiningOpportunity) -> float:
+        if opp.daily_volume <= 0:
+            return 0.0
         freshness_mat = max(0.1, 1.0 - opp.data_age_materials / MAX_AGE_ROYAL_SECONDS)
         freshness_sell = max(0.1, 1.0 - opp.data_age_sell / MAX_AGE_ROYAL_SECONDS)
         freshness = min(freshness_mat, freshness_sell)
-        vol_score = min(1.0, opp.daily_volume / 100.0) if opp.daily_volume > 0 else 0.2
+        vol_score = min(1.0, opp.daily_volume / 100.0) if opp.daily_volume > 0 else 0.0
         
         score = opp.profit * freshness * vol_score
         score = self._apply_weight_penalty(score, getattr(opp, "profit_per_kg", 0.0))
         return round(max(0.0, score), 2)
 
     def _score_mm(self, opp: MarketMakingOpportunity) -> float:
-        freshness_buy = max(0.1, 1.0 - opp.data_age_buy / MAX_AGE_ROYAL_SECONDS)
-        freshness_sell = max(0.1, 1.0 - opp.data_age_sell / MAX_AGE_ROYAL_SECONDS)
+        if opp.daily_volume <= 0:
+            return 0.0
+        freshness_buy = max(0.1, 1.0 - opp.data_age_buy / MAX_AGE_MM_SECONDS)
+        freshness_sell = max(0.1, 1.0 - opp.data_age_sell / MAX_AGE_MM_SECONDS)
         freshness = min(freshness_buy, freshness_sell)
         
         # Volume is extremely important for market making to reduce time risk
-        vol_score = min(1.0, opp.daily_volume / 500.0) if opp.daily_volume > 0 else 0.1
+        vol_score = min(1.0, opp.daily_volume / 500.0) if opp.daily_volume > 0 else 0.0
         
         danger_penalty = 0.5 if opp.is_dangerous_route else 1.0
         capital_risk_premium = opp.buy_price * 0.05 if opp.is_dangerous_route else 0.0
@@ -699,10 +726,10 @@ class OpportunityScanner:
                 if bm_price <= 0 or not is_bm_price_valid(bm_price) or bm_age > MAX_AGE_BM_SECONDS:
                     continue
 
-                # Get Base item price in Caerleon (check all qualities 1..quality to find cheapest available base item)
-                base_price, base_age, base_vol = 0, 9999, 0
+                # Get Base item price in Caerleon (base quality MUST be >= target order quality, since enchanting does not change item quality)
+                base_price, base_age, base_vol, best_base_quality = 0, 9999, 0, quality
                 base_city = CAERLEON
-                for q in range(1, quality + 1):
+                for q in range(quality, 6):
                     base_data = self._get_price(prices, base_item_id, CAERLEON, q)
                     if base_data and base_data.get("sell_price_min", 0) > 0 and base_data.get("data_age_seconds", 9999) <= MAX_AGE_ROYAL_SECONDS:
                         cand_sp = base_data["sell_price_min"]
@@ -712,12 +739,14 @@ class OpportunityScanner:
                                 base_price = cand_sp
                                 base_age = base_data.get("data_age_seconds", 9999)
                                 base_vol = base_data.get("volume_24h", 0)
+                                best_base_quality = q
 
                 if base_price <= 0:
-                    for q in range(1, quality + 1):
+                    for q in range(quality, 6):
                         r_city, r_price, r_vol, r_age = self._cheapest_royal_sell(prices, base_item_id, q)
                         if r_price > 0 and (base_price == 0 or r_price < base_price):
                             base_city, base_price, base_vol, base_age = r_city, r_price, r_vol, r_age
+                            best_base_quality = q
 
                 if base_price <= 0 or base_age > MAX_AGE_ROYAL_SECONDS:
                     continue
@@ -785,6 +814,7 @@ class OpportunityScanner:
                     safe_limit=safe_limit,
                     roi=round((net_profit / total_cost) * 100, 2),
                     quality=quality,
+                    base_quality=best_base_quality,
                     data_age_base=base_age,
                     data_age_material=mat_age,
                     data_age_bm=bm_age,
@@ -894,6 +924,7 @@ class OpportunityScanner:
         Also checks: can we CRAFT it cheaper than buying from royal city?
         """
         results = []
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
 
         for item_id in prices:
             for quality in [1, 2, 3, 4, 5]:
@@ -942,7 +973,7 @@ class OpportunityScanner:
 
                 buy_city, buy_price, volume, buy_age = best_buy_city, best_buy_price, best_volume, best_buy_age
                 
-                if buy_price <= 0 or buy_age > MAX_AGE_ROYAL_SECONDS:
+                if buy_price <= 0 or buy_age > MAX_AGE_ROYAL_SECONDS or (volume > 0 and volume < min_vol):
                     continue
 
                 # Apply slippage model
@@ -1031,6 +1062,7 @@ class OpportunityScanner:
         city/venue (BM or market) to sell it at. Compares net revenue vs net cost.
         """
         results = []
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
 
         for item_id, recipe in recipes.items():
             for quality in [1]:  # Crafting always produces quality 1 at base
@@ -1061,11 +1093,20 @@ class OpportunityScanner:
                         material_cost_net += ing["line_cost"]
 
                 # Station fee: nutrition cost = item_val * 0.1125, silver fee = (nutrition * station_tax) / 100
-                item_val = item_values.get(item_id, 0.0)
+                item_val = item_values.get(item_id, 0.0) if item_values else 0.0
+                if item_val <= 0:
+                    item_val = get_fallback_item_value(item_id)
                 station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
                 station_fee = calculate_station_fee(item_val, station_tax)
 
                 total_cost = material_cost_net + station_fee
+
+                # Anti-Bait / Irrational Crafting Safeguard:
+                # Check if item is already listed pre-crafted on ANY royal market for <= total_cost.
+                # If market sell_price_min <= total_cost, crafting is irrational (cheaper to buy pre-crafted off the market).
+                r_city, r_sp, _, _ = self._cheapest_royal_sell(prices, item_id, quality)
+                if r_sp > 0 and total_cost >= r_sp:
+                    continue
 
                 # Evaluate all sell destinations
                 best_opp = None
@@ -1075,8 +1116,8 @@ class OpportunityScanner:
                 if bm_data and best_craft_city == "Caerleon":
                     bm_price = bm_data.get("buy_price_max", 0)
                     bm_age = bm_data.get("data_age_seconds", 9999)
-                    bm_vol = bm_data.get("volume_24h", 1)
-                    if bm_price > 0 and bm_age <= MAX_AGE_BM_SECONDS and bm_vol >= MIN_BM_VOLUME:
+                    bm_vol = bm_data.get("volume_24h", 0)
+                    if bm_price > 0 and bm_age <= MAX_AGE_BM_SECONDS:
                         trade_vol = self.default_trade_volume if self.use_slippage else 1
                         effective_bm_price = calculate_effective_price(bm_price, trade_vol, bm_vol, is_buy=False)
                         safe_limit = calculate_safe_trade_limit(bm_vol, max_slippage_pct=0.03)
@@ -1112,7 +1153,6 @@ class OpportunityScanner:
                             best_opp = opp
 
                 # — Sell on royal market (best price across all cities)
-                # — Sell on royal market (best price across all cities)
                 craft_sell_map = {}
                 for sell_city in ALL_SELL_CITIES:
                     if sell_city == "Caerleon" and best_craft_city != "Caerleon":
@@ -1139,7 +1179,7 @@ class OpportunityScanner:
                     sell_vol = sell_data.get("volume_24h", 0)
                     buy_max = sell_data.get("buy_price_max", 0)
 
-                    if sell_price <= 0 or sell_vol < MIN_ROYAL_VOLUME:
+                    if sell_price <= 0 or sell_vol < min_vol:
                         continue
                     if sell_age > MAX_AGE_ROYAL_SECONDS:
                         continue
@@ -1226,6 +1266,8 @@ class OpportunityScanner:
                             else 0.0
                         )
                         cae_total_cost = cae_cost_net + cae_station_fee
+                        if r_sp > 0 and cae_total_cost >= r_sp:
+                            continue
                         best_cae_opp = None
 
                         # — Sell to Black Market (0 tax — BM is in Caerleon)
@@ -1237,11 +1279,10 @@ class OpportunityScanner:
                             cae_bm_age = cae_bm_data.get(
                                 "data_age_seconds", 9999
                             )
-                            cae_bm_vol = cae_bm_data.get("volume_24h", 1)
+                            cae_bm_vol = cae_bm_data.get("volume_24h", 0)
                             if (
                                 cae_bm_price > 0
                                 and cae_bm_age <= MAX_AGE_BM_SECONDS
-                                and cae_bm_vol >= MIN_BM_VOLUME
                             ):
                                 profit = cae_bm_price - cae_total_cost
                                 pct = (
@@ -1301,7 +1342,7 @@ class OpportunityScanner:
                             if (
                                 cae_sp > 0
                                 and cae_sell_age <= MAX_AGE_ROYAL_SECONDS
-                                and cae_sell_vol >= MIN_ROYAL_VOLUME
+                                and cae_sell_vol >= min_vol
                                 and is_price_valid(cae_sp, cae_buy_max)
                             ):
                                 revenue_net = cae_sp * (
@@ -1376,6 +1417,7 @@ class OpportunityScanner:
         from app.core.market_utils import calculate_rrr, get_refining_category
 
         results = []
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
         
         # We only care about items that are crafted (have recipes) and are refining subcategories
         refining_subs = ['planks', 'metalbar', 'leather', 'cloth', 'stoneblock']
@@ -1404,7 +1446,7 @@ class OpportunityScanner:
                     ing_qty = ing["quantity"]
                     
                     src_city, src_price, src_vol, src_age = self._cheapest_royal_sell(prices, ing_id, quality)
-                    if src_price <= 0 or src_age > 7200 or src_vol < MIN_ROYAL_VOLUME: # MAX_AGE_ROYAL_SECONDS
+                    if src_price <= 0 or src_age > 7200 or (src_vol > 0 and src_vol < min_vol): # MAX_AGE_ROYAL_SECONDS
                         mat_data_found = False
                         break
                         
@@ -1478,7 +1520,7 @@ class OpportunityScanner:
                     sell_age = p.get("data_age_seconds", 9999)
                     sell_vol = p.get("volume_24h", 0)
                     
-                    if sell_sp > best_sell_price and sell_age <= 7200 and sell_vol >= MIN_ROYAL_VOLUME:
+                    if sell_sp > best_sell_price and sell_age <= 7200 and (sell_vol == 0 or sell_vol >= min_vol):
                         best_sell_price = sell_sp
                         best_sell_city = sell_city
                         best_sell_vol = sell_vol
@@ -1571,6 +1613,8 @@ class OpportunityScanner:
             "passed": 0,
         }
 
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
+
         for item_id in prices:
             for quality in [1, 2, 3, 4, 5]:
                 # Get all valid source prices (where we buy)
@@ -1632,7 +1676,7 @@ class OpportunityScanner:
                         dest_age = dest_data.get("data_age_seconds", 9999)
                         dest_vol = dest_data.get("volume_24h", 0)
 
-                        if dest_buy_max <= 0 or dest_vol < MIN_ROYAL_VOLUME:
+                        if dest_buy_max <= 0 or (dest_vol > 0 and dest_vol < min_vol):
                             _diag["dest_no_buy"] += 1
                             continue
                         if dest_age > MAX_AGE_ROYAL_SECONDS:
@@ -1720,7 +1764,7 @@ class OpportunityScanner:
         _diag = {"total": 0, "no_data": 0, "low_vol": 0, "low_profit": 0, "low_pct": 0, "passed": 0}
 
         # User baseline requirement — volume floor set to 0 to prevent dropping snapshot data
-        min_volume = 0
+        min_volume = max(1, getattr(settings, "anti_bait_min_volume", 1))
 
         for item_id, city_data in prices.items():
             valid_cities = [c for c in city_data.keys() if c in ROYAL_CITIES or c == CAERLEON]
@@ -1743,11 +1787,20 @@ class OpportunityScanner:
                         vol_source = source_p.get("volume_24h", 0)
                         vol_dest = dest_p.get("volume_24h", 0)
                         vol = min(vol_source, vol_dest) if source_city != dest_city else vol_source
+
+                        if vol < min_volume:
+                            _diag["low_vol"] += 1
+                            continue
                         
                         age_buy = source_p.get("data_age_seconds", 9999)
                         age_sell = dest_p.get("data_age_seconds", 9999)
                         
-                        if sp <= 0 or bm <= 0 or age_buy > MAX_AGE_ROYAL_SECONDS or age_sell > MAX_AGE_ROYAL_SECONDS:
+                        if sp <= 0 or bm <= 0 or age_buy > MAX_AGE_MM_SECONDS or age_sell > MAX_AGE_MM_SECONDS:
+                            _diag["no_data"] += 1
+                            continue
+
+                        # Reject corrupt data, troll buy orders, or extreme manipulation ratios
+                        if not is_price_valid(sp, bm, item_id=item_id):
                             _diag["no_data"] += 1
                             continue
                             
@@ -1777,6 +1830,14 @@ class OpportunityScanner:
                         capital_required = effective_buy_price + buy_setup_fee + sell_setup_fee
                         pct = (net_profit / capital_required * 100) if capital_required > 0 else 0.0
                         roi = (net_profit / capital_required * 100) if capital_required > 0 else 0.0
+
+                        spread_ratio = effective_sell_price / effective_buy_price if effective_buy_price > 0 else 99.0
+
+                        # Anti-manipulation / Anti-Illiquidity:
+                        # Spreads > 1.5x ratio or > 40% margin represent illiquid dead markets (overpriced ghost asks + lowball bids)
+                        if spread_ratio > 1.5 or pct > 40.0:
+                            _diag["low_pct"] += 1
+                            continue
 
                         if net_profit < 1000:
                             _diag["low_profit"] += 1
@@ -1962,6 +2023,7 @@ class OpportunityScanner:
         from app.features.quality_arbitrage import detect_quality_inversion
 
         results = []
+        min_vol = getattr(settings, "anti_bait_min_volume", 1)
         for item_id, city_map in prices.items():
             item_name = item_names.get(item_id, item_id)
             for city, quality_map in city_map.items():
@@ -1974,10 +2036,14 @@ class OpportunityScanner:
                     item_name=item_name,
                     min_profit=self.min_arb_profit,
                     min_margin=self.min_arb_profit_pct,
+                    tax_rate=self.tax,
+                    setup_fee_rate=self.setup_fee,
+                    min_volume=min_vol,
                 )
                 for inv in invs:
                     vol = inv["daily_volume"]
                     limit = calculate_safe_trade_limit(vol, default_limit=1)
+                    score = round(inv["net_profit"] * (vol / 50.0 + 0.1), 2) if vol > 0 else 0.0
                     opp = QualityInversionOpportunity(
                         item_id=inv["item_id"],
                         item_name=inv["item_name"],
@@ -1994,7 +2060,7 @@ class OpportunityScanner:
                         data_age_seconds=inv["data_age_seconds"],
                         daily_volume=vol,
                         safe_limit=limit,
-                        score=round(inv["net_profit"] * (vol / 50.0 + 0.1), 2),
+                        score=score,
                     )
                     results.append(opp)
 

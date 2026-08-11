@@ -525,6 +525,10 @@ class DiscordAlerter:
         item_id = opp.get("target_item_id") or opp.get("item_id") or "T7_MAIN_SWORD@1"
         quality = opp.get("quality", 1)
 
+        quality_names = {1: "Normal", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
+        base_q = opp.get("base_quality", opp.get("quality", 1))
+        base_q_str = f" ({quality_names.get(base_q, 'Normal')})" if base_q > 1 else ""
+
         embed = {
             "title": f"{badge} {opp.get('item_name', item_id)}",
             "description": desc,
@@ -545,7 +549,7 @@ class DiscordAlerter:
                 },
                 {
                     "name": "✨ Components Required",
-                    "value": f"• Base: **{base_name}** (`{base_city}`)\n• Material: {opp.get('material_qty', 1)}x **{mat_name}**\n• Safe Batch: **{opp.get('safe_limit', 0):,} units**",
+                    "value": f"• Base: **{base_name}{base_q_str}** (`{base_city}`)\n• Material: {opp.get('material_qty', 1)}x **{mat_name}**\n• Safe Batch: **{opp.get('safe_limit', 0):,} units**",
                     "inline": True,
                 },
             ],

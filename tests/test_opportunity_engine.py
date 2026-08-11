@@ -387,16 +387,16 @@ def test_scan_market_making(scanner):
         'T4_BAG': {
             'Martlock': {
                 1: {
-                    'sell_price_min': 5000,
-                    'buy_price_max': 2000,
+                    'sell_price_min': 15000,
+                    'buy_price_max': 10000,
                     'volume_24h': 100,
                     'data_age_seconds': 100,
                 }
             },
             'Bridgewatch': {
                 1: {
-                    'sell_price_min': 4500,
-                    'buy_price_max': 3000,
+                    'sell_price_min': 13000,
+                    'buy_price_max': 9000,
                     'volume_24h': 200,
                     'data_age_seconds': 100,
                 }
@@ -406,30 +406,123 @@ def test_scan_market_making(scanner):
     names = {'T4_BAG': 'Adept bag'}
     categories = {'T4_BAG': 'bag'}
     
-    # We lowered requirement to 10 in the code, and these have 100 and 200 volume.
     opps = scanner.scan_market_making(prices, names, categories)
     
-    # We should have multiple combinations. 
     # Martlock -> Bridgewatch
-    # Buy at Martlock buy_price_max + 1 = 2001
-    # Sell at Bridgewatch sell_price_min - 1 = 4499
+    # Buy at Martlock buy_price_max + 1 = 10001
+    # Sell at Bridgewatch sell_price_min - 1 = 12999
     
     mb_opp = next((o for o in opps if o.source_city == 'Martlock' and o.destination_city == 'Bridgewatch'), None)
     assert mb_opp is not None
-    assert mb_opp.buy_price == 2001
-    assert mb_opp.sell_price == 4499
+    assert mb_opp.buy_price == 10001
+    assert mb_opp.sell_price == 12999
     
     # Check gross profit
-    assert mb_opp.gross_profit == 4499 - 2001
+    assert mb_opp.gross_profit == 12999 - 10001
     
-    # Check fees: 
-    # setup fee: 2001 * 0.025 = 50.025
-    # setup fee sell: 4499 * 0.025 = 112.475
-    # tax paid: 4499 * 0.04 = 179.96
-    
-    total_fees = 2001 * 0.025 + 4499 * 0.025 + 4499 * 0.04
+    tax_rate = scanner.tax
+    total_fees = 10001 * 0.025 + 12999 * 0.025 + 12999 * tax_rate
     net = mb_opp.gross_profit - total_fees
     assert abs(mb_opp.net_profit - round(net, 0)) <= 1
+
+
+def test_scan_market_making_zero_volume_filtered(scanner):
+    prices = {
+        'T8_SHOES_ROYAL': {
+            'Bridgewatch': {
+                1: {
+                    'sell_price_min': 1_800_000,
+                    'buy_price_max': 1_500_000,
+                    'volume_24h': 0,  # 0 volume
+                    'data_age_seconds': 100,
+                }
+            }
+        }
+    }
+    opps = scanner.scan_market_making(prices, {'T8_SHOES_ROYAL': 'Royal Shoes'}, {'T8_SHOES_ROYAL': 'shoes'})
+    assert len(opps) == 0
+
+
+def test_scan_market_making_wide_spread_rejected(scanner):
+    # Ask 2.8M vs Bid 1.2M -> spread ratio 2.33x > 1.5x, margin 98.2% > 40.0%
+    prices = {
+        'T7_ARMOR_LEATHER_SET3@3': {
+            'Martlock': {
+                4: {
+                    'sell_price_min': 2_800_000,
+                    'buy_price_max': 1_200_000,
+                    'volume_24h': 10,
+                    'data_age_seconds': 100,
+                }
+            }
+        }
+    }
+    opps = scanner.scan_market_making(prices, {'T7_ARMOR_LEATHER_SET3@3': 'Druid Robe'}, {'T7_ARMOR_LEATHER_SET3@3': 'armor'})
+    assert len(opps) == 0
+
+
+def test_scan_market_making_stale_data_rejected(scanner):
+    # Data age 3,600s > MAX_AGE_MM_SECONDS (1,800s)
+    prices = {
+        'T4_BAG': {
+            'Martlock': {
+                1: {
+                    'sell_price_min': 4500,
+                    'buy_price_max': 3500,
+                    'volume_24h': 100,
+                    'data_age_seconds': 3600,
+                }
+            }
+        }
+    }
+    opps = scanner.scan_market_making(prices, {'T4_BAG': 'Adept bag'}, {'T4_BAG': 'bag'})
+    assert len(opps) == 0
+
+
+def test_scan_enchanting_quality_matching(scanner):
+    # Q5 Masterpiece BM order for T7_ARMOR_LEATHER_HELL@2
+    # Only Q1 Normal base item T7_ARMOR_LEATHER_HELL@1 is available at 470k silver
+    prices_q1_only = {
+        'T7_ARMOR_LEATHER_HELL@2': {
+            'Black Market': {
+                5: {'buy_price_max': 1_400_000, 'volume_24h': 10, 'data_age_seconds': 100}
+            }
+        },
+        'T7_ARMOR_LEATHER_HELL@1': {
+            'Caerleon': {
+                1: {'sell_price_min': 470_000, 'buy_price_max': 400_000, 'volume_24h': 10, 'data_age_seconds': 100}
+                # Note: No Q5 base item available!
+            }
+        },
+        'T7_SOUL': {
+            'Caerleon': {
+                1: {'sell_price_min': 2300, 'buy_price_max': 2000, 'volume_24h': 1000, 'data_age_seconds': 100}
+            }
+        }
+    }
+    names = {'T7_ARMOR_LEATHER_HELL@2': "Grandmaster's Hellion Jacket .2"}
+    categories = {'T7_ARMOR_LEATHER_HELL@2': 'armor'}
+
+    # Must return 0 opportunities because Q1 base item cannot fulfill Q5 BM order!
+    opps = scanner.scan_enchanting(prices_q1_only, names, categories)
+    assert len(opps) == 0
+
+    # Now add Q5 Masterpiece base item at 600k silver in Caerleon
+    prices_with_q5 = {
+        'T7_ARMOR_LEATHER_HELL@2': prices_q1_only['T7_ARMOR_LEATHER_HELL@2'],
+        'T7_ARMOR_LEATHER_HELL@1': {
+            'Caerleon': {
+                1: {'sell_price_min': 470_000, 'buy_price_max': 400_000, 'volume_24h': 10, 'data_age_seconds': 100},
+                5: {'sell_price_min': 600_000, 'buy_price_max': 500_000, 'volume_24h': 5, 'data_age_seconds': 100},
+            }
+        },
+        'T7_SOUL': prices_q1_only['T7_SOUL'],
+    }
+    opps2 = scanner.scan_enchanting(prices_with_q5, names, categories)
+    assert len(opps2) == 1
+    assert opps2[0].quality == 5
+    assert opps2[0].base_quality == 5
+    assert opps2[0].base_price == 600_000
 
 
 # ─── Enchantment Material Quantity Tests ─────────────────────────────────────
@@ -629,6 +722,121 @@ def test_scan_enchanting_rejects_corrupted_material_price(scanner):
 
     opps = scanner.scan_enchanting(prices, names, categories)
     assert len(opps) == 0, "Corrupted 1-silver material price must be rejected"
+
+
+def test_scan_crafting_zero_volume_rejected(scanner):
+    # Crafting opportunity where 24h volume is 0 -> MUST be rejected by anti-bait filter
+    prices = {
+        'T4_ARMOR_CLOTH_ROYAL': {
+            'Lymhurst': {
+                1: {'sell_price_min': 295_000, 'buy_price_max': 200_000, 'volume_24h': 0, 'data_age_seconds': 100}
+            }
+        },
+        'T4_ARMOR_CLOTH_SET1': {
+            'Bridgewatch': {
+                1: {'sell_price_min': 3200, 'buy_price_max': 2500, 'volume_24h': 500, 'data_age_seconds': 100}
+            }
+        },
+        'QUESTITEM_TOKEN_ROYAL_T4': {
+            'Bridgewatch': {
+                1: {'sell_price_min': 57_000, 'buy_price_max': 50_000, 'volume_24h': 100, 'data_age_seconds': 100}
+            }
+        }
+    }
+    recipes = {
+        'T4_ARMOR_CLOTH_ROYAL': {
+            'ingredients': [
+                {'item_id': 'T4_ARMOR_CLOTH_SET1', 'quantity': 1, 'is_returnable': True},
+                {'item_id': 'QUESTITEM_TOKEN_ROYAL_T4', 'quantity': 4, 'is_returnable': False}
+            ]
+        }
+    }
+    names = {'T4_ARMOR_CLOTH_ROYAL': "Adept's Royal Robe"}
+    categories = {'T4_ARMOR_CLOTH_ROYAL': 'armor'}
+    values = {'T4_ARMOR_CLOTH_ROYAL': 64.0}
+
+    opps = scanner.scan_crafting(prices, names, recipes, categories, values)
+    assert len(opps) == 0, "0 volume crafting opportunities must be rejected"
+
+
+def test_scan_crafting_cheaper_on_local_market_rejected(scanner):
+    # Adept's Royal Robe crafting cost in Bridgewatch: ~230k
+    # Pre-crafted Adept's Royal Robe listed on Bridgewatch market for 199.9k -> MUST be rejected (irrational to craft)
+    prices = {
+        'T4_ARMOR_CLOTH_ROYAL': {
+            'Bridgewatch': {
+                1: {'sell_price_min': 199_998, 'buy_price_max': 180_000, 'volume_24h': 10, 'data_age_seconds': 100}
+            },
+            'Lymhurst': {
+                1: {'sell_price_min': 295_000, 'buy_price_max': 200_000, 'volume_24h': 10, 'data_age_seconds': 100}
+            }
+        },
+        'T4_ARMOR_CLOTH_SET1': {
+            'Bridgewatch': {
+                1: {'sell_price_min': 3200, 'buy_price_max': 2500, 'volume_24h': 500, 'data_age_seconds': 100}
+            }
+        },
+        'QUESTITEM_TOKEN_ROYAL_T4': {
+            'Bridgewatch': {
+                1: {'sell_price_min': 57_000, 'buy_price_max': 50_000, 'volume_24h': 100, 'data_age_seconds': 100}
+            }
+        }
+    }
+    recipes = {
+        'T4_ARMOR_CLOTH_ROYAL': {
+            'ingredients': [
+                {'item_id': 'T4_ARMOR_CLOTH_SET1', 'quantity': 1, 'is_returnable': True},
+                {'item_id': 'QUESTITEM_TOKEN_ROYAL_T4', 'quantity': 4, 'is_returnable': False}
+            ]
+        }
+    }
+    names = {'T4_ARMOR_CLOTH_ROYAL': "Adept's Royal Robe"}
+    categories = {'T4_ARMOR_CLOTH_ROYAL': 'armor'}
+    values = {'T4_ARMOR_CLOTH_ROYAL': 64.0}
+
+    opps = scanner.scan_crafting(prices, names, recipes, categories, values)
+    assert len(opps) == 0, "Crafting when item is cheaper to buy pre-crafted on local market must be rejected"
+
+
+def test_scan_crafting_cheaper_on_other_royal_market_rejected(scanner):
+    # Expert's Jacket of Tenacity: Craft cost in Bridgewatch = ~77.7k (16x T5 Leather @ 1.3k + 1x T5 Artifact @ 70k)
+    # Pre-crafted Jacket of Tenacity listed on Martlock market for 71k silver
+    # Target sell price in Fort Sterling = 100k
+    # Since 71k <= 77.7k, crafting is strictly inferior to buying off the market for 71k -> MUST be rejected
+    prices = {
+        'T5_ARMOR_LEATHER_AVALON': {
+            'Martlock': {
+                1: {'sell_price_min': 71_000, 'buy_price_max': 60_000, 'volume_24h': 10, 'data_age_seconds': 100}
+            },
+            'Fort Sterling': {
+                1: {'sell_price_min': 100_000, 'buy_price_max': 90_000, 'volume_24h': 10, 'data_age_seconds': 100}
+            }
+        },
+        'T5_LEATHER': {
+            'Bridgewatch': {
+                1: {'sell_price_min': 1300, 'buy_price_max': 1000, 'volume_24h': 1000, 'data_age_seconds': 100}
+            }
+        },
+        'T5_ARTEFACT_ARMOR_LEATHER_AVALON': {
+            'Bridgewatch': {
+                1: {'sell_price_min': 70_000, 'buy_price_max': 60_000, 'volume_24h': 100, 'data_age_seconds': 100}
+            }
+        }
+    }
+    recipes = {
+        'T5_ARMOR_LEATHER_AVALON': {
+            'ingredients': [
+                {'item_id': 'T5_LEATHER', 'quantity': 16, 'is_returnable': True},
+                {'item_id': 'T5_ARTEFACT_ARMOR_LEATHER_AVALON', 'quantity': 1, 'is_returnable': False}
+            ]
+        }
+    }
+    names = {'T5_ARMOR_LEATHER_AVALON': "Expert's Jacket of Tenacity"}
+    categories = {'T5_ARMOR_LEATHER_AVALON': 'armor'}
+    values = {'T5_ARMOR_LEATHER_AVALON': 128.0}
+
+    opps = scanner.scan_crafting(prices, names, recipes, categories, values)
+    assert len(opps) == 0, "Crafting when item is cheaper to buy pre-crafted on any royal market must be rejected"
 
 
 
