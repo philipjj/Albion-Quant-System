@@ -104,18 +104,25 @@ class MarketCollector:
         for item in raw:
             item_id = item.get("item_id", "")
 
-            # Age calculation
-            dates = [item.get("sell_price_min_date"), item.get("buy_price_max_date")]
-            parsed_dates = [parse_timestamp(d) for d in dates if d]
-            parsed_dates = [d for d in parsed_dates if d is not None]
-            age_sec = None
-            if parsed_dates:
-                latest_date = max(parsed_dates)
-                age_sec = int(
-                    (
-                        datetime.utcnow().replace(tzinfo=latest_date.tzinfo) - latest_date
-                    ).total_seconds()
+            # Independent Age calculation
+            sell_date = parse_timestamp(item.get("sell_price_min_date"))
+            buy_date = parse_timestamp(item.get("buy_price_max_date"))
+            now_utc = datetime.utcnow()
+
+            sell_age_sec = None
+            if sell_date:
+                sell_age_sec = int(
+                    (now_utc.replace(tzinfo=sell_date.tzinfo) - sell_date).total_seconds()
                 )
+
+            buy_age_sec = None
+            if buy_date:
+                buy_age_sec = int(
+                    (now_utc.replace(tzinfo=buy_date.tzinfo) - buy_date).total_seconds()
+                )
+
+            # General data age: prefer sell order age if available, else buy order age
+            age_sec = sell_age_sec if sell_age_sec is not None else buy_age_sec
 
             results.append(
                 {
@@ -126,18 +133,20 @@ class MarketCollector:
                     "sell_price_max": item.get("sell_price_max"),
                     "buy_price_min": item.get("buy_price_min"),
                     "buy_price_max": item.get("buy_price_max"),
-                    "sell_price_min_date": parse_timestamp(item.get("sell_price_min_date")),
-                    "buy_price_max_date": parse_timestamp(item.get("buy_price_max_date")),
+                    "sell_price_min_date": sell_date,
+                    "buy_price_max_date": buy_date,
                     "quality": item.get("quality", 1),
                     "data_age_seconds": age_sec,
+                    "sell_age_seconds": sell_age_sec,
+                    "buy_age_seconds": buy_age_sec,
                     "volume_24h": item.get("volume_24h"),  # None until collect_volumes populates it
                     "coverage_suspect": False,
                 }
             )
         return results
 
-    async def fetch_volume_data(self, city: str, item_ids: list[str]) -> dict[str, int]:
-        """Fetches 24-hour volume using the centralized HTTP service."""
+    async def fetch_volume_data(self, city: str, item_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Fetches 24-hour volume and historical pool average price using the centralized HTTP service."""
         if not item_ids:
             return {}
 
@@ -160,8 +169,12 @@ class MarketCollector:
             latest = max(valid_data, key=lambda x: x.get("timestamp"))
             key = f"{record.get('item_id', '')}:{record.get('quality', 1)}"
 
-            # Force minimum volume of 1
-            volume_map[key] = int(latest.get("item_count", 1))
+            # Capture volume and average price from 24h historical pool
+            volume_map[key] = {
+                "volume": int(latest.get("item_count", 1)),
+                "avg_price": float(latest.get("avg_price", 0.0)),
+                "timestamp": latest.get("timestamp"),
+            }
         return volume_map
 
     def _get_tradeable_items_info(self, db: Session) -> dict[str, dict]:
@@ -316,27 +329,13 @@ class MarketCollector:
                 if prices and len(prices) >= 10:
                     signal = mr_engine.evaluate(s.item_id, s.city, prices)
                     if signal:
-                        log.info(
-                            f"🚨 SIGNAL generated: {signal.signal_type} for {signal.item_id} in {signal.city} (Strength: {signal.strength:.2f})"
-                        )
-                        await alerter.send_signal_alert(
-                            {
-                                "item_id": signal.item_id,
-                                "signal_type": signal.signal_type,
-                                "alpha_score": signal.strength,
-                                "confidence": 0.8,
-                                "manipulation_risk": signal.metadata.get("volatility", 0.0),
-                                "liquidity_score": 0.0,
-                                "persistence_score": signal.metadata.get("half_life_seconds", 0.0)
-                                / 3600.0,
-                                "cluster_id": signal.city,
-                            }
+                        log.debug(
+                            f"📊 Internal signal: {signal.signal_type} for {signal.item_id} in {signal.city} (Strength: {signal.strength:.2f})"
                         )
 
             # 2. Cross-City Arbitrage Signals
             city_prices = {s.city: s.best_ask for s in snaps if s.best_ask > 0}
             if len(city_prices) > 1:
-                # Generate dummy route info for pairs
                 dummy_route = {}
                 for c1 in city_prices:
                     dummy_route[c1] = {}
@@ -352,20 +351,8 @@ class MarketCollector:
                     item_id, city_prices, item_weight=1.0, route_info=dummy_route
                 )
                 for sig in signals:
-                    log.info(
-                        f"🚨 ARB SIGNAL: {sig.signal_type} for {sig.item_id} from {sig.metadata['source_city']} to {sig.metadata['target_city']} (Net Profit: {sig.metadata['net_profit']:.0f})"
-                    )
-                    await alerter.send_signal_alert(
-                        {
-                            "item_id": sig.item_id,
-                            "signal_type": f"ARB ({sig.metadata['source_city']}->{sig.metadata['target_city']})",
-                            "alpha_score": sig.strength,
-                            "confidence": 0.8,
-                            "manipulation_risk": 0.0,
-                            "liquidity_score": 0.0,
-                            "persistence_score": 0.0,
-                            "cluster_id": sig.item_id,
-                        }
+                    log.debug(
+                        f"📊 Internal arb signal: {sig.signal_type} for {sig.item_id} from {sig.metadata['source_city']} to {sig.metadata['target_city']}"
                     )
 
     async def collect_prices(self):
@@ -472,7 +459,6 @@ class MarketCollector:
                             market_to_save.append(r)
 
                 # 4. UPSERT via Repository
-                if market_to_save:
                     snapshots = []
                     for r in market_to_save:
                         snapshots.append(
@@ -491,8 +477,11 @@ class MarketCollector:
                                 midprice=float(
                                     ((r["sell_price_min"] or 0) + (r["buy_price_max"] or 0)) / 2
                                 ),
-                                rolling_volume=r["volume_24h"] or 0,
+                                rolling_volume=r.get("volume_24h") or 0,
                                 volatility=0.0,
+                                sell_price_min_date=r.get("sell_price_min_date"),
+                                buy_price_max_date=r.get("buy_price_max_date"),
+                                data_age_seconds=float(r.get("data_age_seconds") or 0.0),
                             )
                         )
                     await self.repository.save_snapshots(snapshots)
@@ -648,8 +637,11 @@ class MarketCollector:
                                 midprice=float(
                                     ((r["sell_price_min"] or 0) + (r["buy_price_max"] or 0)) / 2
                                 ),
-                                rolling_volume=r["volume_24h"] or 0,
+                                rolling_volume=r.get("volume_24h") or 0,
                                 volatility=0.0,
+                                sell_price_min_date=r.get("sell_price_min_date"),
+                                buy_price_max_date=r.get("buy_price_max_date"),
+                                data_age_seconds=float(r.get("data_age_seconds") or 0.0),
                             )
                         )
                     await self.repository.save_snapshots(snapshots)
@@ -690,9 +682,12 @@ class MarketCollector:
                         continue
 
                     # Update the LATEST records for these items in the DB via repository
-                    async def update_item_volume(k, v):
+                    async def update_item_volume(k, v_data):
                         item_id, quality = k.split(":")
-                        await self.repository.update_volume(item_id, city_name, int(quality), v)
+                        vol = v_data.get("volume", 1) if isinstance(v_data, dict) else int(v_data)
+                        avg_p = v_data.get("avg_price", 0.0) if isinstance(v_data, dict) else 0.0
+                        ts = v_data.get("timestamp") if isinstance(v_data, dict) else None
+                        await self.repository.update_volume(item_id, city_name, int(quality), vol, avg_p, ts)
 
                     await asyncio.gather(
                         *(update_item_volume(key, vol) for key, vol in v_map.items())

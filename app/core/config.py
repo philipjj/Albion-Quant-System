@@ -119,6 +119,9 @@ class Settings(BaseSettings):
     discord_bm_enchanting_webhook_url: str = Field(default="", alias="DISCORD_BM_ENCHANTING_WEBHOOK_URL")
     discord_mm_webhook_url: str = Field(default="", alias="DISCORD_MM_WEBHOOK_URL")
     discord_bm_mm_webhook_url: str = Field(default="", alias="DISCORD_BM_MM_WEBHOOK_URL")
+    discord_island_webhook_url: str = Field(default="", alias="DISCORD_ISLAND_WEBHOOK_URL")
+    discord_transmute_webhook_url: str = Field(default="", alias="DISCORD_TRANSMUTE_WEBHOOK_URL")
+    discord_bm_transmute_webhook_url: str = Field(default="", alias="DISCORD_BM_TRANSMUTE_WEBHOOK_URL")
     discord_bot_token: str = Field(default="", alias="DISCORD_BOT_TOKEN")
 
     # Trading Parameters
@@ -154,12 +157,15 @@ class Settings(BaseSettings):
     enable_alerts_enchanting: bool = Field(default=True, alias="ENABLE_ALERTS_ENCHANTING")
     enable_alerts_mm: bool = Field(default=True, alias="ENABLE_ALERTS_MM")
     enable_alerts_refining: bool = Field(default=True, alias="ENABLE_ALERTS_REFINING")
+    enable_alerts_island: bool = Field(default=True, alias="ENABLE_ALERTS_ISLAND")
+    enable_alerts_transmute: bool = Field(default=True, alias="ENABLE_ALERTS_TRANSMUTE")
     
     enable_alerts_bm_arb: bool = Field(default=True, alias="ENABLE_ALERTS_BM_ARBITRAGE")
     enable_alerts_bm_crafting: bool = Field(default=True, alias="ENABLE_ALERTS_BM_CRAFTING")
     enable_alerts_bm_enchanting: bool = Field(default=True, alias="ENABLE_ALERTS_BM_ENCHANTING")
     enable_alerts_bm_mm: bool = Field(default=True, alias="ENABLE_ALERTS_BM_MM")
     enable_alerts_bm_refining: bool = Field(default=True, alias="ENABLE_ALERTS_BM_REFINING")
+    enable_alerts_bm_transmute: bool = Field(default=True, alias="ENABLE_ALERTS_BM_TRANSMUTE")
 
     # Market Constants
     premium_tax_rate: float = Field(default=0.04, alias="PREMIUM_TAX_RATE")

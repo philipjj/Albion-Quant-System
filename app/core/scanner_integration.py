@@ -7,7 +7,7 @@ compatible with the existing DB models and Discord alerter.
 Usage:
     from app.core.scanner_integration import UnifiedScanner
     scanner = UnifiedScanner()
-    bm, crafting, arb = await scanner.scan_all(db_session)
+    bm, crafting, arb, refining, mm, enchant, quality, transmute = await scanner.scan_all(db_session)
 """
 
 from __future__ import annotations
@@ -215,13 +215,24 @@ class UnifiedScanner:
     def _load_recipes(self, db: Session) -> dict:
         """
         Build recipe map: {item_id: {"ingredients": [{"item_id": str, "quantity": float}]}}
-        Filters out raw-resource-only ingredients for non-refining crafts (same logic
-        as existing engine, but simplified and less lossy).
+        Filters out invalid craft recipes (Royal Sigil transmutes, Raw material gathering pseudo-recipes).
         """
         rows = db.query(Recipe).all()
         recipes: dict[str, dict] = {}
         for r in rows:
             cid = r.crafted_item_id
+            ing_id = r.ingredient_item_id
+
+            cid_upper = cid.upper()
+
+            # 1. Royal Sigils cannot be crafted/transmuted from lower-tier sigils
+            if "ROYALSIGIL" in cid_upper or "ROYAL_SIGIL" in cid_upper or "QUESTITEM_TOKEN_ROYAL" in cid_upper:
+                continue
+
+            # 2. Raw unrefined materials (Hide, Ore, Wood, Fiber, Rock) are gathered, NOT crafted from lower-tier raw materials
+            if any(raw in cid_upper for raw in ["_HIDE", "_ORE", "_WOOD", "_FIBER", "_ROCK", "_STONE"]) and not any(ref in cid_upper for ref in ["LEATHER", "BAR", "METALBAR", "CLOTH", "PLANKS", "BLOCK", "STONEBLOCK"]):
+                continue
+
             if cid not in recipes:
                 recipes[cid] = {"ingredients": []}
             recipes[cid]["ingredients"].append(
@@ -270,7 +281,7 @@ class UnifiedScanner:
         self.engine.min_arb_profit = self.default_min_arb_profit
         self.engine.min_craft_profit = state.min_craft_profit
         self.engine.min_bm_profit = state.min_bm_profit
-        self.engine.allow_enchant_transport = getattr(state, "allow_enchant_transport", False)
+        self.engine.allow_enchant_transport = getattr(state, "allow_enchant_transport", True)
 
         if db is None:
             db_context = get_db_session()
@@ -302,6 +313,10 @@ class UnifiedScanner:
             craft_raw = self.engine.scan_crafting(prices, names, recipes, categories, values, weights)
             log.info(f"[UNIFIED SCANNER] Crafting: {len(craft_raw)} opportunities")
 
+            log.info("[UNIFIED SCANNER] Scanning Island Agriculture...")
+            island_raw = self.engine.scan_island(prices, names, recipes, categories, values, weights)
+            log.info(f"[UNIFIED SCANNER] Island: {len(island_raw)} opportunities")
+
             log.info("[UNIFIED SCANNER] Scanning Arbitrage...")
             arb_raw = self.engine.scan_arbitrage(prices, names, weights)
             log.info(f"[UNIFIED SCANNER] Arbitrage: {len(arb_raw)} opportunities")
@@ -311,12 +326,16 @@ class UnifiedScanner:
             log.info(f"[UNIFIED SCANNER] Refining: {len(refine_raw)} opportunities")
 
             log.info("[UNIFIED SCANNER] Scanning Market Making...")
-            mm_raw = self.engine.scan_market_making(prices, names, weights)
+            mm_raw = self.engine.scan_market_making(prices, names, categories, weights)
             log.info(f"[UNIFIED SCANNER] MM: {len(mm_raw)} opportunities")
 
             log.info("[UNIFIED SCANNER] Scanning Quality Inversions...")
             quality_raw = self.engine.scan_quality_inversions(prices, names)
             log.info(f"[UNIFIED SCANNER] Quality Inversions: {len(quality_raw)} opportunities")
+
+            log.info("[UNIFIED SCANNER] Scanning Transmutation...")
+            transmute_raw = self.engine.scan_transmutation(prices, names)
+            log.info(f"[UNIFIED SCANNER] Transmutation: {len(transmute_raw)} opportunities")
 
             return (
                 [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_raw] if scan_bm else [],
@@ -326,10 +345,41 @@ class UnifiedScanner:
                 [self._mm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in mm_raw],
                 [self._enchant_to_dict(o, categories.get(o.target_item_id, "Unknown")) for o in enchant_raw] if scan_bm else [],
                 [self._quality_to_dict(o, categories.get(o.item_id, "Unknown")) for o in quality_raw],
+                [self._transmute_to_dict(o, categories.get(o.item_id, "Unknown")) for o in transmute_raw],
+                [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in island_raw],
             )
         finally:
             if db_context:
                 db_context.__exit__(None, None, None)
+
+    def _transmute_to_dict(self, o, category: str) -> dict[str, Any]:
+        return {
+            "item_id": o.item_id,
+            "item_name": o.item_name,
+            "source_item_id": o.source_item_id,
+            "source_item_name": o.source_item_name,
+            "source_price": o.source_price,
+            "transmutation_fee": o.transmutation_fee,
+            "total_cost": o.total_cost,
+            "sell_price": o.sell_price,
+            "source_city": o.source_city,
+            "destination_city": o.sell_city,
+            "estimated_profit": o.net_profit,
+            "profit": o.net_profit,
+            "profit_pct": o.profit_pct,
+            "profit_margin": o.profit_pct,
+            "roi": o.roi,
+            "daily_volume": o.daily_volume,
+            "data_age_source": o.data_age_source,
+            "data_age_sell": o.data_age_sell,
+            "safe_limit": o.safe_limit,
+            "ev_score": o.score,
+            "category": category,
+            "type": "transmutation",
+            "is_premium": getattr(self.engine, "is_premium", True),
+            "tax_rate": getattr(self.engine, "tax", 0.04),
+            "detected_at": datetime.utcnow().isoformat(),
+        }
 
     # ── Dict converters for compatibility with existing DB/Discord code ─────
 
@@ -378,10 +428,10 @@ class UnifiedScanner:
             "material_price": o.material_price,
             "bm_buy_price": o.bm_buy_price,
             "estimated_profit": o.net_profit,
-            "estimated_margin": o.profit_pct,
+            "estimated_margin": getattr(o, "profit_margin", round((o.net_profit / o.bm_buy_price) * 100, 2) if o.bm_buy_price > 0 else 0.0),
             "profit": o.net_profit,
             "profit_pct": o.profit_pct,
-            "profit_margin": o.profit_pct,
+            "profit_margin": getattr(o, "profit_margin", round((o.net_profit / o.bm_buy_price) * 100, 2) if o.bm_buy_price > 0 else 0.0),
             "source_city": base_c,
             "destination_city": "Black Market",
             "total_cost": o.total_cost,
@@ -422,11 +472,15 @@ class UnifiedScanner:
             "profit": o.effective_profit,
             "profit_pct": o.profit_pct,
             "profit_margin": o.profit_pct,
+            "roi": o.roi,
+            "safe_limit": o.safe_limit,
+            "profit_per_kg": o.profit_per_kg,
             "mode": o.mode,  # "BUY+RUN" or "CRAFT+RUN"
             "craft_cost": o.craft_cost,
             "craft_city": o.craft_city,
             "can_be_crafted": o.can_be_crafted,
             "daily_volume": o.daily_volume,
+            "coverage_suspect": (o.daily_volume == 0),
             "data_age_buy": o.data_age_buy,
             "data_age_bm": o.data_age_bm,
             "quality": o.quality,
@@ -442,6 +496,11 @@ class UnifiedScanner:
         }
 
     def _craft_to_dict(self, o: CraftingOpportunity, category: str) -> dict[str, Any]:
+        cost = o.material_cost_net + o.station_fee
+        roi_val = getattr(o, "roi", 0.0)
+        if roi_val == 0.0 and cost > 0 and o.profit > 0:
+            roi_val = round((o.profit / cost) * 100.0, 2)
+
         return {
             "item_id": o.item_id,
             "item_name": self._enhance_name(o.item_id, o.item_name, getattr(o, "quality", 1)),
@@ -450,7 +509,7 @@ class UnifiedScanner:
             "sell_city": o.sell_city,
             "destination_city": o.sell_city,
             "sell_mode": o.sell_mode,  # "BM" or "MARKET"
-            "craft_cost": o.material_cost_net + o.station_fee,
+            "craft_cost": cost,
             "material_cost_gross": o.material_cost_gross,
             "material_cost_net": o.material_cost_net,
             "station_fee": o.station_fee,
@@ -462,6 +521,7 @@ class UnifiedScanner:
             "profit_margin": o.profit_pct,
             "estimated_margin": o.profit_pct,
             "profit_pct": o.profit_pct,
+            "roi": roi_val,
             "daily_volume": o.daily_volume,
             "data_age_materials": o.data_age_materials,
             "data_age_sell": o.data_age_sell,
@@ -588,6 +648,7 @@ class UnifiedScanner:
         mm_opps: list[dict] | None = None,
         enchant_opps: list[dict] | None = None,
         quality_opps: list[dict] | None = None,
+        transmute_opps: list[dict] | None = None,
     ):
         """Save opportunities to the database, marking old ones as inactive."""
         from app.db.models import ArbitrageOpportunity, CraftingOpportunity

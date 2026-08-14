@@ -135,10 +135,11 @@ class AlbionNatsClient:
             sell_orders.sort(key=lambda x: x.get("UnitPriceSilver", 0))
             buy_orders.sort(key=lambda x: x.get("UnitPriceSilver", 0), reverse=True)
             
-            # Calculate Anti-Bait True Sell Price
+            # Calculate Anti-Bait True Sell Price via Depth Pooling
             true_sell_price = None
             cum_vol = 0
             min_vol_required = 1 if city == "Black Market" else settings.anti_bait_min_volume
+            is_suspect = False
             
             for order in sell_orders:
                 cum_vol += order.get("Amount", 0)
@@ -146,11 +147,14 @@ class AlbionNatsClient:
                     true_sell_price = order.get("UnitPriceSilver")
                     break
             
-            # Fallback to the highest available bait price if liquidity is extremely low
             if true_sell_price is None and sell_orders:
-                true_sell_price = sell_orders[-1].get("UnitPriceSilver") 
+                # Thin liquidity: use volume-weighted price of available orders rather than troll order
+                total_val = sum(o.get("UnitPriceSilver", 0) * o.get("Amount", 1) for o in sell_orders)
+                total_amt = sum(o.get("Amount", 1) for o in sell_orders)
+                true_sell_price = total_val / total_amt if total_amt > 0 else sell_orders[0].get("UnitPriceSilver")
+                is_suspect = True
                 
-            # Calculate Anti-Bait True Buy Price
+            # Calculate Anti-Bait True Buy Price via Depth Pooling
             true_buy_price = None
             cum_vol_buy = 0
             for order in buy_orders:
@@ -160,7 +164,10 @@ class AlbionNatsClient:
                     break
             
             if true_buy_price is None and buy_orders:
-                true_buy_price = buy_orders[-1].get("UnitPriceSilver")
+                total_val = sum(o.get("UnitPriceSilver", 0) * o.get("Amount", 1) for o in buy_orders)
+                total_amt = sum(o.get("Amount", 1) for o in buy_orders)
+                true_buy_price = total_val / total_amt if total_amt > 0 else buy_orders[0].get("UnitPriceSilver")
+                is_suspect = True
             
             if true_sell_price is None and true_buy_price is None:
                 continue
@@ -173,8 +180,8 @@ class AlbionNatsClient:
                 "captured_at": now,
                 "captured_at_bucket": bucket,
                 "data_age_seconds": 0.0,
-                "confidence_score": 1.0,
-                "coverage_suspect": False,
+                "confidence_score": 0.7 if is_suspect else 1.0,
+                "coverage_suspect": is_suspect,
                 "volume_24h": 0,
                 "sell_price_min": true_sell_price / 10000.0 if true_sell_price is not None else None,
                 "sell_price_min_date": now if true_sell_price is not None else None,

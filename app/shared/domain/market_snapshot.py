@@ -12,11 +12,15 @@ class MarketSnapshot(BaseModel):
     best_bid: float
     best_ask: float
 
-    bid_depth: int
-    ask_depth: int
+    bid_depth: int = 0
+    ask_depth: int = 0
 
-    spread: float
-    midprice: float
+    spread: float = 0.0
+    midprice: float = 0.0
 
-    rolling_volume: int
-    volatility: float
+    rolling_volume: int = 0
+    volatility: float = 0.0
+
+    sell_price_min_date: datetime | None = None
+    buy_price_max_date: datetime | None = None
+    data_age_seconds: float | None = 0.0

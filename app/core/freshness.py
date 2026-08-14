@@ -4,10 +4,10 @@ from typing import Optional
 from app.core.logging import log
 from app.core.safe_ops import safe_int
 
-# Freshness Thresholds (Seconds)
-THRESHOLD_HIGH_VOLUME = 1800  # 30 Minutes
-THRESHOLD_MED_VOLUME = 3600  # 60 Minutes
-THRESHOLD_LOW_VOLUME = 10800  # 3 Hours
+# Freshness Thresholds (Seconds) for DB ingestion
+THRESHOLD_HIGH_VOLUME = 3600   # 1 Hour
+THRESHOLD_MED_VOLUME = 7200    # 2 Hours
+THRESHOLD_LOW_VOLUME = 28800   # 8 Hours (ensures materials & ingredients are not starved)
 
 
 def is_market_data_fresh(

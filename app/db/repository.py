@@ -26,10 +26,12 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
                         "server": settings.active_server.value,
                         "sell_price_min": int(s.best_ask) if s.best_ask else 0,
                         "buy_price_max": int(s.best_bid) if s.best_bid else 0,
+                        "sell_price_min_date": s.sell_price_min_date,
+                        "buy_price_max_date": s.buy_price_max_date,
                         "volume_24h": s.rolling_volume,
                         "captured_at": s.timestamp,
                         "captured_at_bucket": bucket,
-                        "data_age_seconds": 0.0,
+                        "data_age_seconds": float(s.data_age_seconds or 0.0),
                         "confidence_score": 1.0,
                         "coverage_suspect": False,
                     }
@@ -58,7 +60,10 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
                             set_={
                                 "sell_price_min": stmt.excluded.sell_price_min,
                                 "buy_price_max": stmt.excluded.buy_price_max,
+                                "sell_price_min_date": stmt.excluded.sell_price_min_date,
+                                "buy_price_max_date": stmt.excluded.buy_price_max_date,
                                 "volume_24h": stmt.excluded.volume_24h,
+                                "data_age_seconds": stmt.excluded.data_age_seconds,
                                 "captured_at": stmt.excluded.captured_at,
                             },
                         )
@@ -71,7 +76,10 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
                             set_={
                                 "sell_price_min": stmt.excluded.sell_price_min,
                                 "buy_price_max": stmt.excluded.buy_price_max,
+                                "sell_price_min_date": stmt.excluded.sell_price_min_date,
+                                "buy_price_max_date": stmt.excluded.buy_price_max_date,
                                 "volume_24h": stmt.excluded.volume_24h,
+                                "data_age_seconds": stmt.excluded.data_age_seconds,
                                 "captured_at": stmt.excluded.captured_at,
                             },
                         )
@@ -144,8 +152,18 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
 
         return await asyncio.to_thread(_sync_get_history)
 
-    async def update_volume(self, item_id: str, city: str, quality: int, volume: int) -> None:
+    async def update_volume(
+        self,
+        item_id: str,
+        city: str,
+        quality: int,
+        volume: int,
+        avg_price: float = 0.0,
+        timestamp: str | None = None,
+    ) -> None:
         def _sync_update_vol():
+            from app.db.models import MarketHistory
+            from app.shared.utils.market import parse_timestamp
             with get_db_session() as db:
                 record = (
                     db.query(MarketPrice)
@@ -161,4 +179,44 @@ class SQLiteMarketDataRepository(IMarketDataRepository):
                 if record:
                     record.volume_24h = volume
 
+                if avg_price > 0:
+                    parsed_ts = parse_timestamp(timestamp) or record.captured_at if record else None
+                    if parsed_ts:
+                        hist = MarketHistory(
+                            item_id=item_id,
+                            city=city,
+                            quality=quality,
+                            item_count=volume,
+                            avg_price=avg_price,
+                            timestamp=parsed_ts,
+                        )
+                        db.add(hist)
+
         await asyncio.to_thread(_sync_update_vol)
+
+    async def get_24h_history_pool(self) -> dict[tuple[str, str, int], float]:
+        """Returns map of (item_id, city, quality) -> 24h avg_price from market_history."""
+        def _sync_get_pool():
+            from app.db.models import MarketHistory
+            from datetime import datetime, timedelta
+            cutoff = datetime.utcnow() - timedelta(hours=36)
+            with get_db_session() as db:
+                rows = (
+                    db.query(
+                        MarketHistory.item_id,
+                        MarketHistory.city,
+                        MarketHistory.quality,
+                        MarketHistory.avg_price,
+                    )
+                    .filter(MarketHistory.timestamp >= cutoff, MarketHistory.avg_price > 0)
+                    .order_by(MarketHistory.timestamp.desc())
+                    .all()
+                )
+                pool = {}
+                for r in rows:
+                    key = (r.item_id, r.city, r.quality)
+                    if key not in pool:
+                        pool[key] = float(r.avg_price)
+                return pool
+
+        return await asyncio.to_thread(_sync_get_pool)

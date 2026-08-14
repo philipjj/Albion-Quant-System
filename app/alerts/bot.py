@@ -693,6 +693,10 @@ async def toggle(ctx, channel: str = None):
         "marketmaking": "enable_alerts_mm",
         "refining": "enable_alerts_refining",
         "refine": "enable_alerts_refining",
+        "island": "enable_alerts_island",
+        "farming": "enable_alerts_island",
+        "transmute": "enable_alerts_transmute",
+        "transmutation": "enable_alerts_transmute",
         
         "b-arb": "enable_alerts_bm_arb",
         "b-arbitrage": "enable_alerts_bm_arb",
@@ -708,6 +712,8 @@ async def toggle(ctx, channel: str = None):
         "b-refining": "enable_alerts_bm_refining",
         "b-refine": "enable_alerts_bm_refining",
         "bm-refining": "enable_alerts_bm_refining",
+        "b-transmute": "enable_alerts_bm_transmute",
+        "bm-transmute": "enable_alerts_bm_transmute",
     }
     
     display_names = {
@@ -716,15 +722,18 @@ async def toggle(ctx, channel: str = None):
         "enchanting": "Royal Enchanting",
         "mm": "Royal Market Making",
         "refining": "Royal Refining",
+        "island": "Island Agriculture & Farming",
+        "transmute": "Royal Transmutation",
         "b-arb": "Black Market Arbitrage",
         "b-crafting": "Black Market Crafting",
         "b-enchanting": "Black Market Enchanting",
         "b-mm": "Black Market MM",
-        "b-refining": "Black Market Refining",
+        "b-refining": "Caerleon Refining Transport",
+        "b-transmute": "Black Market Transmutation",
     }
     
     if not channel:
-        lines = ["# 🔔 ALERT FEED TOGGLES"]
+        lines = ["# 🔔 ALERT FEED TOGGLES (12 Channels)"]
         for key, name in display_names.items():
             attr = mapping[key]
             status = getattr(settings, attr)
@@ -739,17 +748,17 @@ async def toggle(ctx, channel: str = None):
     if channel_clean in ("all", "reset", "on"):
         for attr in set(mapping.values()):
             setattr(settings, attr, True)
-        await ctx.send("✅ **All 10 alert channels are now turned ON.**")
+        await ctx.send("✅ **All 12 alert channels are now turned ON.**")
         return
         
     if channel_clean in ("off", "none", "clear"):
         for attr in set(mapping.values()):
             setattr(settings, attr, False)
-        await ctx.send("🛑 **All 10 alert channels are now turned OFF.**")
+        await ctx.send("🛑 **All 12 alert channels are now turned OFF.**")
         return
 
     if channel_clean not in mapping:
-        await ctx.send(f"❌ Unknown channel `{channel}`. Valid channels:\n`arb`, `crafting`, `enchanting`, `mm`, `refining`, `b-arb`, `b-crafting`, `b-enchanting`, `b-mm`, `b-refining`")
+        await ctx.send(f"❌ Unknown channel `{channel}`. Valid channels:\n`arb`, `crafting`, `enchanting`, `mm`, `refining`, `island`, `transmute`, `b-arb`, `b-crafting`, `b-enchanting`, `b-mm`, `b-refining`")
         return
         
     attr = mapping[channel_clean]
@@ -776,12 +785,28 @@ async def scan(ctx, bm_flag: str = ""):
     scanner = UnifiedScanner()
 
     try:
-        bm, crafting, arb = await scanner.scan_all(scan_bm=scan_bm)
+        scan_res = await scanner.scan_all(scan_bm=scan_bm)
+        if len(scan_res) >= 9:
+            bm, crafting, arb, refining, mm, enchant, quality, transmute, island = scan_res[:9]
+        else:
+            bm, crafting, arb, refining, mm, enchant, quality, transmute = scan_res[:8]
+            island = []
         all_arb = bm + arb
 
-        await alerter.send_batch_alerts(all_arb, crafting, arb_limit=10, craft_limit=10)
+        await alerter.send_batch_alerts(
+            all_arb,
+            crafting,
+            arb_limit=10,
+            craft_limit=10,
+            refine_opps=refining,
+            mm_opps=mm,
+            enchant_opps=enchant,
+            quality_opps=quality,
+            transmute_opps=transmute,
+            island_opps=island,
+        )
         await ctx.send(
-            f"✅ Scan complete: **{len(bm)}** BM, **{len(crafting)}** Crafting, **{len(arb)}** Arb opportunities found."
+            f"✅ Scan complete: **{len(bm)}** BM, **{len(crafting)}** Crafting, **{len(arb)}** Arb, **{len(refining)}** Refine, **{len(mm)}** MM, **{len(enchant)}** Enchant, **{len(quality)}** Quality, **{len(transmute)}** Transmute, **{len(island)}** Island opportunities found."
         )
     except Exception as e:
         await ctx.send(f"❌ Scan failed: {e}")

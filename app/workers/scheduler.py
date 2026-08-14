@@ -101,17 +101,20 @@ class QuantScheduler:
                 return
 
             # 2. Scan the FULL DB — scanner sees all data within lookback window,
-            #    not just this partition's items. This is the key advantage:
-            #    fresh data from partition N mixes with still-valid data from N-1, N-2...
+            #    not just this partition's items.
             log.info("[SCHEDULER] Step 2: Running Unified Scanner (full DB)...")
-            bm, crafting, arb, refining, mm, enchant, quality = await self.unified_scanner.scan_all(scan_bm=True)
+            scan_res = await self.unified_scanner.scan_all(scan_bm=True)
+            if len(scan_res) >= 9:
+                bm, crafting, arb, refining, mm, enchant, quality, transmute, island = scan_res[:9]
+            else:
+                bm, crafting, arb, refining, mm, enchant, quality, transmute = scan_res[:8]
+                island = []
 
             # 3. Alert
             log.info(
-                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)}, Refine: {len(refining)}, MM: {len(mm)}, Enchant: {len(enchant)}, Quality: {len(quality)})"
+                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)}, Refine: {len(refining)}, MM: {len(mm)}, Enchant: {len(enchant)}, Quality: {len(quality)}, Transmute: {len(transmute)}, Island: {len(island)})"
             )
 
-            
             def _is_valid_budget(o: dict) -> bool:
                 cost = o.get("buy_price", 0) or o.get("craft_cost", 0) or o.get("total_cost", 0) or o.get("material_cost_gross", 0)
                 revenue = o.get("sell_price", 0) or o.get("revenue_net", 0)
@@ -124,7 +127,7 @@ class QuantScheduler:
                     return False
                 return True
 
-# Combine Arb and BM for alerts
+            # Combine Arb and BM for alerts
             all_arb = arb + bm
 
             # Cooldown filtering to prevent repeating stale alerts
@@ -133,6 +136,7 @@ class QuantScheduler:
 
             # Check for global tier lock
             from app.core import state
+            from app.alerts.discord import _is_island_opportunity
 
             tier_prefix = f"T{state.tier_lock}_" if state.tier_lock is not None else None
 
@@ -177,9 +181,11 @@ class QuantScheduler:
                     self._alert_history[key] = now_time
             final_arb.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
 
-            # Filter Crafting
+            # Filter Pure Equipment Crafting (Exclude any island / farming items)
             fresh_craft = []
             for o in crafting:
+                if _is_island_opportunity(o):
+                    continue
                 item_id = o.get("item_id", "")
                 if tier_prefix and not item_id.upper().startswith(tier_prefix):
                     continue
@@ -187,7 +193,7 @@ class QuantScheduler:
                 craft_c = o.get("crafting_city", o.get("source_city", "Unknown"))
                 sell_c = o.get("sell_city", o.get("destination_city", "Any"))
                 
-                is_bm = sell_c == "Black Market"
+                is_bm = sell_c == "Black Market" or o.get("sell_mode") == "BM"
                 if is_bm and not settings.enable_alerts_bm_crafting:
                     continue
                 if not is_bm and not settings.enable_alerts_crafting:
@@ -214,6 +220,35 @@ class QuantScheduler:
                     final_craft.append(o)
                     self._alert_history[key] = now_time
             final_craft.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+
+            # Filter Island Agriculture / Farming
+            all_island = island + [o for o in crafting if _is_island_opportunity(o)]
+            fresh_island = []
+            for o in all_island:
+                item_id = o.get("item_id", "")
+                if not settings.enable_alerts_island:
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+                sell_c = o.get("sell_city", o.get("destination_city", "Any"))
+                key = f"island:{item_id}:{sell_c}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                fresh_island.append((key, o))
+
+            grouped_island = defaultdict(list)
+            for key, o in fresh_island:
+                grouped_island[o.get("category", "Unknown")].append((key, o))
+
+            final_island = []
+            for cat, ops in grouped_island.items():
+                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
+                top_ops = ops[:10]
+                for key, o in top_ops:
+                    final_island.append(o)
+                    self._alert_history[key] = now_time
 
             # Filter Refining
             fresh_refine = []
@@ -390,6 +425,53 @@ class QuantScheduler:
                     f"[SCHEDULER] Sent {len(final_quality)} quality misprice alerts after cooldown filtering."
                 )
 
+            # Filter Transmutation
+            fresh_transmute = []
+            for o in transmute:
+                item_id = o.get("item_id", "")
+                if tier_prefix and not item_id.upper().startswith(tier_prefix):
+                    continue
+                dest = o.get("destination_city", "") or o.get("sell_city", "")
+                is_bm = dest == "Black Market" or o.get("source_city") == "Caerleon"
+                if is_bm and not getattr(settings, "enable_alerts_bm_transmute", True):
+                    continue
+                if not is_bm and not getattr(settings, "enable_alerts_transmute", True):
+                    continue
+                if not _is_valid_budget(o):
+                    continue
+                src = o.get("source_city", "")
+                key = f"transmute:{item_id}:{src}:{o.get('source_item_id', '')}"
+                if key in self._alert_history:
+                    last_time = self._alert_history[key]
+                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        continue
+                fresh_transmute.append((key, o))
+
+            grouped_transmute = defaultdict(list)
+            for key, o in fresh_transmute:
+                grouped_transmute[o.get("category", "Unknown")].append((key, o))
+
+            final_transmute = []
+            for cat, ops in grouped_transmute.items():
+                ops.sort(key=lambda x: x[1].get("estimated_profit", 0), reverse=True)
+                top_ops = ops[:10]
+                for key, o in top_ops:
+                    final_transmute.append(o)
+                    self._alert_history[key] = now_time
+
+            if final_transmute:
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
+                await self.alerter.send_batch_alerts([], [], transmute_opps=final_transmute, transmute_limit=limit)
+                log.info(
+                    f"[SCHEDULER] Sent {len(final_transmute)} transmute alerts after cooldown filtering."
+                )
+
+            if final_island:
+                limit = getattr(settings, "alert_limit_per_cycle", 10)
+                await self.alerter.send_batch_alerts([], [], island_opps=final_island, island_limit=limit)
+                log.info(
+                    f"[SCHEDULER] Sent {len(final_island)} island alerts after cooldown filtering."
+                )
 
             duration = (datetime.utcnow() - start_time).total_seconds()
             self._current_partition += 1

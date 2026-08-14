@@ -26,11 +26,20 @@ FOCUS_PRODUCTION_BONUS = 59.0
 
 def get_refining_category(item_id: str) -> str:
     """Extracts the refining category from the item_id for bonus calculation."""
-    if "PLANKS" in item_id or "WOOD" in item_id: return "planks"
-    if "METALBAR" in item_id or "ORE" in item_id: return "metalbar"
-    if "LEATHER" in item_id or "HIDE" in item_id: return "leather"
-    if "CLOTH" in item_id or "FIBER" in item_id: return "cloth"
-    if "STONEBLOCK" in item_id or "ROCK" in item_id: return "stoneblock"
+    item_upper = item_id.upper()
+
+    # Equipment items are NEVER refined resources
+    if any(eq in item_upper for eq in [
+        "ARMOR", "ROBE", "JACKET", "GARB", "HEAD", "HELMET", "COWL", "CAP", "SHOES", "BOOTS",
+        "MAIN_", "2H_", "OFF_", "BAG", "CAPE", "MOUNT"
+    ]):
+        return ""
+
+    if "PLANKS" in item_upper or "WOOD" in item_upper: return "planks"
+    if "METALBAR" in item_upper or "ORE" in item_upper: return "metalbar"
+    if "LEATHER" in item_upper or "HIDE" in item_upper: return "leather"
+    if "CLOTH" in item_upper or "FIBER" in item_upper: return "cloth"
+    if "STONEBLOCK" in item_upper or "ROCK" in item_upper: return "stoneblock"
     return ""
 
 def calculate_rrr(

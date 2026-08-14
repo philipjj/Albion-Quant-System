@@ -165,47 +165,6 @@ DANGEROUS_ROUTES = {
 # ═══════════════════════════════════════════════════════════════
 # JOURNALS - Updated May 2026
 # ═══════════════════════════════════════════════════════════════
-
-JOURNAL_MAPPING = {
-    "armor": "BLACKSMITH",
-    "helmet": "BLACKSMITH",
-    "shoes": "BLACKSMITH",
-    "weapon": "BLACKSMITH",
-    "sword": "BLACKSMITH",
-    "axe": "BLACKSMITH",
-    "mace": "BLACKSMITH",
-    "hammer": "BLACKSMITH",
-    "crossbow": "BLACKSMITH",
-    "shield": "BLACKSMITH",
-    "bow": "FLETCHER",
-    "dagger": "FLETCHER",
-    "spear": "FLETCHER",
-    "nature_staff": "FLETCHER",
-    "torch": "FLETCHER",
-    "fire_staff": "IMBUER",
-    "holy_staff": "IMBUER",
-    "arcane_staff": "IMBUER",
-    "frost_staff": "IMBUER",
-    "curse_staff": "IMBUER",
-    "off_hand": "IMBUER",
-    "furniture": "TINKER",
-    "tool": "TINKER",
-    "cape": "TINKER",
-    "bag": "TINKER",
-}
-
-JOURNAL_FAME_REQUIRED = {4: 3600, 5: 7200, 6: 14400, 7: 28800, 8: 57600}
-JOURNAL_YIELD_MULTIPLIER = 1.5
-
-
-def get_journal_id(item_category: str, tier: int) -> str | None:
-    base = JOURNAL_MAPPING.get(item_category.lower())
-    if not base:
-        return None
-    return f"T{tier}_JOURNAL_{base}_EMPTY"
-
-
-# ═══════════════════════════════════════════════════════════════
 # GAME MECHANICS HELPERS
 # ═══════════════════════════════════════════════════════════════
 
@@ -218,35 +177,48 @@ def calculate_station_fee(item_value: float, station_tax_percent: float) -> floa
 
 
 # ═══════════════════════════════════════════════════════════════
-# PRICE SANITY & OUTLIER DETECTION
-# ═══════════════════════════════════════════════════════════════
-
-
-def is_price_sane(price: float, item_value: float) -> bool:
-    """
-    Detect market manipulation, trolling, or API glitches.
-    Uses ItemValue as an anchor for realism.
-    """
-    if price <= 0:
-        return False
-    if price > 500_000_000:
-        return False  # Hard cap for all items
-
-    if item_value <= 0:
-        # For items with missing metadata, use a conservative absolute cap
-        return price < 5_000_000
-
-    # 2026 Economics: Realistic prices are usually 10x - 1000x ItemValue.
-    # A T3 Horse (IV=112) @ 85M is ~750,000x -> Discard.
-    # A rare artifact might be 2000x. We use 5000x as a safe threshold.
-    ratio = price / item_value
-    return ratio < 5000
-
-
-# ═══════════════════════════════════════════════════════════════
 # ITEM DATA
 # ═══════════════════════════════════════════════════════════════
 
 QUALITY_NAMES = {1: "Normal", 2: "Good", 3: "Outstanding", 4: "Excellent", 5: "Masterpiece"}
 TIERS = [4, 5, 6, 7, 8]
 ENCHANTMENTS = [0, 1, 2, 3]
+
+
+def item_weight(item_id: str) -> float:
+    """
+    Returns estimated weight in kg based on item slot/category if missing from DB metadata.
+    """
+    if not item_id:
+        return 1.0
+    item_upper = item_id.upper().split("@")[0]
+
+    # 2H Weapons -> ~4.5 - 6.0 kg
+    if any(k in item_upper for k in ["2H_", "_2H", "BOW", "WARBOW", "LONGBOW", "CROSSBOW", "STAFF", "CLAYMORE", "HALBERD", "SCYTHE", "POLEHAMMER"]):
+        return 5.0
+    # 1H Weapons -> ~2.5 - 3.5 kg
+    if any(k in item_upper for k in ["MAIN_", "1H_", "SWORD", "AXE", "MACE", "HAMMER", "DAGGER", "SPEAR"]):
+        return 3.0
+    # Chest Armors -> ~7.0 - 10.0 kg for Plate, 5.0 for Leather, 3.0 for Cloth
+    if "ARMOR_PLATE" in item_upper:
+        return 9.0
+    if "ARMOR_LEATHER" in item_upper or "JACKET" in item_upper:
+        return 5.0
+    if "ARMOR_CLOTH" in item_upper or "ROBE" in item_upper:
+        return 3.0
+    # Helmets / Hoods / Cowls -> ~1.5 - 2.5 kg
+    if any(k in item_upper for k in ["HEAD_", "HELMET", "HOOD", "COWL"]):
+        return 2.0
+    # Boots / Shoes -> ~1.5 - 2.5 kg
+    if any(k in item_upper for k in ["SHOES", "BOOTS"]):
+        return 2.0
+    # Off-hands / Shields -> ~2.0 - 4.0 kg
+    if any(k in item_upper for k in ["OFF_", "SHIELD", "BOOK", "ORB", "TORCH", "TOTEM"]):
+        return 2.5
+    # Bags & Capes -> ~1.0 - 2.0 kg
+    if any(k in item_upper for k in ["BAG", "CAPE"]):
+        return 1.5
+    # Raw / Refined Resources
+    if any(k in item_upper for k in ["_PLANKS", "_BAR", "_LEATHER", "_CLOTH", "_STONE", "_BLOCK", "_ORE", "_WOOD", "_HIDE", "_FIBER", "_ROCK"]):
+        return 1.0
+    return 1.5

@@ -48,6 +48,14 @@ def _get_category_group(item_id: str) -> str:
     id_upper = item_id.upper()
     if any(k in id_upper for k in ["POTION", "FOOD", "MEAL", "SOUP", "STEW"]):
         return "Consumables"
+
+    # Prioritize Equipment check so leather/cloth armors are categorized as Equipment
+    if any(eq in id_upper for eq in [
+        "ARMOR", "ROBE", "JACKET", "GARB", "HEAD", "HELMET", "COWL", "CAP", "SHOES", "BOOTS",
+        "MAIN_", "2H_", "OFF_", "BAG", "CAPE", "MOUNT"
+    ]):
+        return "Equipment"
+
     if any(
         k in id_upper
         for k in [
@@ -61,6 +69,9 @@ def _get_category_group(item_id: str) -> str:
             "CLOTH",
             "LEATHER",
             "STONE",
+            "RUNE",
+            "SOUL",
+            "RELIC",
         ]
     ):
         return "Resources"
@@ -87,64 +98,95 @@ def _premium_badge(opp: dict) -> str:
     return f"🛡️ Non-Premium ({tax_pct:.1f}% Tax)"
 
 
+def _get_true_margin(opp: dict) -> float:
+    raw_margin = opp.get("profit_margin")
+    roi = opp.get("roi", opp.get("profit_pct"))
+    if raw_margin is not None and raw_margin != roi and raw_margin > 0:
+        return float(raw_margin)
+    sell_price = opp.get("sell_price", opp.get("bm_buy_price", 0))
+    profit = opp.get("estimated_profit", opp.get("net_profit", opp.get("profit", 0)))
+    if sell_price > 0 and profit != 0:
+        return round((profit / sell_price) * 100.0, 2)
+    return float(raw_margin or roi or 0.0)
+
+
+ISLAND_CATEGORIES = {
+    "farming", "crops", "herbs", "livestock", "animals", "mounts",
+    "consumables", "cooking", "alchemy", "food", "potions", "journals"
+}
+
+ISLAND_ITEM_KEYWORDS = [
+    "_MEAL_", "_POTION_", "_SEED", "_CROP", "_HERB", "_MILK", "_BUTTER",
+    "_EGG", "_FLOUR", "_BREAD", "_STEW", "_OMELETTE", "_PIE", "_SOUP",
+    "_ROAST", "_SANDWICH", "_FOAL", "_CALF", "_PIG", "_SHEEP", "_GOAT",
+    "_CHICKEN", "_GOOSE", "_HORSE", "_OX", "_SWIFTCLAW", "_JOURNAL_",
+    "_CARROT", "_BEAN", "_WHEAT", "_TURNIP", "_CABBAGE", "_POTATO",
+    "_CORN", "_PUMPKIN", "_CHAMOMILE", "_FOXGLOVE", "_FIRETEAR",
+    "_GRENTHISTLE", "_MULLEIN", "_CREEPING_CANDLE", "_GHOUL_YARROW",
+    "_FARM_", "_MEAT", "FARM_CHICKEN", "FARM_PIG", "FARM_COW", "FARM_SHEEP", "FARM_GOOSE"
+]
+
+
+def _is_island_opportunity(opp: dict) -> bool:
+    cat = (opp.get("category") or "").lower()
+    if cat in ISLAND_CATEGORIES:
+        return True
+    item_id = (opp.get("item_id") or "").upper()
+    return any(kw in item_id for kw in ISLAND_ITEM_KEYWORDS)
+
+
 class DiscordAlerter:
     def __init__(self):
-        self.webhook_url = settings.discord_webhook_url
-        self.arb_webhook_url = settings.discord_arb_webhook_url
-        self.bm_webhook_url = settings.discord_bm_webhook_url
-        self.bm_arb_webhook_url = settings.discord_bm_arb_webhook_url
-        self.crafting_webhook_url = settings.discord_crafting_webhook_url
-        self.bm_crafting_webhook_url = settings.discord_bm_crafting_webhook_url
-        self.refining_webhook_url = settings.discord_refining_webhook_url
-        self.bm_refining_webhook_url = settings.discord_bm_refining_webhook_url
-        self.enchanting_webhook_url = settings.discord_enchanting_webhook_url
-        self.bm_enchanting_webhook_url = settings.discord_bm_enchanting_webhook_url
-        self.mm_webhook_url = settings.discord_mm_webhook_url
-        self.bm_mm_webhook_url = settings.discord_bm_mm_webhook_url
+        import os
+        self.webhook_url = settings.discord_webhook_url or os.getenv("DISCORD_WEBHOOK_URL", "")
+        self.arb_webhook_url = settings.discord_arb_webhook_url or os.getenv("DISCORD_ARB_WEBHOOK_URL", "") or os.getenv("DISCORD_ARBITRAGE_WEBHOOK_URL", "")
+        self.bm_webhook_url = settings.discord_bm_webhook_url or os.getenv("DISCORD_BM_WEBHOOK_URL", "")
+        self.bm_arb_webhook_url = settings.discord_bm_arb_webhook_url or os.getenv("DISCORD_BM_ARB_WEBHOOK_URL", "") or os.getenv("DISCORD_BM_ARBITRAGE_WEBHOOK_URL", "") or os.getenv("DISCORD_B_ARB_WEBHOOK_URL", "")
+        self.crafting_webhook_url = settings.discord_crafting_webhook_url or os.getenv("DISCORD_CRAFTING_WEBHOOK_URL", "")
+        self.bm_crafting_webhook_url = settings.discord_bm_crafting_webhook_url or os.getenv("DISCORD_BM_CRAFTING_WEBHOOK_URL", "") or os.getenv("DISCORD_B_CRAFTING_WEBHOOK_URL", "")
+        self.refining_webhook_url = settings.discord_refining_webhook_url or os.getenv("DISCORD_REFINING_WEBHOOK_URL", "")
+        self.bm_refining_webhook_url = settings.discord_bm_refining_webhook_url or os.getenv("DISCORD_BM_REFINING_WEBHOOK_URL", "") or os.getenv("DISCORD_B_REFINING_WEBHOOK_URL", "")
+        self.enchanting_webhook_url = settings.discord_enchanting_webhook_url or os.getenv("DISCORD_ENCHANTING_WEBHOOK_URL", "")
+        self.bm_enchanting_webhook_url = settings.discord_bm_enchanting_webhook_url or os.getenv("DISCORD_BM_ENCHANTING_WEBHOOK_URL", "") or os.getenv("DISCORD_B_ENCHANTING_WEBHOOK_URL", "")
+        self.mm_webhook_url = settings.discord_mm_webhook_url or os.getenv("DISCORD_MM_WEBHOOK_URL", "")
+        self.bm_mm_webhook_url = settings.discord_bm_mm_webhook_url or os.getenv("DISCORD_BM_MM_WEBHOOK_URL", "") or os.getenv("DISCORD_B_MM_WEBHOOK_URL", "")
+        self.island_webhook_url = settings.discord_island_webhook_url or os.getenv("DISCORD_ISLAND_WEBHOOK_URL", "") or os.getenv("DISCORD_ISLAND_URL", "")
+        self.transmute_webhook_url = settings.discord_transmute_webhook_url or os.getenv("DISCORD_TRANSMUTE_WEBHOOK_URL", "") or os.getenv("DISCORD_TRANSMUTATION_WEBHOOK_URL", "")
+        self.bm_transmute_webhook_url = settings.discord_bm_transmute_webhook_url or os.getenv("DISCORD_BM_TRANSMUTE_WEBHOOK_URL", "") or os.getenv("DISCORD_BM_TRANSMUTATION_WEBHOOK_URL", "")
 
         all_urls = [
             self.webhook_url, self.arb_webhook_url, self.bm_webhook_url, self.bm_arb_webhook_url,
             self.crafting_webhook_url, self.bm_crafting_webhook_url, self.refining_webhook_url,
             self.bm_refining_webhook_url, self.enchanting_webhook_url, self.bm_enchanting_webhook_url,
-            self.mm_webhook_url, self.bm_mm_webhook_url
+            self.mm_webhook_url, self.bm_mm_webhook_url, self.island_webhook_url,
+            self.transmute_webhook_url, self.bm_transmute_webhook_url
         ]
         self.enabled = any(u and "YOUR_WEBHOOK" not in u for u in all_urls)
 
     async def _send_webhook(self, payload: dict, webhook_url: str = None) -> bool:
         if not self.enabled:
             return False
-        if webhook_url is None:
-            webhook_url = self.webhook_url
-        if not webhook_url:
-            return False
 
-        payload["username"] = "Albion Quant Bot"
+        url = webhook_url or self.webhook_url
+        if not url or "YOUR_WEBHOOK" in url:
+            return False
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=20.0) as client:
-                    resp = await client.post(webhook_url, json=payload)
-
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(url, json=payload)
+                    if resp.status_code in (200, 204):
+                        return True
                     if resp.status_code == 429:
-                        retry_after = float(resp.headers.get("Retry-After", 2.0))
-                        log.warning(f"Discord rate limit (429). Waiting {retry_after}s...")
+                        retry_after = float(resp.headers.get("Retry-After", 1.0))
                         await asyncio.sleep(retry_after)
                         continue
-
-                    if resp.status_code == 503:
-                        log.warning(f"Discord service unavailable (503). Retrying in 2s...")
-                        await asyncio.sleep(2.0)
-                        continue
-
-                    resp.raise_for_status()
-                    return True
-            except httpx.HTTPStatusError as e:
-                log.error(
-                    f"Discord webhook failed with status {e.response.status_code} (Attempt {attempt + 1}/{max_retries})"
-                )
-                if attempt == max_retries - 1:
-                    return False
+                    log.error(
+                        f"Discord webhook failed ({resp.status_code}): {resp.text}"
+                    )
+                    if attempt == max_retries - 1:
+                        return False
             except Exception as e:
                 log.error(
                     f"Discord webhook failed: {repr(e)} (Attempt {attempt + 1}/{max_retries})"
@@ -157,7 +199,7 @@ class DiscordAlerter:
     def _format_arbitrage_embed(self, opp: dict) -> dict:
         confidence = scorer.calculate_data_confidence(opp)
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = opp.get("estimated_margin", opp.get("profit_margin", opp.get("profit_pct", 0.0)))
+        margin = _get_true_margin(opp)
 
         dest_city = opp.get("destination_city", opp.get("sell_city", "Unknown"))
         src_city = opp.get("source_city", opp.get("crafting_city", "Unknown"))
@@ -208,17 +250,25 @@ class DiscordAlerter:
         else:
             embed_title = f"{badge} {item_name}"
 
-        trade_math_val = (
-            f"Target Quantity Needed: **{safe_qty}x items**\n"
-            f"Buy Price: **{fmt_k(opp.get('buy_price', 0))}** (`{src_city}`)\n"
-            f"Sell Price: **{fmt_k(opp.get('sell_price', 0))}** (`{dest_city}`)\n"
-            f"Net Profit / Item: **+{fmt_k(opp.get('estimated_profit', 0))}**\n"
-            f"Total Batch Profit ({safe_qty}x): **+{fmt_k(opp.get('estimated_profit', 0) * safe_qty)}**"
-        ) if is_bm else (
-            f"Buy: **{fmt_k(opp.get('buy_price', 0))}** (`{src_city}`)\n"
-            f"Sell: **{fmt_k(opp.get('sell_price', 0))}** (`{dest_city}`)\n"
-            f"Net Profit: **+{fmt_k(opp.get('estimated_profit', 0))}**"
-        )
+        if is_bm:
+            bp = opp.get('buy_price', 0)
+            sp = opp.get('sell_price', 0)
+            tax_r = opp.get('tax_rate', 0.04 if opp.get('is_premium', True) else 0.08)
+            net_rev = sp * (1.0 - tax_r)
+            net_profit_per_item = opp.get('estimated_profit', 0)
+            trade_math_val = (
+                f"Target Quantity Needed: **{safe_qty}x items**\n"
+                f"Buy Price: **{fmt_k(bp)}** (`{src_city}`)\n"
+                f"BM Order: **{fmt_k(sp)}** (Net: `{fmt_k(net_rev)}` after {tax_r*100:.1f}% tax)\n"
+                f"Net Profit / Item: **+{fmt_k(net_profit_per_item)}**\n"
+                f"Total Batch Profit ({safe_qty}x): **+{fmt_k(net_profit_per_item * safe_qty)}**"
+            )
+        else:
+            trade_math_val = (
+                f"Buy: **{fmt_k(opp.get('buy_price', 0))}** (`{src_city}`)\n"
+                f"Sell: **{fmt_k(opp.get('sell_price', 0))}** (`{dest_city}`)\n"
+                f"Net Profit: **+{fmt_k(opp.get('estimated_profit', 0))}**"
+            )
 
         embed = {
             "title": embed_title,
@@ -253,7 +303,7 @@ class DiscordAlerter:
     def _format_crafting_embed(self, opp: dict) -> dict:
         confidence = scorer.calculate_data_confidence(opp)
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = opp.get("profit_margin", opp.get("estimated_margin", opp.get("profit_pct", 0.0)))
+        margin = _get_true_margin(opp)
         sell_city = opp.get("sell_city", "Any")
         craft_city = opp.get("crafting_city", opp.get("craft_city", "Unknown"))
         is_bm = (sell_city in ["Black Market", "Caerleon"])
@@ -370,7 +420,7 @@ class DiscordAlerter:
 
     def _format_refining_embed(self, opp: dict) -> dict:
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = opp.get("profit_margin", 0)
+        margin = _get_true_margin(opp)
         sell_city = opp.get("sell_city", "Any")
         buy_city = opp.get("buy_city") or opp.get("crafting_city") or "Royal Market"
         refine_city = opp.get("refine_city") or opp.get("crafting_city") or "Bonus City"
@@ -502,7 +552,14 @@ class DiscordAlerter:
 
     def _format_enchanting_embed(self, opp: dict) -> dict:
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = opp.get("estimated_margin", opp.get("profit_margin", opp.get("profit_pct", 0.0)))
+        sell_p = opp.get("bm_buy_price", opp.get("sell_price", 0))
+        profit = opp.get("estimated_profit", opp.get("net_profit", 0))
+        raw_margin = opp.get("profit_margin")
+        if raw_margin is not None and raw_margin != opp.get("roi") and raw_margin != opp.get("profit_pct"):
+            margin = raw_margin
+        else:
+            margin = (profit / sell_p * 100.0) if sell_p > 0 else 0.0
+
         base_name = opp.get("base_item_id", "").replace("_", " ").title()
         mat_name = opp.get("material_id", "").replace("_", " ").title()
         base_city = opp.get("base_city", opp.get("source_city", "Caerleon"))
@@ -513,10 +570,11 @@ class DiscordAlerter:
 
         prem_info = _premium_badge(opp)
         age_base = _fmt_age(opp.get("data_age_base", 0))
+        age_mat = _fmt_age(opp.get("data_age_material", 0))
         age_bm = _fmt_age(opp.get("data_age_bm", 0))
 
         desc = f"-# ✨ **ITEM ENCHANTING** • {prem_info}\n"
-        desc += f"-# ⏳ Data Age: Base Item {age_base} | Sell Market {age_bm}\n"
+        desc += f"-# ⏳ Data Age: Base Item {age_base} | Mat {age_mat} | Sell Market {age_bm}\n"
         if base_city != "Caerleon":
             desc += f"# {base_city} (Buy Base) ➔ Caerleon (Enchant) ➔ {dest_city} (Sell)"
         else:
@@ -529,6 +587,9 @@ class DiscordAlerter:
         base_q = opp.get("base_quality", opp.get("quality", 1))
         base_q_str = f" ({quality_names.get(base_q, 'Normal')})" if base_q > 1 else ""
 
+        mat_unit = opp.get('material_price', 0)
+        mat_unit_str = f"{mat_unit:,.0f}" if (1000 <= mat_unit < 10000) else fmt_k(mat_unit)
+
         embed = {
             "title": f"{badge} {opp.get('item_name', item_id)}",
             "description": desc,
@@ -539,7 +600,7 @@ class DiscordAlerter:
             "fields": [
                 {
                     "name": "💰 Enchanting Financial Math",
-                    "value": f"Base Item Cost: **{fmt_k(opp.get('base_price', 0))}** (`{base_city}`)\nMaterial Cost: **{fmt_k(opp.get('material_price', 0))}** x {opp.get('material_qty', 1)} (**{fmt_k(opp.get('material_price', 0) * opp.get('material_qty', 1))}**)\nTarget Sell Price: **{fmt_k(opp.get('bm_buy_price', opp.get('sell_price', 0)))}** (`{dest_city}`)\nNet Profit: **+{fmt_k(opp.get('estimated_profit', 0))}**",
+                    "value": f"Base Item Cost: **{fmt_k(opp.get('base_price', 0))}** (`{base_city}`)\nMaterial Cost: **{mat_unit_str}** x {opp.get('material_qty', 1)} (**{fmt_k(mat_unit * opp.get('material_qty', 1))}**)\nTarget Sell Price: **{fmt_k(sell_p)}** (`{dest_city}`)\nNet Profit: **+{fmt_k(profit)}**",
                     "inline": False,
                 },
                 {
@@ -712,7 +773,7 @@ class DiscordAlerter:
 
     def _format_quality_inversion_embed(self, opp: dict) -> dict:
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = opp.get("estimated_margin", opp.get("profit_pct", 0.0))
+        margin = _get_true_margin(opp)
         city = opp.get("source_city", opp.get("city", "Caerleon"))
         prem_info = _premium_badge(opp)
         age = _fmt_age(opp.get("data_age_seconds", 0))
@@ -762,6 +823,100 @@ class DiscordAlerter:
 
         return embed
 
+    def _format_transmutation_embed(self, opp: dict) -> dict:
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = _get_true_margin(opp)
+        item_id = opp.get("item_id", "")
+        src_name = opp.get("source_item_name", opp.get("source_item_id", ""))
+        src_price = opp.get("source_price", 0)
+        fee = opp.get("transmutation_fee", 0)
+        sell_c = opp.get("destination_city", "Royal City")
+
+        color = 0x9B59B6  # Amethyst Purple for Transmutation
+
+        prem_info = _premium_badge(opp)
+        age = _fmt_age(opp.get("data_age_sell", 0))
+
+        desc = f"-# 🔮 **TRANSMUTATION FLIP** • {prem_info}\n"
+        desc += f"-# ⏳ Data Age: {age}\n"
+        desc += f"# Transmute {src_name} ➔ {opp.get('item_name', item_id)} @ {sell_c}"
+
+        embed = {
+            "title": f"{badge} Transmute: {opp.get('item_name', item_id)}",
+            "description": desc,
+            "color": color,
+            "thumbnail": {
+                "url": item_icon_url(item_id, quality=1, size=128)
+            },
+            "fields": [
+                {
+                    "name": "🔮 Transmutation Financial Math",
+                    "value": f"Base Material Price: **{fmt_k(src_price)}**\nTransmutation Silver Fee: **{fmt_k(fee)}**\nTotal Cost: **{fmt_k(opp.get('total_cost', 0))}**\nMarket Sell Value: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_c}`)\nNet Profit: **+{fmt_k(opp.get('profit', opp.get('estimated_profit', 0)))}**",
+                    "inline": False,
+                },
+                {
+                    "name": "📊 Yield & ROI",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "📦 Batch & Volume",
+                    "value": f"• Safe Batch: **{opp.get('safe_limit', 1):,} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**",
+                    "inline": True,
+                },
+            ],
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        return embed
+
+    def _format_island_embed(self, opp: dict) -> dict:
+        confidence = scorer.calculate_data_confidence(opp)
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = _get_true_margin(opp)
+        item_id = opp.get("item_id", "T4_WHEAT")
+        quality = opp.get("quality", 1)
+        sell_c = opp.get("sell_city", "Royal Market")
+        craft_c = opp.get("crafting_city", opp.get("source_city", "Personal Island"))
+
+        color = 0x2ECC71  # Emerald Green for Island Produce
+
+        prem_info = _premium_badge(opp)
+        age = _fmt_age(opp.get("data_age_sell", opp.get("data_age_materials", 0)))
+
+        desc = f"-# 🏝️ **ISLAND PROFIT OPPORTUNITY** • {prem_info}\n"
+        desc += f"-# ⏳ Data Age: {age}\n"
+        desc += f"# Island Produce @ {craft_c} ➔ Sell @ {sell_c}"
+
+        embed = {
+            "title": f"{badge} {opp.get('item_name', item_id)}",
+            "description": desc,
+            "color": color,
+            "thumbnail": {
+                "url": item_icon_url(item_id, quality=quality, size=128)
+            },
+            "fields": [
+                {
+                    "name": "💰 Island Financial Math",
+                    "value": f"Input/Seed Cost: **{fmt_k(opp.get('craft_cost', opp.get('buy_price', 0)))}**\nMarket Sell Price: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_c}`)\nNet Profit: **+{fmt_k(opp.get('profit', opp.get('estimated_profit', 0)))}**",
+                    "inline": False,
+                },
+                {
+                    "name": "📊 Yield & ROI",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "📦 Batch & Volume",
+                    "value": f"• Safe Batch: **{opp.get('safe_limit', 1):,} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**",
+                    "inline": True,
+                },
+            ],
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        return embed
+
     async def send_batch_alerts(
         self,
         arb_opps: list[dict],
@@ -776,6 +931,10 @@ class DiscordAlerter:
         enchant_limit: int = 10,
         quality_opps: list[dict] = None,
         quality_limit: int = 10,
+        transmute_opps: list[dict] = None,
+        transmute_limit: int = 10,
+        island_opps: list[dict] = None,
+        island_limit: int = 10,
         max_per_channel: int = 10,
     ):
         from collections import defaultdict
@@ -789,6 +948,10 @@ class DiscordAlerter:
             enchant_opps = []
         if quality_opps is None:
             quality_opps = []
+        if transmute_opps is None:
+            transmute_opps = []
+        if island_opps is None:
+            island_opps = [o for o in craft_opps if _is_island_opportunity(o)]
 
         # Process Arbitrage Opportunities
         for opp in arb_opps[:arb_limit]:
@@ -806,8 +969,19 @@ class DiscordAlerter:
                 channel_counts[target_webhook] += 1
                 await asyncio.sleep(0.5)
 
-        # Process Crafting Opportunities
-        for opp in craft_opps[:craft_limit]:
+        # Process Island Opportunities (Farming, Agriculture, Livestock, Butcher, Cooking, Alchemy)
+        if getattr(settings, "enable_alerts_island", True) and self.island_webhook_url:
+            for opp in island_opps[:island_limit]:
+                target_webhook = self.island_webhook_url
+                if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                    embed = self._format_island_embed(opp)
+                    await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                    channel_counts[target_webhook] += 1
+                    await asyncio.sleep(0.5)
+
+        # Process Crafting Opportunities (Pure Equipment: Weapons, Armor, Off-hands, Tools - Never Island/Farming)
+        non_island_craft_opps = [o for o in craft_opps if not _is_island_opportunity(o)]
+        for opp in non_island_craft_opps[:craft_limit]:
             sell_c = opp.get("sell_city", "")
             craft_c = opp.get("crafting_city", "") or opp.get("craft_city", "")
             is_bm = (sell_c in ["Black Market", "Caerleon"] or opp.get("sell_mode") == "BM" or craft_c == "Caerleon")
@@ -841,7 +1015,7 @@ class DiscordAlerter:
         # Process Refining Opportunities
         for opp in refine_opps[:refine_limit]:
             sell_c = opp.get("sell_city", "")
-            is_bm = (sell_c in ["Black Market"] or opp.get("sell_mode") == "BM")
+            is_bm = (sell_c in ["Black Market", "Caerleon"] or opp.get("sell_mode") == "BM")
             target_webhook = (
                 (self.bm_refining_webhook_url or self.bm_webhook_url or self.refining_webhook_url or self.webhook_url)
                 if is_bm
@@ -882,4 +1056,22 @@ class DiscordAlerter:
                 await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
                 channel_counts[target_webhook] += 1
                 await asyncio.sleep(0.5)
+
+        # Process Transmutation Opportunities
+        if getattr(settings, "enable_alerts_transmute", True):
+            for opp in transmute_opps[:transmute_limit]:
+                dest = opp.get("destination_city", "") or opp.get("sell_city", "")
+                is_bm = (dest in ["Black Market", "Caerleon"])
+                if is_bm and not getattr(settings, "enable_alerts_bm_transmute", True):
+                    continue
+                target_webhook = (
+                    (self.bm_transmute_webhook_url or self.transmute_webhook_url or self.bm_enchanting_webhook_url or self.bm_webhook_url or self.webhook_url)
+                    if is_bm
+                    else (self.transmute_webhook_url or self.enchanting_webhook_url or self.webhook_url)
+                )
+                if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                    embed = self._format_transmutation_embed(opp)
+                    await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
+                    channel_counts[target_webhook] += 1
+                    await asyncio.sleep(0.5)
 

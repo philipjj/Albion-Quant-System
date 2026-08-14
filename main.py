@@ -217,11 +217,16 @@ async def cmd_scan():
         is_premium = profile.is_premium if profile else True
         
         scanner = UnifiedScanner(premium=is_premium)
-        bm, crafting, arb, ref, mm, enchant = await scanner.scan_all(scan_bm=True)
+        scan_res = await scanner.scan_all(scan_bm=True)
+        if len(scan_res) >= 9:
+            bm, crafting, arb, ref, mm, enchant, quality, transmute, island = scan_res[:9]
+        else:
+            bm, crafting, arb, ref, mm, enchant, quality, transmute = scan_res[:8]
+            island = []
 
-        scanner.save_opportunities(db, bm, crafting, arb, ref, mm, enchant)
+        scanner.save_opportunities(db, bm, crafting, arb, ref, mm, enchant, quality_opps=quality, transmute_opps=transmute)
 
-    log.info(f"Scan complete: Saved {len(bm)} BM, {len(crafting)} Crafting, {len(arb)} Arbitrage, {len(ref)} Refining, {len(mm)} MM, and {len(enchant)} Enchanting opportunities to DB.")
+    log.info(f"Scan complete: Saved {len(bm)} BM, {len(crafting)} Crafting, {len(arb)} Arbitrage, {len(ref)} Refining, {len(mm)} MM, {len(enchant)} Enchanting, {len(quality)} Quality, {len(transmute)} Transmutation, {len(island)} Island opportunities.")
 
 
 if __name__ == "__main__":
