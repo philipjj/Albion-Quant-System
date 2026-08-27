@@ -164,7 +164,7 @@ app.add_middleware(SuppressCancelASGIMiddleware)
 
 
 # Routers
-from app.api import arbitrage, crafting, export, fees, market, system, user
+from app.api import arbitrage, crafting, export, fees, market, system, user, ingest
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
@@ -177,6 +177,7 @@ app.include_router(user.router, prefix="/api/v1/user", tags=["System"])
 app.include_router(export.router, prefix="/api/v1/export", tags=["Alerts"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["System"])
 app.include_router(system.router, prefix="/api/system", tags=["System"], include_in_schema=False)
+app.include_router(ingest.router)
 
 WEB_DIR = Path(__file__).resolve().parent / "app" / "web"
 if not WEB_DIR.exists():
