@@ -159,3 +159,21 @@ class TestVolumeOverride:
         # Volume >= 5000 scales down by 35% -> 30240
         very_high_vol = get_max_material_age_seconds("T8_BAR", volume_24h=6000)
         assert very_high_vol == 30240
+
+
+class TestScanElapsedBuffer:
+    def test_scan_elapsed_buffer_extends_age_limit(self):
+        # Base limit for T4_RUNE is 5400s (1.5h)
+        base_ttl = get_max_material_age_seconds("T4_RUNE", scan_elapsed_seconds=0)
+        assert base_ttl == 5400
+
+        # Adding a 300s scan elapsed buffer extends the threshold to 5700s
+        buffered_ttl = get_max_material_age_seconds("T4_RUNE", scan_elapsed_seconds=300)
+        assert buffered_ttl == 5700
+
+    def test_desync_buffer_extends_desync_limit(self):
+        base_desync = get_max_allowed_leg_desync_seconds(4, scan_elapsed_seconds=0)
+        assert base_desync == 5400
+
+        buffered_desync = get_max_allowed_leg_desync_seconds(4, scan_elapsed_seconds=300)
+        assert buffered_desync == 5700

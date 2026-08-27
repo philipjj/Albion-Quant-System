@@ -214,14 +214,17 @@ class QuantScheduler:
                         is_enchant = o.get("material_id") or "enchant" in str(o.get("category_key", "")).lower() or "enchant" in str(o.get("category", "")).lower()
                         is_craft = o.get("ingredients") or "craft" in str(o.get("category_key", "")).lower() or "craft" in str(o.get("category", "")).lower()
 
-                        if is_enchant and roi > 22.0:
+                        max_enchant_margin = getattr(settings, "max_royal_enchant_margin_pct", 50.0)
+                        max_craft_margin = getattr(settings, "max_royal_craft_margin_pct", 65.0)
+
+                        if is_enchant and roi > max_enchant_margin:
                             continue
-                        elif is_craft and roi > 40.0:
+                        elif is_craft and roi > max_craft_margin:
                             continue
-                        elif roi > 45.0:
+                        elif roi > 75.0:
                             continue
 
-                        if cost > 500_000 and vol < 1:
+                        if cost > 500_000 and vol < 1 and not getattr(settings, "allow_zero_volume", False):
                             continue
 
 

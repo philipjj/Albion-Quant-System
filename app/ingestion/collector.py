@@ -290,13 +290,13 @@ class MarketCollector:
     def build_safe_batches(
         self,
         item_ids: list[str],
-        max_url_len: int = 1200,
-        max_weight: int = 25,
-        max_items: int = 20,
+        max_url_len: int = 2400,
+        max_weight: int = 50,
+        max_items: int = 40,
     ) -> list[list[str]]:
         """
-        Stealth Batching (Priority 1).
-        Drastically reduced limits to avoid CDN/Backend 'expensive query' heuristics.
+        Stealth Batching (High-Throughput).
+        Groups items safely within AODP URI and query limits to minimize total roundtrip time.
         """
         batches = []
         current_batch = []

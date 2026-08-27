@@ -347,9 +347,14 @@ class Settings(BaseSettings):
     historical_data_retention_days: int = Field(default=30, alias="HISTORICAL_DATA_RETENTION_DAYS")
     alert_limit_per_cycle: int = Field(default=5, alias="ALERT_LIMIT_PER_CYCLE")
     scan_partitions: int = Field(
-        default=6,
+        default=1,
         alias="SCAN_PARTITIONS",
-        description="Split item universe into N partitions. Each cycle ingests 1 partition then scans+alerts immediately.",
+        description="Split item universe into N partitions (1 = Full Synchronized Sweep mode).",
+    )
+    scan_elapsed_buffer_seconds: int = Field(
+        default=300,
+        alias="SCAN_ELAPSED_BUFFER_SECONDS",
+        description="Buffer (seconds) added on top of item age limits to account for scanner elapsed time during ingestion sweeps.",
     )
     alert_cooldown_minutes: int = Field(
         default=30,

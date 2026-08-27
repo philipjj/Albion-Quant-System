@@ -388,10 +388,11 @@ def get_max_material_age_seconds(
     enchant: int = None,
     volume_24h: int = 0,
     context: str = "default",
+    scan_elapsed_seconds: int = 0,
 ) -> int:
     """
     Returns the maximum allowed data age (seconds) for ANY item in Albion Online.
-    Includes continuous velocity/volume scaling.
+    Includes continuous velocity/volume scaling and scan elapsed time allowance.
     """
     # Auto-extract tier and enchant from item_id if not provided
     if tier is None or enchant is None:
@@ -439,21 +440,27 @@ def get_max_material_age_seconds(
     elif v24 >= 200:
         age_limit = max(2_400, int(round(age_limit * 0.80)))   # 80% of TTL, floor 40 min
 
-    return age_limit
+    return age_limit + max(0, safe_int(scan_elapsed_seconds, default=0))
 
 
-def get_max_allowed_leg_desync_seconds(tier: int = 4, enchant: int = 0) -> int:
+def get_max_allowed_leg_desync_seconds(
+    tier: int = 4,
+    enchant: int = 0,
+    scan_elapsed_seconds: int = 0,
+) -> int:
     """
     Returns the maximum allowable time delta (seconds) between input costs (materials/base item)
     and output revenue (finished product sell price) for multi-leg operations.
-    Supports tier and enchantment level scaling for high-capital investments.
+    Supports tier, enchantment level scaling, and scan sweep elapsed time allowance.
     """
     t = max(1, min(8, safe_int(tier, default=4)))
     e = max(0, min(4, safe_int(enchant, default=0)))
     base_desync = MAX_LEG_DESYNC_SECONDS.get(t, 9_000)
     if t >= 7 and e >= 2:
-        return int(base_desync * (1.0 + e * 0.25))
-    return base_desync
+        desync = int(base_desync * (1.0 + e * 0.25))
+    else:
+        desync = base_desync
+    return desync + max(0, safe_int(scan_elapsed_seconds, default=0))
 
 
 def calculate_leg_sync_score(
@@ -502,18 +509,28 @@ def calculate_route_travel_buffer(source_city: str, dest_city: str) -> int:
 
 
 def is_market_data_fresh(
-    item_id: str, age_seconds: int | None, volume_24h: int | None = 0, tier: int | None = None
+    item_id: str,
+    age_seconds: int | None,
+    volume_24h: int | None = 0,
+    tier: int | None = None,
+    scan_elapsed_seconds: int = None,
 ) -> bool:
     """
     Determines if market data is fresh enough to be ingested into the database.
+    Includes scan sweep elapsed time allowance to prevent borderline records from being discarded.
     """
     if age_seconds is None:
         return False
+
+    if scan_elapsed_seconds is None:
+        from app.core.config import settings
+        scan_elapsed_seconds = getattr(settings, "scan_elapsed_buffer_seconds", 300)
 
     threshold = get_max_material_age_seconds(
         item_id,
         tier=tier,
         volume_24h=safe_int(volume_24h),
+        scan_elapsed_seconds=scan_elapsed_seconds,
     )
 
     is_fresh = age_seconds <= threshold
