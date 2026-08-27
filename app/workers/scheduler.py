@@ -13,16 +13,8 @@ from app.alerts.discord import DiscordAlerter
 from app.core.config import settings
 from app.core.logging import log
 from app.core.scanner_integration import UnifiedScanner
-from app.db.models import PatchEventModel
 from app.db.session import get_db_session
 from app.ingestion.collector import MarketCollector
-from app.meta.impact_forecast import PatchImpactForecaster
-from app.meta.loadouts import LoadoutTracker
-from app.meta.patch_parser import PatchParser
-from app.meta.patch_tracker import PatchTracker
-
-# Phase 15 Imports
-from app.meta.pvp_meta import PvPMetaEngine
 
 
 class QuantScheduler:
@@ -38,21 +30,18 @@ class QuantScheduler:
         self._alert_history = {}  # Tracks last alert time for (type, item, source, dest)
         self._cycle_running = False
 
-        # Phase 15 Initializations
-        if settings.active_server.value == "europe":
-            self.meta_engine = PvPMetaEngine(
-                base_api_url="https://gameinfo-ams.albiononline.com/api/gameinfo"
-            )
-        elif settings.active_server.value == "asia":
-            self.meta_engine = PvPMetaEngine(
-                base_api_url="https://gameinfo-sgp.albiononline.com/api/gameinfo"
-            )
-        else:
-            self.meta_engine = PvPMetaEngine()
-        self.patch_tracker = PatchTracker()
-        self.patch_parser = PatchParser()
-        self.impact_forecaster = PatchImpactForecaster()
-        self.loadout_tracker = LoadoutTracker()
+    def _prune_alert_history(self):
+        """Evict entries older than 2× the alert cooldown to prevent unbounded memory growth."""
+        max_age_seconds = settings.alert_cooldown_minutes * 60 * 2
+        now = datetime.utcnow()
+        stale_keys = [
+            k for k, ts in self._alert_history.items()
+            if (now - ts).total_seconds() > max_age_seconds
+        ]
+        for k in stale_keys:
+            del self._alert_history[k]
+        if stale_keys:
+            log.debug(f"[SCHEDULER] Pruned {len(stale_keys)} stale alert history entries.")
 
 
 
@@ -76,6 +65,7 @@ class QuantScheduler:
             return
 
         self._cycle_running = True
+        self._prune_alert_history()
 
         num_partitions = max(1, settings.scan_partitions)
         partition_idx = self._current_partition % num_partitions
@@ -103,16 +93,70 @@ class QuantScheduler:
             # 2. Scan the FULL DB — scanner sees all data within lookback window,
             #    not just this partition's items.
             log.info("[SCHEDULER] Step 2: Running Unified Scanner (full DB)...")
-            scan_res = await self.unified_scanner.scan_all(scan_bm=True)
-            if len(scan_res) >= 9:
-                bm, crafting, arb, refining, mm, enchant, quality, transmute, island = scan_res[:9]
+            scan_res = await self.unified_scanner.scan_all(scan_bm=True, lookback_hours=12.0)
+            if len(scan_res) >= 13:
+                bm_arb, craft, arb, refine, mm, enchant, quality, transmute, island, bm_craft, bm_refine, bm_enchant, bm_mm = scan_res[:13]
+            elif len(scan_res) >= 9:
+                bm_arb, craft, arb, refine, mm, enchant, quality, transmute, island = scan_res[:9]
+                bm_craft, bm_refine, bm_enchant, bm_mm = [], [], [], []
             else:
-                bm, crafting, arb, refining, mm, enchant, quality, transmute = scan_res[:8]
-                island = []
+                bm_arb, craft, arb, refine, mm, enchant, quality, transmute = scan_res[:8]
+                island, bm_craft, bm_refine, bm_enchant, bm_mm = [], [], [], [], []
+
+            # Update live memory cache for instant Web UI browsing
+            try:
+                from app.api.system import set_latest_opportunities_cache
+
+                potions = [o for o in island if o.get("category_key") == "potions"]
+                cooking = [o for o in island if o.get("category_key") == "cooking"]
+                mounts = [o for o in island if o.get("category_key") == "mounts"]
+                farming = [o for o in island if o.get("category_key") == "farming" or (o not in potions and o not in cooking and o not in mounts)]
+
+                set_latest_opportunities_cache({
+                    "bm_arbitrage": bm_arb,
+                    "bm_crafting": bm_craft,
+                    "bm_enchanting": bm_enchant,
+                    "bm_refining": bm_refine,
+                    "bm_market_making": bm_mm,
+                    "arbitrage": arb,
+                    "crafting": craft,
+                    "refining": refine,
+                    "market_making": mm,
+                    "enchanting": enchant,
+                    "transmutation": transmute,
+                    "quality_inversion": quality,
+                    "potions": potions,
+                    "cooking": cooking,
+                    "farming": farming,
+                    "mounts": mounts,
+                    "island": island,
+                })
+            except Exception as e:
+                log.warning(f"[SCHEDULER] Memory cache update warning: {e}")
+
+            # Save opportunities to database so API endpoints & status are always fresh
+            try:
+                with get_db_session() as db:
+                    self.unified_scanner.save_opportunities(
+                        db,
+                        bm_arb,
+                        craft,
+                        arb,
+                        refining_opps=refine,
+                        mm_opps=mm,
+                        enchant_opps=enchant,
+                        quality_opps=quality,
+                        transmute_opps=transmute,
+                    )
+            except Exception as e:
+                log.error(f"[SCHEDULER] Failed to persist opportunities to database: {e}")
 
             # 3. Alert
             log.info(
-                f"[SCHEDULER] Step 3: Sending alerts (BM: {len(bm)}, Craft: {len(crafting)}, Arb: {len(arb)}, Refine: {len(refining)}, MM: {len(mm)}, Enchant: {len(enchant)}, Quality: {len(quality)}, Transmute: {len(transmute)}, Island: {len(island)})"
+                f"[SCHEDULER] Step 3: Sending alerts across 12 channels ("
+                f"Transmute: {len(transmute)}, Island: {len(island)}, "
+                f"B-MM: {len(bm_mm)}, B-Refine: {len(bm_refine)}, B-Enchant: {len(bm_enchant)}, B-Craft: {len(bm_craft)}, B-Arb: {len(bm_arb)}, "
+                f"MM: {len(mm)}, Refine: {len(refine)}, Enchant: {len(enchant)}, Craft: {len(craft)}, Arb: {len(arb)})"
             )
 
             def _is_valid_budget(o: dict) -> bool:
@@ -127,351 +171,266 @@ class QuantScheduler:
                     return False
                 return True
 
-            # Combine Arb and BM for alerts
-            all_arb = arb + bm
-
-            # Cooldown filtering to prevent repeating stale alerts
-            cooldown_seconds = settings.alert_cooldown_minutes * 60
-            now_time = datetime.utcnow()
-
-            # Check for global tier lock
+            from collections import defaultdict
             from app.core import state
             from app.alerts.discord import _is_island_opportunity
 
+            cooldown_seconds = settings.alert_cooldown_minutes * 60
+            now_time = datetime.utcnow()
             tier_prefix = f"T{state.tier_lock}_" if state.tier_lock is not None else None
+            limit = getattr(settings, "alert_limit_per_cycle", 10)
 
-            # Filter Arb
-            fresh_arb = []
-            for o in all_arb:
-                item_id = o.get("item_id", "")
-                if tier_prefix and not item_id.upper().startswith(tier_prefix):
-                    continue
-
-                src = o.get("source_city", o.get("buy_city", "Unknown"))
-                dest = o.get("destination_city", o.get("sell_city", "Unknown"))
-                
-                is_bm = dest == "Black Market" or o.get("type") == "black_market"
-                if is_bm and not settings.enable_alerts_bm_arb:
-                    continue
-                if not is_bm and not settings.enable_alerts_arb:
-                    continue
-                if not _is_valid_budget(o):
-                    continue
-                
-                key = f"arb:{item_id}:{src}:{dest}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+            def _filter_and_group(opps: list[dict], key_fn, enable_flag: bool = True, sort_key="ev_score") -> list[dict]:
+                if not enable_flag:
+                    return []
+                fresh = []
+                for o in opps:
+                    item_id = o.get("item_id") or o.get("target_item_id") or ""
+                    if tier_prefix and not item_id.upper().startswith(tier_prefix):
                         continue
-                fresh_arb.append((key, o))
-
-            # Group fresh Arb by category
-            from collections import defaultdict
-
-            grouped_arb = defaultdict(list)
-            for key, o in fresh_arb:
-                grouped_arb[o.get("category", "Unknown")].append((key, o))
-
-            final_arb = []
-            for cat, ops in grouped_arb.items():
-                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
-                top_ops = ops[:10]  # Top 10 per category
-                for key, o in top_ops:
-                    final_arb.append(o)
-                    self._alert_history[key] = now_time
-            final_arb.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
-
-            # Filter Pure Equipment Crafting (Exclude any island / farming items)
-            fresh_craft = []
-            for o in crafting:
-                if _is_island_opportunity(o):
-                    continue
-                item_id = o.get("item_id", "")
-                if tier_prefix and not item_id.upper().startswith(tier_prefix):
-                    continue
-
-                craft_c = o.get("crafting_city", o.get("source_city", "Unknown"))
-                sell_c = o.get("sell_city", o.get("destination_city", "Any"))
-                
-                is_bm = sell_c == "Black Market" or o.get("sell_mode") == "BM"
-                if is_bm and not settings.enable_alerts_bm_crafting:
-                    continue
-                if not is_bm and not settings.enable_alerts_crafting:
-                    continue
-                if not _is_valid_budget(o):
-                    continue
-                
-                key = f"craft:{item_id}:{craft_c}:{sell_c}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
+                    if not _is_valid_budget(o):
                         continue
-                fresh_craft.append((key, o))
 
-            grouped_craft = defaultdict(list)
-            for key, o in fresh_craft:
-                grouped_craft[o.get("category", "Unknown")].append((key, o))
+                    # Filter unrealistic Royal crafting / lone-ask margin bait in safe cities
+                    roi = float(o.get("roi", o.get("profit_pct", 0)))
+                    cost = float(o.get("buy_price", 0) or o.get("craft_cost", 0) or o.get("total_cost", 0) or o.get("material_cost_gross", 0))
+                    vol = float(o.get("daily_volume", 0))
+                    src = str(o.get("craft_city", o.get("buy_city", o.get("source_city", o.get("base_city", "")))))
+                    dst = str(o.get("sell_city", o.get("destination_city", "")))
+                    from app.core.constants import ROYAL_SAFE_CITIES
 
-            final_craft = []
-            for cat, ops in grouped_craft.items():
-                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
-                top_ops = ops[:10]  # Top 10 per category
-                for key, o in top_ops:
-                    final_craft.append(o)
-                    self._alert_history[key] = now_time
-            final_craft.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+                    # Dead inventory protection: High cost items (>500k silver) require confirmed daily volume (except Black Market)
+                    is_bm = (
+                        dst.lower() == "black market"
+                        or "black market" in dst.lower()
+                        or o.get("is_black_market", False)
+                        or str(o.get("category_key", "")).startswith("bm_")
+                        or str(o.get("category", "")).lower().startswith("bm_")
+                        or str(o.get("type", "")).startswith("bm_")
+                    )
 
-            # Filter Island Agriculture / Farming
-            all_island = island + [o for o in crafting if _is_island_opportunity(o)]
-            fresh_island = []
-            for o in all_island:
-                item_id = o.get("item_id", "")
-                if not settings.enable_alerts_island:
-                    continue
-                if not _is_valid_budget(o):
-                    continue
-                sell_c = o.get("sell_city", o.get("destination_city", "Any"))
-                key = f"island:{item_id}:{sell_c}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
-                        continue
-                fresh_island.append((key, o))
+                    if not is_bm:
+                        # Category-specific Royal margin ceilings
+                        is_enchant = o.get("material_id") or "enchant" in str(o.get("category_key", "")).lower() or "enchant" in str(o.get("category", "")).lower()
+                        is_craft = o.get("ingredients") or "craft" in str(o.get("category_key", "")).lower() or "craft" in str(o.get("category", "")).lower()
 
-            grouped_island = defaultdict(list)
-            for key, o in fresh_island:
-                grouped_island[o.get("category", "Unknown")].append((key, o))
+                        if is_enchant and roi > 22.0:
+                            continue
+                        elif is_craft and roi > 40.0:
+                            continue
+                        elif roi > 45.0:
+                            continue
 
-            final_island = []
-            for cat, ops in grouped_island.items():
-                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
-                top_ops = ops[:10]
-                for key, o in top_ops:
-                    final_island.append(o)
-                    self._alert_history[key] = now_time
+                        if cost > 500_000 and vol < 1:
+                            continue
 
-            # Filter Refining
-            fresh_refine = []
-            for o in refining:
-                item_id = o.get("item_id", "")
-                if tier_prefix and not item_id.upper().startswith(tier_prefix):
-                    continue
 
-                ref_c = o.get("crafting_city", o.get("refine_city", o.get("source_city", "Unknown")))
-                sell_c = o.get("sell_city", o.get("destination_city", "Any"))
-                
-                is_bm = sell_c == "Black Market"
-                if is_bm and not settings.enable_alerts_bm_refining:
-                    continue
-                if not is_bm and not settings.enable_alerts_refining:
-                    continue
-                if not _is_valid_budget(o):
-                    continue
-                
-                key = f"refine:{item_id}:{ref_c}:{sell_c}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
-                        continue
-                fresh_refine.append((key, o))
 
-            grouped_refine = defaultdict(list)
-            for key, o in fresh_refine:
-                grouped_refine[o.get("category", "Unknown")].append((key, o))
+                    key = key_fn(o, item_id)
+                    if key in self._alert_history:
+                        last_time = self._alert_history[key]
+                        if (now_time - last_time).total_seconds() < cooldown_seconds:
+                            continue
+                    fresh.append((key, o))
 
-            final_refine = []
-            for cat, ops in grouped_refine.items():
-                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
-                top_ops = ops[:10]  # Top 10 per category
-                for key, o in top_ops:
-                    final_refine.append(o)
-                    self._alert_history[key] = now_time
-            final_refine.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
 
-            # Filter Market Making
-            fresh_mm = []
-            for o in mm:
-                item_id = o.get("item_id", "")
-                if tier_prefix and not item_id.upper().startswith(tier_prefix):
-                    continue
+                grouped = defaultdict(list)
+                for key, o in fresh:
+                    grouped[o.get("category", "Unknown")].append((key, o))
 
-                src = o.get("source_city", "Unknown")
-                is_bm = src == "Black Market"
-                if is_bm and not settings.enable_alerts_bm_mm:
-                    continue
-                if not is_bm and not settings.enable_alerts_mm:
-                    continue
-                if not _is_valid_budget(o):
-                    continue
-                
-                key = f"mm:{item_id}:{src}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
-                        continue
-                fresh_mm.append((key, o))
+                final = []
+                for cat, items in grouped.items():
+                    items.sort(key=lambda x: x[1].get(sort_key, x[1].get("estimated_profit", 0)), reverse=True)
+                    for key, o in items[:10]:
+                        final.append(o)
+                        self._alert_history[key] = now_time
+                final.sort(key=lambda x: (x.get("category", "Unknown"), -x.get(sort_key, x.get("estimated_profit", 0))))
+                return final
 
-            grouped_mm = defaultdict(list)
-            for key, o in fresh_mm:
-                grouped_mm[o.get("category", "Unknown")].append((key, o))
+            # 1. Transmutation (Royal safe cities)
+            final_transmute = _filter_and_group(
+                transmute,
+                lambda o, iid: f"transmute:{iid}:{o.get('source_city', '')}:{o.get('source_item_id', '')}",
+                getattr(settings, "enable_alerts_transmute", True)
+            )
 
-            final_mm = []
-            for cat, ops in grouped_mm.items():
-                ops.sort(key=lambda x: x[1].get("ev_score", 0), reverse=True)
-                top_ops = ops[:10]  # Top 10 per category
-                for key, o in top_ops:
-                    final_mm.append(o)
-                    self._alert_history[key] = now_time
-            final_mm.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("ev_score", 0)))
+            # 2. Island (Royal safe cities)
+            all_island = island + [o for o in craft if _is_island_opportunity(o)]
+            final_island = _filter_and_group(
+                all_island,
+                lambda o, iid: f"island:{iid}:{o.get('sell_city', o.get('destination_city', 'Any'))}",
+                getattr(settings, "enable_alerts_island", True)
+            )
 
-            # Filter Enchanting
-            fresh_enchant = []
-            for o in enchant:
-                item_id = o.get("target_item_id", "")
-                if tier_prefix and not item_id.upper().startswith(tier_prefix):
-                    continue
+            # 3. B-Market Making (Caerleon)
+            final_bm_mm = _filter_and_group(
+                bm_mm,
+                lambda o, iid: f"bm_mm:{iid}:{o.get('source_city', 'Caerleon')}",
+                getattr(settings, "enable_alerts_bm_mm", True)
+            )
 
-                is_bm = o.get("destination_city") == "Black Market"
-                if is_bm and not settings.enable_alerts_bm_enchanting:
-                    continue
-                if not is_bm and not settings.enable_alerts_enchanting:
-                    continue
-                if not getattr(state, "allow_enchant_transport", False) and (o.get("source_city") != "Caerleon" and o.get("base_city") != "Caerleon"):
-                    continue
-                if not _is_valid_budget(o):
-                    continue
+            # 4. B-Refining (Caerleon)
+            final_bm_refine = _filter_and_group(
+                bm_refine,
+                lambda o, iid: f"bm_refine:{iid}:{o.get('crafting_city', 'Caerleon')}",
+                getattr(settings, "enable_alerts_bm_refining", True)
+            )
 
-                key = f"enchant:{item_id}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
-                        continue
-                fresh_enchant.append((key, o))
+            # 5. B-Enchanting (Caerleon -> BM)
+            final_bm_enchant = _filter_and_group(
+                bm_enchant,
+                lambda o, iid: f"bm_enchant:{iid}:{o.get('target_item_id', '')}",
+                getattr(settings, "enable_alerts_bm_enchanting", True),
+                sort_key="estimated_profit"
+            )
 
-            grouped_enchant = defaultdict(list)
-            for key, o in fresh_enchant:
-                grouped_enchant[o.get("category", "Unknown")].append((key, o))
+            # 6. B-Crafting (Caerleon -> BM)
+            final_bm_craft = _filter_and_group(
+                [o for o in bm_craft if not _is_island_opportunity(o)],
+                lambda o, iid: f"bm_craft:{iid}:{o.get('crafting_city', 'Caerleon')}:{o.get('sell_city', 'Black Market')}",
+                getattr(settings, "enable_alerts_bm_crafting", True)
+            )
 
-            final_enchant = []
-            for cat, ops in grouped_enchant.items():
-                ops.sort(key=lambda x: x[1].get("estimated_profit", 0), reverse=True)
-                top_ops = ops[:10]  # Top 10 per category
-                for key, o in top_ops:
-                    final_enchant.append(o)
-                    self._alert_history[key] = now_time
-            final_enchant.sort(key=lambda x: (x.get("category", "Unknown"), -x.get("estimated_profit", 0)))
+            # 7. B-Arbitrage (Royal -> BM)
+            final_bm_arb = _filter_and_group(
+                bm_arb,
+                lambda o, iid: f"bm_arb:{iid}:{o.get('source_city', '')}:{o.get('destination_city', 'Black Market')}",
+                getattr(settings, "enable_alerts_bm_arb", True)
+            )
 
-            if final_arb:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts(final_arb, [], arb_limit=limit)
-                log.info(f"[SCHEDULER] Sent {len(final_arb)} arb alerts after cooldown filtering.")
-            if final_craft:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts([], final_craft, craft_limit=limit)
-                log.info(
-                    f"[SCHEDULER] Sent {len(final_craft)} craft alerts after cooldown filtering."
-                )
-            if final_refine:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts([], [], refine_opps=final_refine, refine_limit=limit)
-                log.info(
-                    f"[SCHEDULER] Sent {len(final_refine)} refine alerts after cooldown filtering."
-                )
-            if final_mm:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts([], [], mm_opps=final_mm, mm_limit=limit)
-                log.info(
-                    f"[SCHEDULER] Sent {len(final_mm)} MM alerts after cooldown filtering."
-                )
-            if final_enchant:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts([], [], enchant_opps=final_enchant, enchant_limit=limit)
-                log.info(
-                    f"[SCHEDULER] Sent {len(final_enchant)} enchant alerts after cooldown filtering."
-                )
+            # 8. Market Making (Royal safe cities)
+            final_mm = _filter_and_group(
+                mm,
+                lambda o, iid: f"mm:{iid}:{o.get('source_city', '')}",
+                getattr(settings, "enable_alerts_mm", True)
+            )
 
-            # Filter Quality Misprice
-            fresh_quality = []
-            for o in quality:
-                item_id = o.get("item_id", "")
-                if tier_prefix and not item_id.upper().startswith(tier_prefix):
-                    continue
-                if not _is_valid_budget(o):
-                    continue
-                city = o.get("source_city", "") or o.get("city", "")
-                key = f"quality:{item_id}:{city}:{o.get('buy_quality', 1)}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
-                        continue
-                fresh_quality.append((key, o))
+            # 9. Refining (Royal safe cities)
+            final_refine = _filter_and_group(
+                refine,
+                lambda o, iid: f"refine:{iid}:{o.get('crafting_city', '')}:{o.get('sell_city', '')}",
+                getattr(settings, "enable_alerts_refining", True)
+            )
 
-            grouped_quality = defaultdict(list)
-            for key, o in fresh_quality:
-                grouped_quality[o.get("category", "Unknown")].append((key, o))
+            # 10. Enchanting (Royal safe cities only)
+            safe_enchant = [
+                o for o in enchant
+                if o.get("destination_city") not in ["Black Market", "Caerleon"]
+                and o.get("source_city") not in ["Black Market", "Caerleon"]
+                and o.get("base_city") not in ["Black Market", "Caerleon"]
+            ]
+            final_enchant = _filter_and_group(
+                safe_enchant,
+                lambda o, iid: f"enchant:{iid}:{o.get('source_city', '')}:{o.get('destination_city', '')}",
+                getattr(settings, "enable_alerts_enchanting", True),
+                sort_key="estimated_profit"
+            )
 
-            final_quality = []
-            for cat, ops in grouped_quality.items():
-                ops.sort(key=lambda x: x[1].get("estimated_profit", 0), reverse=True)
-                top_ops = ops[:10]
-                for key, o in top_ops:
-                    final_quality.append(o)
-                    self._alert_history[key] = now_time
+            # 11. Crafting (Royal safe cities)
+            final_craft = _filter_and_group(
+                [o for o in craft if not _is_island_opportunity(o)],
+                lambda o, iid: f"craft:{iid}:{o.get('crafting_city', '')}:{o.get('sell_city', '')}",
+                getattr(settings, "enable_alerts_crafting", True)
+            )
 
-            if final_quality:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts([], [], quality_opps=final_quality, quality_limit=limit)
-                log.info(
-                    f"[SCHEDULER] Sent {len(final_quality)} quality misprice alerts after cooldown filtering."
-                )
+            # 12. Arbitrage (Royal safe cities)
+            final_arb = _filter_and_group(
+                arb,
+                lambda o, iid: f"arb:{iid}:{o.get('source_city', '')}:{o.get('destination_city', '')}",
+                getattr(settings, "enable_alerts_arb", True)
+            )
 
-            # Filter Transmutation
-            fresh_transmute = []
-            for o in transmute:
-                item_id = o.get("item_id", "")
-                if tier_prefix and not item_id.upper().startswith(tier_prefix):
-                    continue
-                dest = o.get("destination_city", "") or o.get("sell_city", "")
-                is_bm = dest == "Black Market" or o.get("source_city") == "Caerleon"
-                if is_bm and not getattr(settings, "enable_alerts_bm_transmute", True):
-                    continue
-                if not is_bm and not getattr(settings, "enable_alerts_transmute", True):
-                    continue
-                if not _is_valid_budget(o):
-                    continue
-                src = o.get("source_city", "")
-                key = f"transmute:{item_id}:{src}:{o.get('source_item_id', '')}"
-                if key in self._alert_history:
-                    last_time = self._alert_history[key]
-                    if (now_time - last_time).total_seconds() < cooldown_seconds:
-                        continue
-                fresh_transmute.append((key, o))
+            # Quality Misprice
+            final_quality = _filter_and_group(
+                quality,
+                lambda o, iid: f"quality:{iid}:{o.get('source_city', o.get('city', ''))}:{o.get('buy_quality', 1)}",
+                True,
+                sort_key="estimated_profit"
+            )
 
-            grouped_transmute = defaultdict(list)
-            for key, o in fresh_transmute:
-                grouped_transmute[o.get("category", "Unknown")].append((key, o))
+            # Sync fresh filtered opportunities to WebApp memory cache cumulatively across P1 -> P6
+            try:
+                import app.api.system as system_api
 
-            final_transmute = []
-            for cat, ops in grouped_transmute.items():
-                ops.sort(key=lambda x: x[1].get("estimated_profit", 0), reverse=True)
-                top_ops = ops[:10]
-                for key, o in top_ops:
-                    final_transmute.append(o)
-                    self._alert_history[key] = now_time
+                is_first_partition = (partition_idx == 0)
 
-            if final_transmute:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts([], [], transmute_opps=final_transmute, transmute_limit=limit)
-                log.info(
-                    f"[SCHEDULER] Sent {len(final_transmute)} transmute alerts after cooldown filtering."
-                )
+                def _merge_cumulative_opps(existing_list: list[dict], new_list: list[dict], reset_sweep: bool = False) -> list[dict]:
+                    def _opp_key(o: dict) -> str:
+                        item_id = str(o.get("item_id") or o.get("target_item_id") or "")
+                        src = str(o.get("craft_city") or o.get("buy_city") or o.get("source_city") or "")
+                        dst = str(o.get("sell_city") or o.get("destination_city") or "")
+                        q = str(o.get("quality") or o.get("buy_quality") or 1)
+                        return f"{item_id}:{src}:{dst}:{q}"
 
-            if final_island:
-                limit = getattr(settings, "alert_limit_per_cycle", 10)
-                await self.alerter.send_batch_alerts([], [], island_opps=final_island, island_limit=limit)
-                log.info(
-                    f"[SCHEDULER] Sent {len(final_island)} island alerts after cooldown filtering."
-                )
+                    merged = {}
+                    if not reset_sweep:
+                        for o in existing_list:
+                            merged[_opp_key(o)] = o
+
+                    for o in new_list:
+                        o["scanned_partition"] = partition_idx + 1
+                        o["scanned_at"] = datetime.utcnow().isoformat()
+                        merged[_opp_key(o)] = o
+
+                    res = list(merged.values())
+                    res.sort(key=lambda x: x.get("score", x.get("ev_score", x.get("net_profit", x.get("profit", 0)))), reverse=True)
+                    return res
+
+                new_partition_cache = {
+                    "bm_arbitrage": final_bm_arb,
+                    "bm_crafting": final_bm_craft,
+                    "bm_enchanting": final_bm_enchant,
+                    "bm_refining": final_bm_refine,
+                    "bm_market_making": final_bm_mm,
+                    "arbitrage": final_arb,
+                    "crafting": final_craft,
+                    "refining": final_refine,
+                    "market_making": final_mm,
+                    "enchanting": final_enchant,
+                    "transmutation": final_transmute,
+                    "quality_inversion": final_quality,
+                    "island": final_island,
+                }
+
+                for cat_key, incoming_items in new_partition_cache.items():
+                    existing_items = system_api._LATEST_OPPORTUNITIES_CACHE.get(cat_key, [])
+                    system_api._LATEST_OPPORTUNITIES_CACHE[cat_key] = _merge_cumulative_opps(
+                        existing_items, incoming_items, reset_sweep=is_first_partition
+                    )
+
+                system_api._LATEST_SCAN_TIME = datetime.utcnow().isoformat()
+            except Exception as se:
+                log.warning(f"[SCHEDULER] Failed to sync cache to web API: {se}")
+
+            # Dispatch alerts across all 12 channels
+            await self.alerter.send_batch_alerts(
+                arb_opps=final_arb,
+                arb_limit=limit,
+                craft_opps=final_craft,
+                craft_limit=limit,
+                refine_opps=final_refine,
+                refine_limit=limit,
+                enchant_opps=final_enchant,
+                enchant_limit=limit,
+                mm_opps=final_mm,
+                mm_limit=limit,
+                transmute_opps=final_transmute,
+                transmute_limit=limit,
+                island_opps=final_island,
+                island_limit=limit,
+                bm_arb_opps=final_bm_arb,
+                bm_arb_limit=limit,
+                bm_craft_opps=final_bm_craft,
+                bm_craft_limit=limit,
+                bm_refine_opps=final_bm_refine,
+                bm_refine_limit=limit,
+                bm_enchant_opps=final_bm_enchant,
+                bm_enchant_limit=limit,
+                bm_mm_opps=final_bm_mm,
+                bm_mm_limit=limit,
+                quality_opps=final_quality,
+                quality_limit=limit,
+            )
 
             duration = (datetime.utcnow() - start_time).total_seconds()
             self._current_partition += 1
@@ -486,21 +445,8 @@ class QuantScheduler:
         finally:
             self._cycle_running = False
 
-    async def job_snapshot(self):
-        """Archive live prices to snapshots table."""
-        from app.analytics.snapshots import create_market_snapshot
-
-        log.info("[SCHEDULER] Periodic Task: Market Snapshot")
-        try:
-            with get_db_session() as db:
-                create_market_snapshot(db)
-        except asyncio.CancelledError:
-            log.info("[SCHEDULER] Market Snapshot task cancelled.")
-        except Exception as e:
-            log.error(f"[SCHEDULER] Snapshot failed: {e}")
-
     async def job_cleanup(self):
-        """Delete old records."""
+        """Delete old records and vacuum database."""
         from datetime import timedelta
         import os
         import shutil
@@ -577,18 +523,46 @@ class QuantScheduler:
                                     log.error(f"[SCHEDULER] Failed to delete {dy_path}: {e}")
                         # Clean empty month directories
                         try:
-                            if not os.listdir(mo_path):
+                            if os.path.exists(mo_path) and not os.listdir(mo_path):
                                 os.rmdir(mo_path)
                         except Exception:
                             pass
                     # Clean empty year directories
                     try:
-                        if not os.listdir(yr_path):
+                        if os.path.exists(yr_path) and not os.listdir(yr_path):
                             os.rmdir(yr_path)
                     except Exception:
                         pass
                 if deleted_folders > 0:
                     log.info(f"[SCHEDULER] Parquet historical cleanup complete: deleted {deleted_folders} stale partition(s).")
+
+            # Retention cleanup for SQLite operational tables (keep last 48 hours to prevent unbounded table growth)
+            try:
+                from app.db.session import get_db_session
+                from sqlalchemy import text
+                with get_db_session() as db:
+                    now = datetime.utcnow()
+                    c24 = now - timedelta(hours=24)
+                    c_bm_long = now - timedelta(days=7)
+                    res_mp = db.execute(
+                        text("""
+                            DELETE FROM market_prices 
+                            WHERE captured_at < :c24
+                            AND NOT (city = 'Black Market' AND buy_price_max >= 500000 AND captured_at >= :c_bm_long)
+                        """),
+                        {"c24": c24, "c_bm_long": c_bm_long},
+                    )
+                    res_bm = db.execute(
+                        text("DELETE FROM black_market_snapshots WHERE captured_at < :cutoff"),
+                        {"cutoff": c_bm_long},
+                    )
+                    db.commit()
+                    if res_mp.rowcount > 0 or res_bm.rowcount > 0:
+                        log.info(
+                            f"[SCHEDULER] DB retention cleanup: pruned {res_mp.rowcount} stale market prices and {res_bm.rowcount} stale BM snapshots (preserved BM buy orders >= 500k up to 7d)."
+                        )
+            except Exception as e:
+                log.error(f"[SCHEDULER] DB retention cleanup failed: {e}")
         except asyncio.CancelledError:
             log.info("[SCHEDULER] Cleanup task cancelled.")
         except Exception as e:
@@ -603,71 +577,6 @@ class QuantScheduler:
             log.info("[SCHEDULER] Volume refresh task cancelled.")
         except Exception as e:
             log.error(f"[SCHEDULER] Volume refresh failed: {e}")
-
-    # Phase 15 Jobs
-    async def job_meta_scan(self):
-        """Scan PvP meta and update scores."""
-        log.info("[SCHEDULER] Meta Task: Scanning PvP Meta")
-        try:
-            scores = await self.meta_engine.update_meta()
-            # In a real system, we would store these in DB
-            log.info(f"[SCHEDULER] Meta Scan Complete: {len(scores)} items scored")
-        except asyncio.CancelledError:
-            log.info("[SCHEDULER] Meta Scan task cancelled.")
-        except Exception as e:
-            log.error(f"[SCHEDULER] Meta Scan failed: {e}")
-
-    async def job_patch_monitor(self):
-        """Monitor patch notes and NDA updates."""
-        log.info("[SCHEDULER] Meta Task: Monitoring Patch Notes")
-        try:
-            updates = await self.patch_tracker.check_for_updates()
-            with get_db_session() as db:
-                for update in updates:
-                    # Check if already processed
-                    exists = (
-                        db.query(PatchEventModel)
-                        .filter(PatchEventModel.title == update.title)
-                        .first()
-                    )
-                    if exists:
-                        continue
-
-                    changes = self.patch_parser.parse_content(update.content)
-                    forecasts = self.impact_forecaster.forecast_impact(changes)
-
-                    # Send alerts for each change
-                    for change in changes:
-                        await self.alerter.send_patch_alert(
-                            {
-                                "title": update.title,
-                                "content": f"{change.item} was {change.change}ed.",
-                                "impact": f"Expected market impact: {change.expected_market_impact}",
-                                "confidence": "HIGH" if change.severity > 0.7 else "MEDIUM",
-                                "window": "24-72h",
-                            }
-                        )
-
-                    # Save to DB so we don't alert again
-                    db.add(PatchEventModel(title=update.title, content=update.content))
-                    db.commit()
-
-            log.info(f"[SCHEDULER] Patch Monitor Complete: {len(updates)} updates processed")
-        except asyncio.CancelledError:
-            log.info("[SCHEDULER] Patch Monitor task cancelled.")
-        except Exception as e:
-            log.error(f"[SCHEDULER] Patch Monitor failed: {e}")
-
-    async def job_loadout_clustering(self):
-        """Cluster popular loadouts."""
-        log.info("[SCHEDULER] Meta Task: Loadout Clustering")
-        try:
-            loadouts = await self.loadout_tracker.get_popular_loadouts()
-            log.info(f"[SCHEDULER] Loadout Clustering Complete: {len(loadouts)} loadouts tracked")
-        except asyncio.CancelledError:
-            log.info("[SCHEDULER] Loadout Clustering task cancelled.")
-        except Exception as e:
-            log.error(f"[SCHEDULER] Loadout Clustering failed: {e}")
 
     async def _continuous_cycle_loop(self):
         log.info("[SCHEDULER] Starting continuous cycle loop.")
@@ -689,27 +598,31 @@ class QuantScheduler:
         self.scheduler.remove_all_jobs()
         log.info(f"🚀 Starting AQS Master Scheduler (Cycle: {settings.market_poll_interval} min)")
 
-        now = datetime.utcnow()
+        self._is_running = True
+        self._stop_requested = False
 
-        # The Master Cycle handles all core data work sequentially in a continuous loop
-        self._loop_task = asyncio.create_task(self._continuous_cycle_loop())
+        # Safely obtain running loop
+        try:
+            loop = asyncio.get_running_loop()
+            self._loop_task = loop.create_task(self._continuous_cycle_loop())
+        except RuntimeError:
+            from app.core import state
+            if hasattr(state, "main_loop") and state.main_loop and state.main_loop.is_running():
+                self._loop_task = state.main_loop.create_task(self._continuous_cycle_loop())
+            else:
+                log.warning("[SCHEDULER] No active event loop found to attach continuous cycle.")
 
         # Secondary maintenance tasks
-        self.scheduler.add_job(
-            self.job_snapshot,
-            IntervalTrigger(minutes=settings.snapshot_interval),
-            id="snapshot",
-            name="Market Snapshot",
-            misfire_grace_time=300,
-        )
-
-        self.scheduler.add_job(
-            self.job_refresh_volumes,
-            IntervalTrigger(minutes=settings.volume_refresh_interval),
-            id="volume_refresh",
-            name="Market Volume Refresh",
-            misfire_grace_time=300,
-        )
+        try:
+            self.scheduler.add_job(
+                self.job_refresh_volumes,
+                IntervalTrigger(minutes=settings.volume_refresh_interval),
+                id="volume_refresh",
+                name="Market Volume Refresh",
+                misfire_grace_time=300,
+            )
+        except Exception:
+            pass
 
         self.scheduler.add_job(
             self.job_cleanup,
@@ -719,31 +632,6 @@ class QuantScheduler:
             misfire_grace_time=3600,
         )
 
-        # Phase 15 Jobs Added to Scheduler
-        self.scheduler.add_job(
-            self.job_meta_scan,
-            IntervalTrigger(minutes=10),
-            id="meta_scan",
-            name="Meta Scan",
-            misfire_grace_time=60,
-        )
-
-        self.scheduler.add_job(
-            self.job_patch_monitor,
-            IntervalTrigger(minutes=30),
-            id="patch_monitor",
-            name="Patch Monitor",
-            misfire_grace_time=60,
-        )
-
-        self.scheduler.add_job(
-            self.job_loadout_clustering,
-            IntervalTrigger(minutes=20),
-            id="loadout_clustering",
-            name="Loadout Clustering",
-            misfire_grace_time=60,
-        )
-
         if not self.scheduler.running:
             self.scheduler.start()
 
@@ -751,22 +639,37 @@ class QuantScheduler:
         log.info("✅ AQS sequential background loop is now ACTIVE")
 
     def stop(self):
-        """Pause the scheduler."""
-        if self._is_running:
-            self.scheduler.pause()
-            self._is_running = False
-            if hasattr(self, "_loop_task") and self._loop_task:
-                self._loop_task.cancel()
-            log.info("🛑 AQS background loop PAUSED")
+        """Pause the scheduler and stop any active ingestion cycle immediately."""
+        self._is_running = False
+        self._cycle_running = False
+        try:
+            self.collector.request_stop()
+        except Exception:
+            pass
+        if hasattr(self, "scheduler") and self.scheduler.running:
+            try:
+                self.scheduler.pause()
+            except Exception:
+                pass
+        if hasattr(self, "_loop_task") and self._loop_task and not self._loop_task.done():
+            self._loop_task.cancel()
+        log.info("🛑 AQS background loop PAUSED")
 
     def shutdown(self):
-        """Fully stop scheduler."""
-        self.collector.request_stop()
-        if hasattr(self, "_loop_task") and self._loop_task:
-            self._loop_task.cancel()
-        if self.scheduler.running:
-            self.scheduler.shutdown(wait=False)
+        """Fully stop scheduler and release all background workers."""
         self._is_running = False
+        self._cycle_running = False
+        try:
+            self.collector.request_stop()
+        except Exception:
+            pass
+        if hasattr(self, "_loop_task") and self._loop_task and not self._loop_task.done():
+            self._loop_task.cancel()
+        if hasattr(self, "scheduler") and self.scheduler.running:
+            try:
+                self.scheduler.shutdown(wait=False)
+            except Exception:
+                pass
         log.info("Scheduler shut down")
 
     def reschedule(self, minutes: int):

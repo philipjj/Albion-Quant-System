@@ -22,16 +22,31 @@ def set_sqlite_pragma(dbapi_connection: Any, connection_record: Any) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=60000")
+            cursor.execute("PRAGMA wal_autocheckpoint=1000")
+            cursor.execute("PRAGMA mmap_size=536870912")
+            cursor.execute("PRAGMA cache_size=-64000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
             cursor.close()
         except Exception as e:
             print(f"Failed to set SQLite pragma: {e}")
+
+
+def checkpoint_wal() -> None:
+    """Executes a WAL checkpoint to truncate journal logs and keep DB compact."""
+    if settings.database_url.startswith("sqlite"):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        except Exception as e:
+            pass
 
 
 db_url = settings.database_url
 try:
     engine_kwargs = {}
     if db_url.startswith("sqlite"):
-        engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 30.0}
+        engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 60.0}
     else:
         engine_kwargs["pool_size"] = 10
         engine_kwargs["max_overflow"] = 20
@@ -43,7 +58,7 @@ try:
 except Exception as e:
     print(f"[DB] Primary DB ({db_url}) unavailable ({e}). Using local SQLite: sqlite:///./data/albion_quant.db")
     db_url = "sqlite:///./data/albion_quant.db"
-    engine = create_engine(db_url, echo=False, pool_pre_ping=True, connect_args={"check_same_thread": False, "timeout": 30.0})
+    engine = create_engine(db_url, echo=False, pool_pre_ping=True, connect_args={"check_same_thread": False, "timeout": 60.0})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -200,8 +215,6 @@ def init_db() -> None:
         add_col("crafting_opportunities", "persistence", "INTEGER DEFAULT 1")
         add_col("crafting_opportunities", "ingredients_json", "TEXT")
         add_col("crafting_opportunities", "decision_log", "TEXT")
-
-        conn.commit()
 
         conn.commit()
 

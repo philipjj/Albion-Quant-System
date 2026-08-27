@@ -7,19 +7,20 @@ Game mechanics, city data, transport routes, and item categories.
 # CITIES
 # ═══════════════════════════════════════════════════════════════
 
-ROYAL_CITIES = [
+ROYAL_SAFE_CITIES = [
     "Bridgewatch",
     "Martlock",
     "Lymhurst",
     "Fort Sterling",
     "Thetford",
 ]
+ROYAL_CITIES = ROYAL_SAFE_CITIES
 
 BLACK_MARKET_CITY = "Black Market"
 CAERLEON = "Caerleon"
 BRECILIEN = "Brecilien"
 
-ALL_MARKET_CITIES = ROYAL_CITIES + [CAERLEON, BRECILIEN]
+ALL_MARKET_CITIES = ROYAL_SAFE_CITIES + [CAERLEON, BRECILIEN]
 ALL_CITIES_WITH_BM = ALL_MARKET_CITIES + [BLACK_MARKET_CITY]
 
 # API location strings
@@ -35,37 +36,111 @@ CITY_API_NAMES = {
 }
 
 # ═══════════════════════════════════════════════════════════════
-# CITY CRAFTING BONUSES (resource return rate bonuses)
+# CITY CRAFTING BONUSES (Official Albion Online Resource Return Rate Bonuses)
 # ═══════════════════════════════════════════════════════════════
 
 CITY_CRAFTING_BONUSES = {
     "Bridgewatch": {
-        "bonus_categories": ["crossbow", "dagger", "cursed_staff", "curse_staff", "plate_armor", "cloth_shoes", "cloth_boots"],
+        "bonus_categories": [
+            "crossbow", "dagger", "cursed_staff", "curse_staff",
+            "plate_armor", "armor_plate",  # Chest piece only
+            "cloth_shoes", "cloth_boots", "shoes_cloth"  # Sandals
+        ],
         "refining_bonus": ["rock", "stone", "block", "stoneblock"],
     },
     "Martlock": {
-        "bonus_categories": ["axe", "quarterstaff", "frost_staff", "plate_shoes", "plate_boots", "leather_shoes", "leather_boots"],
+        "bonus_categories": [
+            "axe", "quarterstaff", "frost_staff",
+            "plate_shoes", "plate_boots", "shoes_plate",  # Boots
+            "offhand", "off_hand", "shield", "tome", "torch", "horn", "orb", "totem", "book"  # All off-hands
+        ],
         "refining_bonus": ["hide", "leather"],
     },
     "Lymhurst": {
-        "bonus_categories": ["sword", "bow", "arcane_staff", "leather_helmet", "leather_hood", "leather_armor", "leather_jacket"],
+        "bonus_categories": [
+            "sword", "bow", "arcane_staff",
+            "leather_helmet", "leather_hood", "head_leather",  # Hood
+            "leather_shoes", "leather_boots", "shoes_leather"  # Shoes
+        ],
         "refining_bonus": ["fiber", "cloth"],
     },
     "Fort Sterling": {
-        "bonus_categories": ["hammer", "spear", "holy_staff", "plate_helmet", "plate_headgear", "cloth_armor", "cloth_robe"],
+        "bonus_categories": [
+            "hammer", "spear", "holy_staff",
+            "plate_helmet", "plate_headgear", "head_plate",  # Helmet
+            "cloth_armor", "cloth_robe", "armor_cloth"  # Robe
+        ],
         "refining_bonus": ["wood", "planks"],
     },
     "Thetford": {
-        "bonus_categories": ["mace", "nature_staff", "fire_staff", "cloth_helmet", "cloth_headgear", "cloth_cowl", "leather_boots"],
+        "bonus_categories": [
+            "mace", "nature_staff", "fire_staff",
+            "cloth_helmet", "cloth_headgear", "cloth_cowl", "head_cloth",  # Cowl
+            "leather_armor", "leather_jacket", "armor_leather"  # Jacket
+        ],
         "refining_bonus": ["ore", "bar", "metalbar"],
     },
     "Caerleon": {
-        "bonus_categories": ["cooked_food", "food", "war_gloves", "shapeshifter_staff", "gathering_gear", "gathering_tool", "tool"],
+        "bonus_categories": [
+            "cooked_food", "food", "meal", "soup", "stew", "pie", "omelette", "roast", "sandwich",
+            "war_gloves", "shapeshifter_staff", "shapeshifter",
+            "gathering_gear", "gathering_tool", "tool"
+        ],
         "refining_bonus": [],
     },
     "Brecilien": {
-        "bonus_categories": ["potion", "bag", "cape"],
+        "bonus_categories": ["potion", "potions", "bag", "cape", "capes"],
         "refining_bonus": [],
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════
+# CITY ISLAND BIOME FARMING & BREEDING BONUSES (+10% Yield)
+# Official Albion Online Foundations / Wild Blood Biome Specializations
+# ═══════════════════════════════════════════════════════════════
+
+CITY_ISLAND_FARMING_BONUSES = {
+    "Bridgewatch": {
+        "crops": ["_BEAN", "_CORN"],
+        "herbs": ["_TEASEL"],
+        "animals": ["_GOAT", "_HORSE", "_MILK_GOAT", "T4_MILK", "T4_MEAT"],
+        "bonus_yield_pct": 10.0,
+    },
+    "Fort Sterling": {
+        "crops": ["_TURNIP"],
+        "herbs": ["_YARROW"],
+        "animals": ["_CHICKEN", "_SHEEP", "_EGG", "_MILK_SHEEP", "T3_EGG", "T6_MILK", "T3_MEAT", "T6_MEAT", "_RAM"],
+        "bonus_yield_pct": 10.0,
+    },
+    "Lymhurst": {
+        "crops": ["_CARROT", "_PUMPKIN"],
+        "herbs": ["_BURDOCK"],
+        "animals": ["_GOOSE", "_GIANTSTAG", "_EGG_GOOSE", "T5_EGG", "T5_MEAT", "_HOUND"],
+        "bonus_yield_pct": 10.0,
+    },
+    "Martlock": {
+        "crops": ["_WHEAT", "_POTATO"],
+        "herbs": ["_FOXGLOVE"],
+        "animals": ["_COW", "_OX", "_MILK_COW", "T8_MILK", "T8_MEAT"],
+        "bonus_yield_pct": 10.0,
+    },
+    "Thetford": {
+        "crops": ["_CABBAGE"],
+        "herbs": ["_AGARIC", "_MULLEIN"],
+        "animals": ["_PIG", "T7_MEAT", "T7_FARM_PIG", "_TOAD", "_SALAMANDER"],
+        "bonus_yield_pct": 10.0,
+    },
+    "Caerleon": {
+        "crops": [],
+        "herbs": ["_COMFREY", "_TEASEL", "_MULLEIN"],
+        "animals": ["_WOLF", "_DIREWOLF", "_SHADOWWOLF"],
+        "bonus_yield_pct": 10.0,
+    },
+    "Brecilien": {
+        "crops": ["_CARROT", "_BEAN", "_WHEAT", "_TURNIP", "_CABBAGE", "_POTATO", "_CORN", "_PUMPKIN"],
+        "herbs": ["_AGARIC", "_COMFREY", "_BURDOCK", "_TEASEL", "_FOXGLOVE", "_YARROW", "_MULLEIN"],
+        "animals": ["_OWL"],
+        "bonus_yield_pct": 10.0,
     },
 }
 
@@ -149,18 +224,36 @@ def get_distance(city_a: str, city_b: str) -> int:
 
 DANGEROUS_ROUTES = {
     ("Bridgewatch", "Caerleon"),
+    ("Caerleon", "Bridgewatch"),
     ("Martlock", "Caerleon"),
+    ("Caerleon", "Martlock"),
     ("Lymhurst", "Caerleon"),
+    ("Caerleon", "Lymhurst"),
     ("Fort Sterling", "Caerleon"),
+    ("Caerleon", "Fort Sterling"),
     ("Thetford", "Caerleon"),
+    ("Caerleon", "Thetford"),
     ("Bridgewatch", "Black Market"),
+    ("Black Market", "Bridgewatch"),
     ("Martlock", "Black Market"),
+    ("Black Market", "Martlock"),
     ("Lymhurst", "Black Market"),
+    ("Black Market", "Lymhurst"),
     ("Fort Sterling", "Black Market"),
+    ("Black Market", "Fort Sterling"),
     ("Thetford", "Black Market"),
+    ("Black Market", "Thetford"),
     ("Brecilien", "Black Market"),
+    ("Black Market", "Brecilien"),
     ("Brecilien", "Caerleon"),
+    ("Caerleon", "Brecilien"),
 }
+
+
+def is_route_dangerous(city_a: str, city_b: str) -> bool:
+    """Checks whether the travel route between two cities passes through red/black lethal zones."""
+    return (city_a, city_b) in DANGEROUS_ROUTES or (city_b, city_a) in DANGEROUS_ROUTES
+
 
 # ═══════════════════════════════════════════════════════════════
 # JOURNALS - Updated May 2026

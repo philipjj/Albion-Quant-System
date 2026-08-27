@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Albion Quant System — Quantitative Market Terminal</title>
+  <meta name="description" content="State-of-the-art quantitative market terminal, L2 orderbook engine, and high-frequency trade scanner for Albion Online." />
+  <meta name="theme-color" content="#0B0E14" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;800;900&family=Marcellus&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
+  <link rel="stylesheet" href="/static/css/style.css?v=11.0.0" />
+</head>
+<body>
+
+  <div class="app-cockpit-layout">
+
+    <!-- Mobile Sidebar Toggle -->
+    <button id="sidebar-toggle" class="sidebar-hamburger" aria-label="Toggle navigation">☰</button>
+    <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         LEFT SIDEBAR (COCKPIT CATEGORY NAVIGATION & TELEMETRY)
+         ═══════════════════════════════════════════════════════════════ -->
+    <aside class="cockpit-sidebar">
+      
+      <!-- Brand Block -->
+      <div class="sidebar-header">
+        <div class="brand-badge-glow">
+          <div class="brand-icon">⚔️</div>
+        </div>
+        <div class="brand-text-block">
+          <div class="brand-title">ALBION QUANT <span>SYSTEM</span></div>
+          <div class="brand-subtitle font-mono">TERMINAL v3.5 PRO</div>
+        </div>
+      </div>
+
+      <!-- Navigation Section -->
+      <nav class="sidebar-nav">
+        
+        <!-- Overview Group -->
+        <div class="nav-group">
+          <div class="nav-section-title">
+            <span>COMMAND OVERVIEW</span>
+          </div>
+          <div class="nav-item-list">
+            <button class="sidebar-tab active" data-tab="all">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🌟</span>
+                <span class="tab-label">All Opportunities</span>
+              </span>
+              <span class="tab-badge-num" id="count-all">0</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Black Market & Lethal Caerleon Alpha Group -->
+        <div class="nav-group">
+          <div class="nav-section-title lethal-header">
+            <span>🏴‍☠️ BLACK MARKET (LETHAL)</span>
+          </div>
+          <div class="nav-item-list">
+            <button class="sidebar-tab" data-tab="bm_arbitrage">
+              <span class="tab-icon-label">
+                <span class="tab-icon">⚡</span>
+                <span class="tab-label">BM Transport Arbitrage</span>
+              </span>
+              <span class="tab-badge-num badge-danger" id="count-bm_arbitrage">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="bm_crafting">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🔨</span>
+                <span class="tab-label">Caerleon BM Craft+Run</span>
+              </span>
+              <span class="tab-badge-num" id="count-bm_crafting">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="bm_enchanting">
+              <span class="tab-icon-label">
+                <span class="tab-icon">✨</span>
+                <span class="tab-label">Caerleon BM Enchanting</span>
+              </span>
+              <span class="tab-badge-num" id="count-bm_enchanting">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="bm_market_making">
+              <span class="tab-icon-label">
+                <span class="tab-icon">📊</span>
+                <span class="tab-label">Caerleon Market Making</span>
+              </span>
+              <span class="tab-badge-num" id="count-bm_market_making">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="bm_refining">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🔥</span>
+                <span class="tab-label">Caerleon Refining Run</span>
+              </span>
+              <span class="tab-badge-num" id="count-bm_refining">0</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Royal Safe Operations Group -->
+        <div class="nav-group">
+          <div class="nav-section-title safe-header">
+            <span>🏰 ROYAL CONTINENT (SAFE)</span>
+          </div>
+          <div class="nav-item-list">
+            <button class="sidebar-tab" data-tab="arbitrage">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🏰</span>
+                <span class="tab-label">Royal Safe Arbitrage</span>
+              </span>
+              <span class="tab-badge-num badge-cyan" id="count-arbitrage">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="market_making">
+              <span class="tab-icon-label">
+                <span class="tab-icon">📈</span>
+                <span class="tab-label">Station Market Making</span>
+              </span>
+              <span class="tab-badge-num" id="count-market_making">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="crafting">
+              <span class="tab-icon-label">
+                <span class="tab-icon">⚒️</span>
+                <span class="tab-label">Equipment Craft (+15%)</span>
+              </span>
+              <span class="tab-badge-num" id="count-crafting">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="refining">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🌲</span>
+                <span class="tab-label">Resource Refining (+40%)</span>
+              </span>
+              <span class="tab-badge-num badge-emerald" id="count-refining">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="enchanting">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🔮</span>
+                <span class="tab-label">Artifact Enchanting</span>
+              </span>
+              <span class="tab-badge-num" id="count-enchanting">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="transmutation">
+              <span class="tab-icon-label">
+                <span class="tab-icon">⚗️</span>
+                <span class="tab-label">Transmutation Flips</span>
+              </span>
+              <span class="tab-badge-num" id="count-transmutation">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="quality_inversion">
+              <span class="tab-icon-label">
+                <span class="tab-icon">⭐</span>
+                <span class="tab-label">Quality Inversion Misprice</span>
+              </span>
+              <span class="tab-badge-num badge-gold" id="count-quality_inversion">0</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Consumables, Alchemy & Agriculture Group -->
+        <div class="nav-group">
+          <div class="nav-section-title">
+            <span>🧪 CONSUMABLES &amp; COMMODITIES</span>
+          </div>
+          <div class="nav-item-list">
+            <button class="sidebar-tab" data-tab="potions">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🧪</span>
+                <span class="tab-label">Alchemy &amp; Potions</span>
+              </span>
+              <span class="tab-badge-num" id="count-potions">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="cooking">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🍲</span>
+                <span class="tab-label">Cookery &amp; Buff Meals</span>
+              </span>
+              <span class="tab-badge-num" id="count-cooking">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="farming">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🌾</span>
+                <span class="tab-label">Island Farming &amp; Herbs</span>
+              </span>
+              <span class="tab-badge-num" id="count-farming">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="mounts">
+              <span class="tab-icon-label">
+                <span class="tab-icon">🐴</span>
+                <span class="tab-label">Mounts &amp; Saddling</span>
+              </span>
+              <span class="tab-badge-num" id="count-mounts">0</span>
+            </button>
+          </div>
+        </div>
+
+      </nav>
+
+      <!-- Sidebar Footer Telemetry -->
+      <div class="sidebar-footer">
+        <div class="telemetry-card">
+          <div class="telemetry-row">
+            <span class="telemetry-label">Engine Feed:</span>
+            <div class="status-indicator" id="stat-nats-status">
+              <span class="status-dot"></span>
+              <span class="font-mono">Live L2 Feed</span>
+            </div>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">Item Universe:</span>
+            <span class="telemetry-val font-mono" id="stat-total-items-sidebar">11,805 items</span>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         WORKSPACE (TOPBAR HUD + KPI DECK + FILTERS + OPPORTUNITIES)
+         ═══════════════════════════════════════════════════════════════ -->
+    <main class="cockpit-workspace">
+      
+      <!-- Top Command Bar HUD (Clustered Command Architecture) -->
+      <header class="workspace-topbar">
+        
+        <!-- Cluster 1: Realm Gateway & Omnisearch -->
+        <div class="topbar-cluster realm-search-cluster">
+          <span class="topbar-cluster-lbl">REALM &amp; SEARCH</span>
+          
+          <div class="topbar-gateway-item" title="Active Albion Market Gateway Server">
+            <span class="gateway-globe">🌐</span>
+            <select id="server-select" class="topbar-ctrl-select">
+              <option value="europe">🇪🇺 Europe</option>
+              <option value="west">🇺🇸 Americas</option>
+              <option value="east">🇸🇬 Asia</option>
+            </select>
+          </div>
+
+          <div class="topbar-search-item">
+            <span class="search-ico-fixed">🔍</span>
+            <input type="text" id="search-input" class="topbar-search-input" placeholder="Search items, weapons, gear... (Press '/' to focus)" autocomplete="off" />
+            <kbd class="search-kbd-hint">/</kbd>
+          </div>
+        </div>
+
+        <!-- Cluster 2: Market Rules & Tax Configuration -->
+        <div class="topbar-cluster">
+          <span class="topbar-cluster-lbl">MARKET RULES</span>
+          
+          <!-- Premium Player Tax Status Toggle -->
+          <div class="topbar-toggle-item" id="premium-toggle-block" title="Toggle Premium Status: Active = 4.0% Market Sales Tax | Inactive = 8.0% Market Sales Tax">
+            <div class="toggle-capsule-label">
+              <span class="gold-crown-icon">👑</span>
+              <span id="premium-status-label" class="font-mono">Premium (4% Tax)</span>
+            </div>
+            <label class="switch-box">
+              <input type="checkbox" id="premium-status-toggle" />
+              <span class="switch-slider-gold"></span>
+            </label>
+          </div>
+
+          <!-- Master Discord Alerts Toggle -->
+          <div class="topbar-toggle-item" title="Broadcast verified alpha alerts directly to Discord webhooks">
+            <div class="toggle-capsule-label">
+              <span style="color: #5865f2;">🔔</span>
+              <span>Discord</span>
+            </div>
+            <label class="switch-box">
+              <input type="checkbox" id="discord-alerts-toggle" />
+              <span class="switch-slider-ctrl"></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Cluster 3: Scan Engine Execution -->
+        <div class="topbar-cluster">
+          <span class="topbar-cluster-lbl">SCAN ENGINE</span>
+
+          <button id="scan-now-btn" class="btn-scan-primary" title="Execute full-universe orderbook scan on-demand">
+            ⚡ Scan Now
+          </button>
+
+          <!-- Continuous Live Auto-Scan Toggle -->
+          <div class="topbar-toggle-item" title="Toggle continuous 24/7 background market ingestion and alpha scanner cycles">
+            <div class="toggle-capsule-label">
+              <span style="color: var(--accent-emerald);">🔄</span>
+              <span>Auto-Scan</span>
+            </div>
+            <label class="switch-box">
+              <input type="checkbox" id="continuous-scan-toggle" />
+              <span class="switch-slider-ctrl"></span>
+            </label>
+          </div>
+
+          <button id="clear-data-btn" class="btn-clear-secondary" title="Purge stale opportunity cache and reset orderbook views">
+            🧹 Clear
+          </button>
+        </div>
+
+        <!-- Standalone Exit Action Button -->
+        <button id="shutdown-app-btn" class="btn-exit" title="Stop all background workers and exit AQS">
+          <span class="exit-ico">⏻</span>
+          <span>Exit</span>
+        </button>
+
+      </header>
+
+      <!-- Workspace Content -->
+      <div class="workspace-content">
+        
+        <!-- Glassmorphism KPI Metrics Alpha Deck -->
+        <section class="metrics-strip">
+          
+          <div class="metric-tile tile-glow-gold">
+            <div class="tile-top">
+              <span class="tile-title">ALPHA POOL SIZE</span>
+              <span class="tile-icon">💎</span>
+            </div>
+            <div class="tile-num color-gold font-mono" id="stat-total-opps">—</div>
+            <div class="tile-sub">Verified profit opportunities</div>
+          </div>
+
+          <div class="metric-tile tile-glow-emerald">
+            <div class="tile-top">
+              <span class="tile-title">PIPELINE NET PROFIT</span>
+              <span class="tile-icon">📈</span>
+            </div>
+            <div class="tile-num color-emerald font-mono" id="stat-pipeline-profit">—</div>
+            <div class="tile-sub">Net silver after all taxes &amp; fees</div>
+          </div>
+
+          <div class="metric-tile tile-glow-cyan">
+            <div class="tile-top">
+              <span class="tile-title">MARKET QUOTES INGESTED</span>
+              <span class="tile-icon">⚡</span>
+            </div>
+            <div class="tile-num color-cyan font-mono" id="stat-price-records">—</div>
+            <div class="tile-sub" id="stat-price-sub">Live L2 &amp; regional price snapshots</div>
+          </div>
+
+          <div class="metric-tile tile-glow-purple">
+            <div class="tile-top">
+              <span class="tile-title">OFFICIAL UNIVERSE COVERAGE</span>
+              <span class="tile-icon">🏛️</span>
+            </div>
+            <div class="tile-num color-purple font-mono" id="stat-total-items">—</div>
+            <div class="tile-sub">11,805 items &amp; 28,186 recipes indexed</div>
+          </div>
+
+        </section>
+
+        <!-- Filter Command Strip (Clustered & Clean) -->
+        <section class="filter-command-strip">
+          
+          <!-- Cluster 1: Item Category & Tiers -->
+          <div class="filter-cluster">
+            <span class="cluster-label">ITEM SCOPE</span>
+            
+            <!-- Category Filter -->
+            <select id="category-filter" class="filter-ctrl" title="Filter by equipment or commodity category">
+              <option value="all">📦 All Categories</option>
+              <option value="weapons">⚔️ Weapons &amp; Staves</option>
+              <option value="armors">🛡️ Chest Armor</option>
+              <option value="head">🧢 Helmets &amp; Hoods</option>
+              <option value="shoes">🥾 Shoes &amp; Boots</option>
+              <option value="offhands">🔮 Offhands &amp; Shields</option>
+              <option value="capes">🧥 Capes &amp; Faction Capes</option>
+              <option value="bags">🎒 Bags &amp; Satchels</option>
+              <option value="consumables">🧪 Potions &amp; Food</option>
+              <option value="mounts">🐴 Mounts &amp; Saddles</option>
+              <option value="crafting">🌲 Refined &amp; Raw Resources</option>
+              <option value="artefacts">🔮 Artifacts &amp; Shards</option>
+              <option value="token">🪙 Royal &amp; Arena Sigils</option>
+            </select>
+
+            <!-- Tier Filter -->
+            <select id="tier-filter" class="filter-ctrl" title="Filter by Item Tier">
+              <option value="0">All Tiers (T4 - T8)</option>
+              <option value="4">Tier 4 (Adept)</option>
+              <option value="5">Tier 5 (Expert)</option>
+              <option value="6">Tier 6 (Master)</option>
+              <option value="7">Tier 7 (Grandmaster)</option>
+              <option value="8">Tier 8 (Elder)</option>
+            </select>
+
+            <!-- Enchantment Filter -->
+            <select id="enchant-filter" class="filter-ctrl" title="Filter by Enchantment Level">
+              <option value="all">All Enchants (.0 - .4)</option>
+              <option value="0">.0 Flat</option>
+              <option value="1">.1 Uncommon</option>
+              <option value="2">.2 Rare</option>
+              <option value="3">.3 Exceptional</option>
+              <option value="4">.4 Pristine</option>
+            </select>
+          </div>
+
+          <!-- Cluster 2: Geographic Lanes -->
+          <div class="filter-cluster">
+            <span class="cluster-label">TRADE LANES</span>
+            
+            <!-- Source City -->
+            <select id="source-city-filter" class="filter-ctrl" title="Source / Buying City Hub">
+              <option value="">Source: Any Hub</option>
+              <option value="Bridgewatch">Bridgewatch</option>
+              <option value="Martlock">Martlock</option>
+              <option value="Lymhurst">Lymhurst</option>
+              <option value="Fort Sterling">Fort Sterling</option>
+              <option value="Thetford">Thetford</option>
+              <option value="Caerleon">Caerleon</option>
+              <option value="Brecilien">Brecilien</option>
+            </select>
+
+            <!-- Destination City -->
+            <select id="dest-city-filter" class="filter-ctrl" title="Destination / Selling City Hub">
+              <option value="">Dest: Any Hub</option>
+              <option value="Black Market">🏴‍☠️ Black Market</option>
+              <option value="Bridgewatch">Bridgewatch</option>
+              <option value="Martlock">Martlock</option>
+              <option value="Lymhurst">Lymhurst</option>
+              <option value="Fort Sterling">Fort Sterling</option>
+              <option value="Thetford">Thetford</option>
+              <option value="Caerleon">Caerleon</option>
+              <option value="Brecilien">Brecilien</option>
+            </select>
+          </div>
+
+          <!-- Cluster 3: Capital & Financials -->
+          <div class="filter-cluster">
+            <span class="cluster-label">ECONOMICS &amp; RISK</span>
+            
+            <!-- Max Budget / Investment Filter -->
+            <select id="max-cost-filter" class="filter-ctrl" title="Filter by maximum required silver investment">
+              <option value="0">💰 Max Budget: Unlimited</option>
+              <option value="100000">💰 Max Budget: &lt; 100k</option>
+              <option value="250000">💰 Max Budget: &lt; 250k</option>
+              <option value="500000">💰 Max Budget: &lt; 500k</option>
+              <option value="1000000">💰 Max Budget: &lt; 1M</option>
+              <option value="2000000">💰 Max Budget: &lt; 2M</option>
+              <option value="5000000">💰 Max Budget: &lt; 5M</option>
+              <option value="10000000">💰 Max Budget: &lt; 10M</option>
+              <option value="25000000">💰 Max Budget: &lt; 25M</option>
+              <option value="50000000">💰 Max Budget: &lt; 50M</option>
+            </select>
+
+            <!-- Min Net Profit Filter -->
+            <select id="min-profit-filter" class="filter-ctrl" title="Filter by minimum net profit per unit">
+              <option value="0">📈 Min Profit: Any</option>
+              <option value="5000">📈 Min Profit: 5k+</option>
+              <option value="10000">📈 Min Profit: 10k+</option>
+              <option value="25000">📈 Min Profit: 25k+</option>
+              <option value="50000">📈 Min Profit: 50k+</option>
+              <option value="100000">📈 Min Profit: 100k+</option>
+              <option value="250000">📈 Min Profit: 250k+</option>
+              <option value="500000">📈 Min Profit: 500k+</option>
+              <option value="1000000">📈 Min Profit: 1M+</option>
+            </select>
+
+            <!-- Min ROI Margin Filter -->
+            <select id="min-roi-filter" class="filter-ctrl" title="Filter by preferred minimum ROI margin">
+              <option value="0">📊 Min ROI: Any</option>
+              <option value="5">📊 Min ROI: 5%+</option>
+              <option value="10">📊 Min ROI: 10%+</option>
+              <option value="15">📊 Min ROI: 15%+</option>
+              <option value="20">📊 Min ROI: 20%+</option>
+              <option value="30">📊 Min ROI: 30%+</option>
+              <option value="50">📊 Min ROI: 50%+</option>
+              <option value="100">📊 Min ROI: 100%+</option>
+            </select>
+
+            <!-- Min Volume Filter -->
+            <select id="min-vol-filter" class="filter-ctrl" title="Filter by 24h market liquidity">
+              <option value="0">⚖️ Min Vol: Any</option>
+              <option value="2">⚖️ Min Vol: 2+</option>
+              <option value="5">⚖️ Min Vol: 5+</option>
+              <option value="10">⚖️ Min Vol: 10+</option>
+              <option value="25">⚖️ Min Vol: 25+</option>
+              <option value="50">⚖️ Min Vol: 50+</option>
+            </select>
+          </div>
+
+          <!-- Cluster 4: Tactical Quick Filter Tags -->
+          <div class="filter-cluster quick-tags-cluster">
+            <span class="cluster-label">QUICK FILTERS</span>
+            <div class="quick-tags-wrap">
+              <button class="tag-btn" id="tag-latest-only">⚡ Fresh (&lt;15m)</button>
+              <button class="tag-btn" id="tag-safe-only">🛡️ Safe Routes</button>
+              <button class="tag-btn" id="tag-high-roi">🔥 High ROI (&gt;25%)</button>
+              <button class="tag-btn" id="tag-high-vol">⚡ High Vol (&gt;50)</button>
+              <button class="tag-btn" id="tag-high-tier">👑 T7 - T8 Whales</button>
+            </div>
+          </div>
+
+          <!-- Cluster 5: Sort & Viewport Mode -->
+          <div class="filter-cluster view-sort-cluster">
+            <span class="cluster-label">SORT &amp; VIEW</span>
+            
+            <select id="sort-by-select" class="filter-ctrl">
+              <option value="score">Sort: Quant Score</option>
+              <option value="profit">Sort: Batch Net Profit</option>
+              <option value="roi">Sort: ROI % Margin</option>
+              <option value="cost_asc">Sort: Lowest Cost</option>
+              <option value="cost_desc">Sort: Highest Cost</option>
+              <option value="volume">Sort: 24h Daily Volume</option>
+              <option value="weight_eff">Sort: Silver/kg Transport</option>
+            </select>
+
+            <div class="view-mode-group">
+              <button id="view-cards-btn" class="view-btn active" title="Visual Cards Grid View">🎴 Cards</button>
+              <button id="view-table-btn" class="view-btn" title="Dense Quantitative Table View">📊 Table</button>
+            </div>
+          </div>
+
+        </section>
+
+        <!-- Fast Category Switcher Bar -->
+        <div class="category-pills-bar">
+          <button class="cat-pill-btn active" data-cat="all">🌟 All Universe</button>
+          <button class="cat-pill-btn" data-cat="weapons">⚔️ Weapons</button>
+          <button class="cat-pill-btn" data-cat="armors">🛡️ Armor & Gear</button>
+          <button class="cat-pill-btn" data-cat="offhands">🔮 Offhands</button>
+          <button class="cat-pill-btn" data-cat="capes">🧥 Capes & Bags</button>
+          <button class="cat-pill-btn" data-cat="consumables">🧪 Consumables</button>
+          <button class="cat-pill-btn" data-cat="crafting">🌲 Materials & Reagents</button>
+          <button class="cat-pill-btn" data-cat="mounts">🐴 Mounts</button>
+        </div>
+
+        <!-- Cards Viewport -->
+        <section id="cards-view" class="cards-viewport">
+          <!-- Rendered dynamically by app.js -->
+        </section>
+
+        <!-- Dense Table Viewport -->
+        <section id="table-view" class="table-container" style="display: none;">
+          <table class="quant-table">
+            <thead>
+              <tr>
+                <th>Item &amp; Tier</th>
+                <th>Category</th>
+                <th>Trade Lane Route</th>
+                <th>Batch Vol</th>
+                <th>Batch Net Profit</th>
+                <th>Total Cost</th>
+                <th>ROI %</th>
+                <th>Weight</th>
+                <th>Risk / Slippage</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="dense-table-body">
+              <!-- Rendered dynamically by app.js -->
+            </tbody>
+          </table>
+        </section>
+
+        <!-- Pagination Strip -->
+        <nav id="pagination-bar" class="pagination-strip">
+          <!-- Rendered dynamically by app.js -->
+        </nav>
+
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════
+       RECIPE & FINANCIAL BLUEPRINT MODAL
+       ═══════════════════════════════════════════════════════════════ -->
+  <div id="detail-modal" class="modal-screen">
+    <div class="modal-frame">
+      <button class="modal-close-ico" onclick="closeDetailModal()">✕</button>
+      <div id="modal-body">
+        <!-- Rendered dynamically by openDetailModal() in app.js -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Dock -->
+  <div id="toast-container" class="toast-dock"></div>
+
+  <!-- Full-Screen Graceful Process Exit Overlay -->
+  <div id="shutdown-overlay" class="shutdown-overlay" style="display: none;">
+    <div class="shutdown-dialog">
+      <div class="shutdown-icon">⏻</div>
+      <h2 class="shutdown-title">AQS Server Terminated</h2>
+      <p class="shutdown-sub">Signal <kbd class="exit-kbd">SIGINT (Ctrl+C)</kbd> executed cleanly. All background scanning workers and database pools have stopped.</p>
+      <div class="shutdown-hint">You can safely close this browser window or restart AQS from your terminal.</div>
+    </div>
+  </div>
+
+  <!-- App Script -->
+  <script src="/static/js/app.js?v=9.1.0"></script>
+  <script>
+    // Mobile sidebar toggle
+    (function() {
+      const toggle = document.getElementById('sidebar-toggle');
+      const sidebar = document.querySelector('.cockpit-sidebar');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      if (!toggle || !sidebar || !backdrop) return;
+
+      function openSidebar() {
+        sidebar.classList.add('open');
+        backdrop.style.display = 'block';
+        requestAnimationFrame(() => backdrop.classList.add('visible'));
+      }
+
+      function closeSidebar() {
+        sidebar.classList.remove('open');
+        backdrop.classList.remove('visible');
+        setTimeout(() => { backdrop.style.display = 'none'; }, 300);
+      }
+
+      toggle.addEventListener('click', () => {
+        if (sidebar.classList.contains('open')) closeSidebar();
+        else openSidebar();
+      });
+
+      backdrop.addEventListener('click', closeSidebar);
+
+      // Close sidebar when a tab is clicked on mobile
+      document.querySelectorAll('.sidebar-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          if (window.innerWidth <= 1024) closeSidebar();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

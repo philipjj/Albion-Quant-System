@@ -1,11 +1,44 @@
-"""
-Market utility functions for Albion Online.
-Volume simulation, liquidity scoring, and RRR calculation.
-"""
-
+import math
 from datetime import datetime
 
-from app.core.constants import CITY_CRAFTING_BONUSES
+from app.core.constants import CITY_CRAFTING_BONUSES, CITY_ISLAND_FARMING_BONUSES
+
+
+def calculate_time_decay(age_seconds: float, half_life_hours: float = 6.0) -> float:
+    """
+    Computes smooth exponential decay factor:
+    age = 0s -> 1.0
+    age = half_life -> 0.5
+    age = 2 * half_life -> 0.25
+    Never produces an artificial hard cliff.
+    """
+    if age_seconds <= 0:
+        return 1.0
+    half_life_seconds = max(1.0, half_life_hours * 3600.0)
+    return math.exp(-math.log(2.0) * (age_seconds / half_life_seconds))
+
+
+def get_island_farming_bonus(island_city: str, item_id: str) -> float:
+    """
+    Returns the official Albion Online Island Biome yield bonus (+10% or 0.10)
+    if the crop, herb, or animal matches the island's host city specialization.
+    """
+    if not island_city or not item_id:
+        return 0.0
+
+    # Normalize city name if formatted like "Bridgewatch Island" or "Personal Island (Bridgewatch)"
+    clean_city = island_city.replace("Personal Island (", "").replace(")", "").replace(" Island", "").strip()
+    bonuses = CITY_ISLAND_FARMING_BONUSES.get(clean_city)
+    if not bonuses:
+        return 0.0
+
+    u = item_id.upper()
+    all_bonus_keywords = bonuses.get("crops", []) + bonuses.get("herbs", []) + bonuses.get("animals", [])
+    if any(k in u for k in all_bonus_keywords):
+        return bonuses.get("bonus_yield_pct", 10.0) / 100.0
+
+    return 0.0
+
 
 # Derive city specialization bonuses from authoritative central constants
 CITY_BONUS: dict[str, dict[str, list[str]]] = {
@@ -42,10 +75,105 @@ def get_refining_category(item_id: str) -> str:
     if "STONEBLOCK" in item_upper or "ROCK" in item_upper: return "stoneblock"
     return ""
 
+def get_item_crafting_subcategory(item_id: str, category: str = "") -> str:
+    """
+    Extracts the crafting subcategory for city crafting bonus matching.
+    Matches against CITY_CRAFTING_BONUSES categories.
+    """
+    u = item_id.upper()
+    cat_lower = (category or "").lower()
+
+    # Gathering Tools (Caerleon Toolmaker Bonus) - check BEFORE weapons to avoid false "axe"/"hammer" matches
+    if any(k in u for k in ["_TOOL_AXE", "_TOOL_PICK", "_TOOL_SICKLE", "_TOOL_KNIFE", "_TOOL_HAMMER", "_TOOL_FISHINGROD", "_TOOL_SIEGE"]):
+        return "gathering_tool"
+    if "GATHERER" in u or "GATHERING" in u:
+        return "gathering_gear"
+
+    # Consumables: Potions & Food
+    if "POTION" in u or "potion" in cat_lower or "alchemy" in cat_lower:
+        return "potion"
+    if any(k in u for k in ["_MEAL_", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH", "_SALAD", "_BREAD", "_FISHSAUCE"]) or "cooking" in cat_lower or "food" in cat_lower:
+        return "cooked_food"
+
+    # Off-hands
+    if any(k in u for k in ["_OFF_", "_SHIELD", "_TOME", "_TORCH", "_HORN", "_ORB", "_TOTEM", "_BOOK", "_LAMP", "_CANE", "_EYE", "_TALISMAN"]):
+        return "offhand"
+
+    # Weapons
+    if "SWORD" in u or "DUALSWORD" in u or "CLAYMORE" in u or "SCIMITAR" in u:
+        return "sword"
+    if "CROSSBOW" in u:
+        return "crossbow"
+    if "BOW" in u:
+        return "bow"
+    if "AXE" in u or "SCYTHE" in u or "HALBERD" in u:
+        return "axe"
+    if "HAMMER" in u:
+        return "hammer"
+    if "MACE" in u or "FLAIL" in u:
+        return "mace"
+    if "DAGGER" in u or "CLAW" in u or "PAIR_DAGGER" in u:
+        return "dagger"
+    if "SPEAR" in u or "PIKE" in u or "GLAIVE" in u or "TRIDENT" in u:
+        return "spear"
+    if "QUARTERSTAFF" in u or "IRONCLAD" in u or "STAFF_QUARTER" in u or "COMBATSTAFF" in u:
+        return "quarterstaff"
+    if "HOLYSTAFF" in u or "HOLY_STAFF" in u or "MAIN_HOLY" in u or "2H_HOLY" in u:
+        return "holy_staff"
+    if "FIRESTAFF" in u or "FIRE_STAFF" in u or "MAIN_FIRE" in u or "2H_FIRE" in u:
+        return "fire_staff"
+    if "ARCANESTAFF" in u or "ARCANE_STAFF" in u or "MAIN_ARCANE" in u or "2H_ARCANE" in u:
+        return "arcane_staff"
+    if "FROSTSTAFF" in u or "FROST_STAFF" in u or "MAIN_FROST" in u or "2H_FROST" in u or "ICICLE" in u:
+        return "frost_staff"
+    if "CURSEDSTAFF" in u or "CURSE_STAFF" in u or "CURSED_STAFF" in u or "MAIN_CURSED" in u or "2H_CURSED" in u:
+        return "cursed_staff"
+    if "NATURESTAFF" in u or "NATURE_STAFF" in u or "MAIN_NATURE" in u or "2H_NATURE" in u or "WILDSTAFF" in u:
+        return "nature_staff"
+    if "SHAPESHIFTER" in u:
+        return "shapeshifter_staff"
+    if "KNUCKLES" in u or "WARGLOVES" in u or "WAR_GLOVES" in u or "GLOVES" in u:
+        return "war_gloves"
+
+    # Chest Armor
+    if "ARMOR_PLATE" in u or "PLATE_ARMOR" in u:
+        return "plate_armor"
+    if "ARMOR_LEATHER" in u or "LEATHER_ARMOR" in u or "JACKET" in u:
+        return "leather_armor"
+    if "ARMOR_CLOTH" in u or "CLOTH_ARMOR" in u or "ROBE" in u:
+        return "cloth_armor"
+
+    # Helmets / Headgear
+    if "HEAD_PLATE" in u or "PLATE_HEAD" in u or "PLATE_HELMET" in u or "HELMET_PLATE" in u:
+        return "plate_helmet"
+    if "HEAD_LEATHER" in u or "LEATHER_HEAD" in u or "LEATHER_HOOD" in u or "HOOD_LEATHER" in u:
+        return "leather_helmet"
+    if "HEAD_CLOTH" in u or "CLOTH_HEAD" in u or "CLOTH_COWL" in u or "COWL_CLOTH" in u:
+        return "cloth_cowl"
+
+    # Shoes / Boots / Sandals
+    if "SHOES_PLATE" in u or "PLATE_SHOES" in u or "PLATE_BOOTS" in u or "BOOTS_PLATE" in u:
+        return "plate_shoes"
+    if "SHOES_LEATHER" in u or "LEATHER_SHOES" in u or "LEATHER_BOOTS" in u:
+        return "leather_shoes"
+    if "SHOES_CLOTH" in u or "CLOTH_SHOES" in u or "CLOTH_BOOTS" in u or "SANDALS_CLOTH" in u:
+        return "cloth_shoes"
+
+    # Bags & Capes
+    if "BAG" in u:
+        return "bag"
+    if "CAPE" in u:
+        return "cape"
+    if "MOUNT" in u:
+        return "mounts"
+
+    return cat_lower
+
+
 def calculate_rrr(
     location: str,
     item_category: str,
-    tier: int,
+    tier: int = 4,
     use_focus: bool = False,
     daily_bonus: int = 0,
 ) -> float:
@@ -63,10 +191,20 @@ def calculate_rrr(
     production_bonus = BASE_CITY_PRODUCTION_BONUS
 
     city_data = CITY_BONUS.get(location, {})
-    if item_category in city_data.get("refining", []):
+    craft_bonus_list = city_data.get("crafting", [])
+    refine_bonus_list = city_data.get("refining", [])
+
+    if item_category in refine_bonus_list:
         production_bonus += REFINING_SPECIALIZATION_BONUS
-    elif item_category in city_data.get("crafting", []):
+    elif item_category in craft_bonus_list:
         production_bonus += CRAFTING_SPECIALIZATION_BONUS
+    else:
+        # Check subcategory resolution
+        subcat = get_item_crafting_subcategory(item_category)
+        if subcat in craft_bonus_list:
+            production_bonus += CRAFTING_SPECIALIZATION_BONUS
+        elif subcat in refine_bonus_list:
+            production_bonus += REFINING_SPECIALIZATION_BONUS
 
     if use_focus:
         production_bonus += FOCUS_PRODUCTION_BONUS

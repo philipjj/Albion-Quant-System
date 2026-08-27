@@ -15,7 +15,12 @@ from app.db.session import get_db_session
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+bot = commands.Bot(
+    command_prefix=["!", "！"],
+    intents=intents,
+    help_command=None,
+    case_insensitive=True,
+)
 
 SERVER_BADGES = {
     "west": "🇺🇸 [WEST]",
@@ -28,7 +33,7 @@ SERVER_BADGES = {
 async def on_ready():
     from app.core import state
 
-    log.info(f"Discord Bot AQS v3.2 logged in as {bot.user}")
+    log.info(f"Discord Bot AQS v3.2 logged in as {bot.user} (ID: {bot.user.id if bot.user else 'N/A'})")
 
     badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
     tier_str = f"T{state.tier_lock}" if state.tier_lock else "ALL"
@@ -55,7 +60,7 @@ async def on_ready():
                 embed.add_field(
                     name="⚙️ BEFORE LAUNCH",
                     value=(
-                        "> `!purge DD/MM DD/MM` — Clear old alerts\n"
+                        "> `!purge` or `!purge all` — Clear channel alerts\n"
                         "> `!server europe` — Switch region\n"
                         "> `!tier 4` — Lock to a tier\n"
                         "> `!status` — Check DB health"
@@ -75,6 +80,40 @@ async def on_ready():
                 embed.timestamp = datetime.now(timezone.utc)
                 await channel.send(embed=embed)
                 return  # Only send to first writable channel
+
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    # Diagnostic check for Discord Developer Portal 'Message Content Intent'
+    if not message.content and message.guild:
+        log.warning(
+            f"⚠️ [DISCORD INTENT WARNING] Received message from {message.author} in #{message.channel} "
+            "with empty content. 'MESSAGE CONTENT INTENT' is likely DISABLED in Discord Developer Portal! "
+            "Go to https://discord.com/developers/applications -> Your Bot -> Bot -> Privileged Gateway Intents -> Enable 'Message Content Intent'."
+        )
+    elif message.content.startswith(("!", "！")):
+        log.info(f"📩 [DISCORD COMMAND] {message.author} executed: {message.content.strip()} in #{getattr(message.channel, 'name', 'DM')}")
+
+    await bot.process_commands(message)
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        log.debug(f"[DISCORD] Unknown command: {ctx.message.content}")
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(f"⚠️ Missing required argument: `{error.param.name}`. Type `!help` for usage.")
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(f"⚠️ Invalid argument provided: {error}. Type `!help` for usage.")
+        return
+    log.error(f"Unhandled Discord command error in !{getattr(ctx, 'command', 'unknown')}: {repr(error)}")
+    await ctx.send(f"❌ Error executing `!{getattr(ctx, 'command', 'command')}`: {str(error)}")
+
 
 
 def parse_silver_amount(val_str: str) -> int | None:
@@ -147,7 +186,8 @@ async def help(ctx):
         value=(
             "`!caravan <src> <dst> [kg]` — Transport route profit optimizer\n"
             "`!focus [amount] [spec]` — Focus points profit optimizer\n"
-            "`!purge <start> <end>` — Delete channel messages (`DD/MM` or `DD/MM/YYYY`)"
+            "`!localsourcing <on|off>` — Toggle single-city local craft sourcing\n"
+            "`!purge [all|50|dates]` — Purge channel messages (`!purge`, `!purge all`, or `!purge 50`)"
         ),
         inline=False,
     )
@@ -245,6 +285,7 @@ async def price_cmd(ctx, *, query: str):
                     MarketPrice.item_id == item.item_id,
                     MarketPrice.city == city,
                     MarketPrice.quality == quality,
+                    MarketPrice.server == settings.active_server.value,
                 )
                 .order_by(MarketPrice.captured_at.desc())
                 .first()
@@ -275,45 +316,95 @@ async def price_cmd(ctx, *, query: str):
 
 
 @bot.command()
-async def purge(ctx, start_str: str, end_str: str):
+async def purge(ctx, arg1: str = "all", arg2: str = ""):
     """
-    Delete messages in a date range.
-    Usage: !purge 01/02 05/02 or !purge 01/02/2026 05/02/2026
+    Delete messages from the current channel.
+    Usage:
+      !purge             -> Purge all recent messages
+      !purge all         -> Purge all recent messages
+      !purge 50          -> Purge last 50 messages
+      !purge 01/02 05/02 -> Purge messages in date range (DD/MM)
     """
     try:
-        cur_year = datetime.now(timezone.utc).year
-        if len(start_str.split("/")) == 2:
-            start_str += f"/{cur_year}"
-        if len(end_str.split("/")) == 2:
-            end_str += f"/{cur_year}"
-
-        # Parse dates (assuming DD/MM/YYYY)
-        start_date = datetime.strptime(start_str, "%d/%m/%Y").replace(tzinfo=timezone.utc)
-        end_date = datetime.strptime(end_str, "%d/%m/%Y").replace(
-            hour=23, minute=59, second=59, tzinfo=timezone.utc
-        )
-
-        if start_date > end_date:
-            await ctx.send("❌ Start date must be before end date.")
+        # Check permissions if in a guild
+        if ctx.guild and not ctx.channel.permissions_for(ctx.guild.me).manage_messages:
+            await ctx.send("❌ Bot requires `Manage Messages` permission to purge channel messages.")
             return
 
-        await ctx.send(
-            f"🧹 **Purging messages** from {start_str} to {end_str}... this may take a while."
-        )
+        arg1_clean = arg1.strip().lower()
 
-        def check(m):
-            return start_date <= m.created_at <= end_date
+        # Case 1: Numeric count (e.g. !purge 50)
+        if arg1_clean.isdigit():
+            count = min(int(arg1_clean), 1000)
+            deleted = await ctx.channel.purge(limit=count + 1, bulk=True)
+            del_count = max(0, len(deleted) - 1)
+            await ctx.send(f"✅ Successfully deleted **{del_count}** messages.", delete_after=4)
+            return
 
-        deleted = await ctx.channel.purge(limit=1000, check=check, bulk=True)
-        await ctx.send(
-            f"✅ Successfully deleted **{len(deleted)}** messages from the specified range.",
-            delete_after=5,
-        )
+        # Case 2: Date range (e.g. !purge 01/02 05/02)
+        if arg2.strip():
+            start_str = arg1.strip()
+            end_str = arg2.strip()
+            cur_year = datetime.now(timezone.utc).year
+            if len(start_str.split("/")) == 2:
+                start_str += f"/{cur_year}"
+            if len(end_str.split("/")) == 2:
+                end_str += f"/{cur_year}"
+
+            start_date = datetime.strptime(start_str, "%d/%m/%Y").replace(tzinfo=timezone.utc)
+            end_date = datetime.strptime(end_str, "%d/%m/%Y").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc
+            )
+
+            if start_date > end_date:
+                await ctx.send("❌ Start date must be before end date.")
+                return
+
+            await ctx.send(
+                f"🧹 **Purging messages** from {start_str} to {end_str}..."
+            )
+
+            def check(m):
+                return start_date <= m.created_at <= end_date
+
+            deleted = await ctx.channel.purge(limit=1000, check=check, bulk=True)
+            await ctx.send(
+                f"✅ Successfully deleted **{len(deleted)}** messages from the specified range.",
+                delete_after=4,
+            )
+            return
+
+        # Case 3: !purge or !purge all
+        if arg1_clean in ("all", "", "clear", "channel"):
+            deleted = await ctx.channel.purge(limit=1000, bulk=True)
+            await ctx.send(
+                f"✅ Successfully purged **{len(deleted)}** messages from this channel.",
+                delete_after=4,
+            )
+            return
+
+        await ctx.send("❌ Usage: `!purge` (all), `!purge 50` (count), or `!purge DD/MM DD/MM` (date range).")
 
     except ValueError:
-        await ctx.send("❌ Invalid date format. Please use **DD/MM/YYYY**.")
+        await ctx.send("❌ Invalid date format. Please use **DD/MM/YYYY** or `!purge all`.")
     except Exception as e:
         await ctx.send(f"❌ Error during purge: {e}")
+
+
+@bot.command(name="localsourcing")
+async def localsourcing_cmd(ctx, toggle: str = ""):
+    """Toggle strict local-only crafting ingredient sourcing (on/off)."""
+    from app.core import state
+    toggle = toggle.strip().lower()
+    if toggle in ("on", "true", "1", "yes", "local"):
+        state.crafting_local_sourcing_only = True
+        await ctx.send("✅ **Crafting Sourcing locked to LOCAL ONLY** (materials must be available in craft city).")
+    elif toggle in ("off", "false", "0", "no", "multi"):
+        state.crafting_local_sourcing_only = False
+        await ctx.send("⚠️ **Crafting Sourcing set to MULTI-CITY** (materials can be sourced from refining hubs).")
+    else:
+        current = "ON (Local Only)" if state.crafting_local_sourcing_only else "OFF (Multi-City)"
+        await ctx.send(f"ℹ️ Current Crafting Sourcing mode: **{current}**\nUse `!localsourcing on` or `!localsourcing off` to toggle.")
 
 
 @bot.command()
@@ -532,8 +623,47 @@ async def stop(ctx):
     await ctx.send(embed=embed)
 
 
+@bot.command(name="alerts")
+async def alerts_cmd(ctx, action: str = ""):
+    """Toggle or check Discord alert broadcasting (!alerts on / !alerts off / !alerts status)."""
+    from app.core import state
+    action = (action or "").strip().lower()
+
+    if action in ("on", "enable", "enabled", "1", "true", "start"):
+        state.discord_alerts_enabled = True
+        embed = discord.Embed(
+            title="🔔  DISCORD ALERTS ENABLED",
+            description="Discord webhook alerts are now **ACTIVE** 🟢. Alert notifications will be broadcast across all configured channels.",
+            color=0x57F287,
+        )
+        embed.set_footer(text="AQS v3.2 • Alerts Armed")
+        embed.timestamp = datetime.now(timezone.utc)
+        await ctx.send(embed=embed)
+    elif action in ("off", "disable", "disabled", "0", "false", "stop", "mute", "muted"):
+        state.discord_alerts_enabled = False
+        embed = discord.Embed(
+            title="🔕  DISCORD ALERTS MUTED",
+            description="Discord webhook alerts are now **MUTED** 🔴. Scanners continue running in the background and updating Web UI/DB without sending Discord notifications.",
+            color=0xED4245,
+        )
+        embed.set_footer(text="AQS v3.2 • Alerts Muted")
+        embed.timestamp = datetime.now(timezone.utc)
+        await ctx.send(embed=embed)
+    else:
+        status_str = "ENABLED 🟢" if getattr(state, "discord_alerts_enabled", True) else "MUTED 🔴"
+        embed = discord.Embed(
+            title="🔔  DISCORD ALERTS STATUS",
+            description=f"Current Discord Alerts Broadcast Status: **{status_str}**\n\nUse `!alerts on` to enable or `!alerts off` to mute.",
+            color=0x5865F2,
+        )
+        embed.set_footer(text="AQS v3.2 • Alerts Control")
+        embed.timestamp = datetime.now(timezone.utc)
+        await ctx.send(embed=embed)
+
+
 @bot.command()
 async def tier(ctx, tier_val: str = ""):
+
     """Lock alerts to a specific tier (e.g., !tier 4) or unlock with !tier all."""
     from app.core import state
 
@@ -786,27 +916,47 @@ async def scan(ctx, bm_flag: str = ""):
 
     try:
         scan_res = await scanner.scan_all(scan_bm=scan_bm)
-        if len(scan_res) >= 9:
-            bm, crafting, arb, refining, mm, enchant, quality, transmute, island = scan_res[:9]
+        if len(scan_res) >= 13:
+            bm_arb, crafting, arb, refining, mm, enchant, quality, transmute, island, bm_craft, bm_refine, bm_enchant, bm_mm = scan_res[:13]
+        elif len(scan_res) >= 9:
+            bm_arb, crafting, arb, refining, mm, enchant, quality, transmute, island = scan_res[:9]
+            bm_craft, bm_refine, bm_enchant, bm_mm = [], [], [], []
         else:
-            bm, crafting, arb, refining, mm, enchant, quality, transmute = scan_res[:8]
-            island = []
-        all_arb = bm + arb
+            bm_arb, crafting, arb, refining, mm, enchant, quality, transmute = scan_res[:8]
+            island, bm_craft, bm_refine, bm_enchant, bm_mm = [], [], [], [], []
 
         await alerter.send_batch_alerts(
-            all_arb,
-            crafting,
+            arb_opps=arb,
             arb_limit=10,
+            craft_opps=crafting,
             craft_limit=10,
             refine_opps=refining,
-            mm_opps=mm,
+            refine_limit=10,
             enchant_opps=enchant,
-            quality_opps=quality,
+            enchant_limit=10,
+            mm_opps=mm,
+            mm_limit=10,
             transmute_opps=transmute,
+            transmute_limit=10,
             island_opps=island,
+            island_limit=10,
+            bm_arb_opps=bm_arb,
+            bm_arb_limit=10,
+            bm_craft_opps=bm_craft,
+            bm_craft_limit=10,
+            bm_refine_opps=bm_refine,
+            bm_refine_limit=10,
+            bm_enchant_opps=bm_enchant,
+            bm_enchant_limit=10,
+            bm_mm_opps=bm_mm,
+            bm_mm_limit=10,
+            quality_opps=quality,
+            quality_limit=10,
         )
         await ctx.send(
-            f"✅ Scan complete: **{len(bm)}** BM, **{len(crafting)}** Crafting, **{len(arb)}** Arb, **{len(refining)}** Refine, **{len(mm)}** MM, **{len(enchant)}** Enchant, **{len(quality)}** Quality, **{len(transmute)}** Transmute, **{len(island)}** Island opportunities found."
+            f"✅ **12-Channel Scan Complete**:\n"
+            f"• 🏛️ **Royal Channels**: Transmute ({len(transmute)}), Island ({len(island)}), Crafting ({len(crafting)}), Refining ({len(refining)}), Enchanting ({len(enchant)}), Arbitrage ({len(arb)}), MM ({len(mm)})\n"
+            f"• 💀 **Caerleon & Black Market**: B-Arb ({len(bm_arb)}), B-Crafting ({len(bm_craft)}), B-Refining ({len(bm_refine)}), B-Enchanting ({len(bm_enchant)}), B-MM ({len(bm_mm)})"
         )
     except Exception as e:
         await ctx.send(f"❌ Scan failed: {e}")
@@ -889,6 +1039,11 @@ async def patch(ctx):
         await ctx.send(embed=embed)
 
 
+@bot.command(name="caravan")
+async def caravan_cmd(ctx, source: str, dest: str, weight: int = 1000):
+    """Transport route profit optimizer using greedy knapsack packing."""
+    from app.arbitrage.caravan import optimize_caravan
+
     def norm_city(c: str) -> str:
         c_clean = c.strip()
         if c_clean.lower() in ("bm", "blackmarket", "black_market"):
@@ -931,24 +1086,74 @@ async def patch(ctx):
 
 @bot.command(name="focus")
 async def focus_cmd(ctx, max_focus: int = 10000, spec_level: int = 0):
-    from app.crafting.focus import optimize_focus
+    """Focus Point Maximizer — ranks active crafting opportunities by Silver-per-Focus."""
+    from sqlalchemy import desc
+    from app.db.models import CraftingOpportunity
 
-    res = optimize_focus(max_focus, spec_level)
+    with get_db_session() as db:
+        opps = (
+            db.query(CraftingOpportunity)
+            .filter(
+                CraftingOpportunity.is_active == True,
+                CraftingOpportunity.profit > 0,
+            )
+            .order_by(desc(CraftingOpportunity.profit_per_focus), desc(CraftingOpportunity.profit))
+            .limit(20)
+            .all()
+        )
 
-    if not res["items"]:
-        await ctx.send("⚠️ No active crafting opportunities found to use focus on.")
+    if not opps:
+        await ctx.send("⚠️ No active crafting opportunities found to calculate focus efficiency on.")
+        return
+
+    # Focus efficiency calculation with mastery/specialization scaling
+    spec_efficiency_mult = 0.5 ** (spec_level / 100.0) if spec_level > 0 else 1.0
+
+    items_packed = []
+    focus_remaining = float(max_focus)
+    total_extra_profit = 0.0
+
+    for o in opps:
+        base_focus = o.focus_cost if o.focus_cost and o.focus_cost > 0 else 250.0
+        effective_focus = max(10.0, base_focus * spec_efficiency_mult)
+
+        spf = o.profit_per_focus if o.profit_per_focus and o.profit_per_focus > 0 else (o.profit / effective_focus)
+
+        if focus_remaining < effective_focus:
+            continue
+
+        max_units = int(focus_remaining // effective_focus)
+        safe_qty = min(max_units, o.safe_limit if o.safe_limit and o.safe_limit > 0 else 10)
+
+        if safe_qty > 0:
+            used = safe_qty * effective_focus
+            extra = safe_qty * o.profit
+            focus_remaining -= used
+            total_extra_profit += extra
+            items_packed.append({
+                "item_name": o.item_name or o.item_id,
+                "quantity": safe_qty,
+                "crafting_city": o.crafting_city,
+                "sell_city": o.sell_city or o.crafting_city,
+                "extra_profit": extra,
+                "focus_cost_per_item": effective_focus,
+                "profit_per_focus": spf,
+            })
+
+    if not items_packed:
+        await ctx.send(f"⚠️ Focus allowance ({max_focus:,}) too low to craft any active item.")
         return
 
     embed = discord.Embed(
         title=f"✨ Focus Point Maximizer (Spec: {spec_level})",
-        description=f"Focus Used: {int(res['focus_used'])}/{res['max_focus_allowance']}\nTotal Extra Profit: **{int(res['total_extra_profit_gained']):,}**",
+        description=f"Focus Used: **{int(max_focus - focus_remaining):,}/{max_focus:,}**\nTotal Expected Profit: **{int(total_extra_profit):,}** silver",
         color=discord.Color.purple(),
     )
 
-    for item in res["items"][:10]:
+    for item in items_packed[:10]:
         embed.add_field(
             name=f"{item['quantity']}x {item['item_name']} ({item['crafting_city']} ➔ {item['sell_city']})",
-            value=f"Extra Profit: {int(item['extra_profit']):,} • Focus Cost/Item: {int(item['focus_cost_per_item']):,}\nProfit/Focus: **{int(item['profit_per_focus']):,}**",
+            value=f"Profit: **{int(item['extra_profit']):,}** • Focus/Item: **{int(item['focus_cost_per_item']):,}**\nSilver/Focus: **{int(item['profit_per_focus']):,}**",
             inline=False,
         )
 
@@ -956,32 +1161,51 @@ async def focus_cmd(ctx, max_focus: int = 10000, spec_level: int = 0):
 
 
 async def start_discord_bot():
-    if settings.discord_bot_token:
-        max_retries = 3
-        for attempt in range(max_retries):
+    if not settings.discord_bot_token:
+        return
+
+    max_retries = 10
+    for attempt in range(max_retries):
+        try:
+            if bot.is_closed():
+                # Bot session was closed, re-initialize if needed
+                pass
+            await bot.start(settings.discord_bot_token)
+            break
+        except (discord.errors.LoginFailure, discord.errors.PrivilegedIntentsRequired) as e:
+            log.error(f"[DISCORD BOT] Authentication/Intents fatal error: {e}. Please check DISCORD_BOT_TOKEN.")
+            break
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                wait_sec = 10.0
+                log.warning(
+                    f"[DISCORD BOT] Rate limited (429): {e}. Retrying in {wait_sec}s... (Attempt {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(wait_sec)
+            elif e.status in (500, 502, 503, 504) or "no healthy upstream" in str(e).lower():
+                wait_sec = min(30.0, 5.0 * (attempt + 1))
+                log.warning(
+                    f"[DISCORD BOT] Discord gateway temporary error ({e.status}): {e}. Retrying in {wait_sec}s... (Attempt {attempt + 1}/{max_retries})"
+                )
+                await asyncio.sleep(wait_sec)
+            else:
+                log.warning(f"[DISCORD BOT] HTTP error: {e}. Retrying in 5s... (Attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            log.info("[DISCORD BOT] Task cancelled during shutdown.")
+            break
+        except Exception as e:
+            wait_sec = min(30.0, 5.0 * (attempt + 1))
+            err_msg = str(e) if str(e).strip() else repr(e)
+            log.warning(
+                f"[DISCORD BOT] Connection error ({err_msg}). Reconnecting in {wait_sec}s... (Attempt {attempt + 1}/{max_retries})"
+            )
             try:
-                await bot.start(settings.discord_bot_token)
-                break
-            except discord.errors.HTTPException as e:
-                if e.status == 429:
-                    log.error(
-                        f"Discord bot is being rate limited (429): {e}. Retrying in 5s... (Attempt {attempt + 1}/{max_retries})"
-                    )
-                    await asyncio.sleep(5.0)
-                elif e.status == 503 or "no healthy upstream" in str(e):
-                    log.error(
-                        f"Discord service unavailable (503): {e}. Retrying in 5s... (Attempt {attempt + 1}/{max_retries})"
-                    )
-                    await asyncio.sleep(5.0)
-                else:
-                    log.error(f"Discord bot failed to start with HTTP error: {e}")
-                    break
-            except asyncio.CancelledError:
-                log.info("Discord bot task cancelled.")
-                break
-            except Exception as e:
-                log.error(f"Discord bot failed to start: {e}")
-                break
+                if not bot.is_closed():
+                    await bot.close()
+            except Exception:
+                pass
+            await asyncio.sleep(wait_sec)
 
 
 async def stop_discord_bot():

@@ -24,12 +24,12 @@ LOCALIZATION_URL = f"{AO_BIN_DUMPS_BASE}/formatted/items.json"
 class StaticDataParser:
     """
     Parses static game data from ao-bin-dumps.
-    Extracts items, crafting recipes, and localization names.
+    Extracts items, crafting recipes, and localization names across all game categories.
     """
 
     def __init__(self):
-        self.items_raw: list = []
-        self.items_formatted: dict = {}
+        self.items_raw: list[dict] = []
+        self.items_formatted: dict[str, str] = {}
         self.parsed_items: list[dict] = []
         self.parsed_recipes: list[dict] = []
 
@@ -58,7 +58,7 @@ class StaticDataParser:
                 log.warning(f"Could not download formatted items: {e}")
 
     def load_raw_data(self) -> None:
-        """Load raw JSON data from disk."""
+        """Load raw JSON data from disk across all 20 item categories."""
         items_path = RAW_DIR / "items.json"
         if not items_path.exists():
             raise FileNotFoundError(
@@ -68,127 +68,209 @@ class StaticDataParser:
         with open(items_path, encoding="utf-8") as f:
             data = json.load(f)
 
-        # The items.json structure can vary — handle both list and dict formats
-        if isinstance(data, dict):
-            # Sometimes wrapped in a root key
-            if "items" in data:
-                items_section = data["items"]
-                if isinstance(items_section, dict) and "equipmentitem" in items_section:
-                    # Flatten all item types
-                    self.items_raw = []
-                    for key, value in items_section.items():
-                        if isinstance(value, list):
-                            self.items_raw.extend(value)
-                        elif isinstance(value, dict):
-                            self.items_raw.append(value)
-                else:
-                    self.items_raw = (
-                        items_section if isinstance(items_section, list) else [items_section]
-                    )
-            else:
-                self.items_raw = [data]
+        self.items_raw = []
+        if isinstance(data, dict) and "items" in data:
+            items_section = data["items"]
+            if isinstance(items_section, dict):
+                for section_name, section_items in items_section.items():
+                    if section_name.startswith("@") or section_name == "shopcategories":
+                        continue
+                    if isinstance(section_items, list):
+                        self.items_raw.extend(section_items)
+                    elif isinstance(section_items, dict):
+                        self.items_raw.append(section_items)
         elif isinstance(data, list):
             self.items_raw = data
-        else:
-            self.items_raw = []
 
-        log.info(f"Loaded {len(self.items_raw)} raw items")
+        log.info(f"Loaded {len(self.items_raw)} raw items across all categories.")
 
-        # Load formatted items for name lookup
+        # Load formatted items for English localization name lookup
         formatted_path = RAW_DIR / "items_formatted.json"
+        self.items_formatted = {}
         if formatted_path.exists():
             with open(formatted_path, encoding="utf-8") as f:
                 formatted_data = json.load(f)
-            # Build lookup by UniqueName
             if isinstance(formatted_data, list):
-                self.items_formatted = {
-                    item.get("UniqueName", ""): item
-                    for item in formatted_data
-                    if isinstance(item, dict)
-                }
+                for item in formatted_data:
+                    if isinstance(item, dict):
+                        uid = item.get("UniqueName", "")
+                        loc_dict = item.get("LocalizedNames")
+                        if isinstance(loc_dict, dict):
+                            en_name = loc_dict.get("EN-US", "")
+                            if uid and en_name:
+                                self.items_formatted[uid] = en_name
             elif isinstance(formatted_data, dict):
-                self.items_formatted = formatted_data
-            log.info(f"Loaded {len(self.items_formatted)} formatted item names")
+                for uid, item in formatted_data.items():
+                    if isinstance(item, dict):
+                        loc_dict = item.get("LocalizedNames", {})
+                        if isinstance(loc_dict, dict):
+                            en_name = loc_dict.get("EN-US", "")
+                            if uid and en_name:
+                                self.items_formatted[uid] = en_name
+                    elif isinstance(item, str):
+                        self.items_formatted[uid] = item
+            log.info(f"Loaded {len(self.items_formatted)} English localized item names.")
 
     @staticmethod
-    def parse_item_id(unique_name: str) -> dict:
-        """
-        Parse a canonical item ID into its components.
+    def get_tier(unique_name: str, raw_item: dict) -> int | None:
+        """Extracts official item tier."""
+        raw_tier = raw_item.get("@tier")
+        if raw_tier is not None and str(raw_tier).isdigit():
+            return int(raw_tier)
+        m = re.search(r"(?:^T|_T)(\d+)(?:_|$|@)", unique_name)
+        if m:
+            return int(m.group(1))
+        return None
 
-        Examples:
-            T4_BAG -> tier=4, enchant=0
-            T6_2H_BOW -> tier=6, enchant=0
-            T8_MAIN_FIRESTAFF@3 -> tier=8, enchant=3
-        """
-        result = {
-            "item_id": unique_name,
-            "tier": None,
-            "enchant": 0,
-        }
+    @staticmethod
+    def normalize_category(unique_name: str, cat: str, subcat: str) -> tuple[str, str]:
+        """Normalizes and maps item categories and subcategories to authoritative standardized values."""
+        uid_upper = unique_name.upper()
+        cat = (cat or "").lower().strip()
+        subcat = (subcat or "").lower().strip()
 
-        # Extract enchantment level
-        if "@" in unique_name:
-            base, enchant_str = unique_name.rsplit("@", 1)
-            try:
-                result["enchant"] = int(enchant_str)
-            except ValueError:
-                pass
-            result["item_id"] = unique_name  # Keep full ID with @
+        # Tokens & Royal Sigils
+        if "QUESTITEM_TOKEN_ROYAL" in uid_upper or "ROYAL_SIGIL" in uid_upper:
+            return "token", "royal_sigil"
+        if "QUESTITEM_TOKEN_ARENA" in uid_upper:
+            return "token", "arena_sigil"
+        if "QUESTITEM_TOKEN_AVALON" in uid_upper or "SHARD_AVALONIAN" in uid_upper:
+            return "artefacts", "shard_avalonian"
+        if uid_upper.endswith("_RUNE") or "_RUNE@" in uid_upper:
+            return "artefacts", "rune"
+        if uid_upper.endswith("_SOUL") or "_SOUL@" in uid_upper:
+            return "artefacts", "soul"
+        if uid_upper.endswith("_RELIC") or "_RELIC@" in uid_upper:
+            return "artefacts", "relic"
+        if "_ARTEFACT_" in uid_upper:
+            return "artefacts", subcat or "artefact"
 
-        # Extract tier
-        tier_match = re.match(r"T(\d+)_", unique_name)
-        if tier_match:
-            result["tier"] = int(tier_match.group(1))
+        # Consumables
+        if "_POTION_" in uid_upper or subcat == "potions":
+            return "consumables", "potions"
+        if "_MEAL_" in uid_upper or subcat == "food":
+            return "consumables", "food"
 
-        return result
+        # Armors & Clothing
+        if cat == "armors" or "_ARMOR_" in uid_upper:
+            if "CLOTH" in uid_upper or "cloth" in subcat:
+                return "armors", "cloth_armor"
+            if "LEATHER" in uid_upper or "leather" in subcat:
+                return "armors", "leather_armor"
+            if "PLATE" in uid_upper or "plate" in subcat:
+                return "armors", "plate_armor"
+            return "armors", subcat or "other"
+
+        # Helmets / Headwear
+        if cat == "head" or "_HEAD_" in uid_upper:
+            if "CLOTH" in uid_upper or "cloth" in subcat:
+                return "head", "cloth_helmet"
+            if "LEATHER" in uid_upper or "leather" in subcat:
+                return "head", "leather_helmet"
+            if "PLATE" in uid_upper or "plate" in subcat:
+                return "head", "plate_helmet"
+            return "head", subcat or "other"
+
+        # Shoes / Footwear
+        if cat == "shoes" or "_SHOES_" in uid_upper:
+            if "CLOTH" in uid_upper or "cloth" in subcat:
+                return "shoes", "cloth_shoes"
+            if "LEATHER" in uid_upper or "leather" in subcat:
+                return "shoes", "leather_shoes"
+            if "PLATE" in uid_upper or "plate" in subcat:
+                return "shoes", "plate_shoes"
+            return "shoes", subcat or "other"
+
+        # Weapons
+        if "_SHAPESHIFTER_" in uid_upper:
+            return "weapons", "shapeshifterstaff"
+        if cat == "weapons":
+            return "weapons", subcat or "other"
+
+        # Offhands
+        if cat == "offhands" or any(oh in uid_upper for oh in ["_OFF_", "_SHIELD", "_TOME", "_TORCH", "_HORN", "_BOOK", "_TOTEM"]):
+            return "offhands", subcat or "other"
+
+        # Capes, Bags, Mounts
+        if "_CAPEITEM_" in uid_upper or "_CAPE" in uid_upper or cat == "capes":
+            return "capes", subcat or "capes"
+        if "_BAG" in uid_upper or cat == "bags":
+            return "bags", subcat or "bags"
+        if "_MOUNT_" in uid_upper or cat == "mounts":
+            return "mounts", subcat or "mount"
+
+        # Exact Refined & Raw Resources (without equipment prefix)
+        if re.match(r"^T\d+_(?:PLANKS|METALBAR|BAR|LEATHER|CLOTH|STONEBLOCK)(?:_LEVEL\d+)?(?:@\d+)?$", uid_upper):
+            return "crafting", "refinedresources"
+        if re.match(r"^T\d+_(?:WOOD|ORE|HIDE|FIBER|ROCK|STONE)$", uid_upper):
+            return "crafting", "resources"
+
+        # Farming & Gathering
+        if cat in ["farming", "gathering", "furniture", "vanity"]:
+            return cat, subcat or "other"
+
+        if cat in ["", "none", "other"]:
+            if subcat in ["potions", "food", "tomes", "fish"]:
+                return "consumables", subcat
+            if subcat in ["tokens", "token"]:
+                return "token", subcat
+            if subcat in ["resources", "refinedresources"]:
+                return "crafting", subcat
+
+        return cat or "other", subcat or "other"
 
     def parse_items(self) -> list[dict]:
-        """Parse raw items into normalized item records."""
+        """Parse raw items into normalized item and recipe records."""
         self.parsed_items = []
+        self.parsed_recipes = []
+
+        seen_item_ids = set()
 
         for raw_item in self.items_raw:
             if not isinstance(raw_item, dict):
                 continue
 
             unique_name = raw_item.get("@uniquename", raw_item.get("UniqueName", ""))
-            if not unique_name:
+            if not unique_name or unique_name in seen_item_ids:
                 continue
 
-            # Parse ID components
-            id_parts = self.parse_item_id(unique_name)
+            tier = self.get_tier(unique_name, raw_item)
+            cat, subcat = self.normalize_category(
+                unique_name,
+                raw_item.get("@shopcategory", raw_item.get("shopcategory", "")),
+                raw_item.get("@shopsubcategory1", raw_item.get("shopsubcategory1", "")),
+            )
+            weight = float(raw_item.get("@weight", 0) or 0)
+            item_value = float(raw_item.get("@itemvalue", 0) or 0)
+            max_stack = int(raw_item.get("@maxstacksize", 999) or 999)
 
-            # Get localized name
-            formatted = self.items_formatted.get(unique_name, {})
-            name = unique_name
-            if isinstance(formatted, dict):
-                localized = formatted.get("LocalizedNames")
-                if isinstance(localized, dict):
-                    name = localized.get("EN-US", "") or unique_name
+            # Localized name lookup
+            name = self.items_formatted.get(unique_name, "")
+            if not name:
+                name = unique_name.replace("_", " ").title()
 
             item = {
                 "item_id": unique_name,
                 "name": name,
-                "tier": id_parts["tier"],
-                "enchant": id_parts["enchant"],
-                "category": raw_item.get("@shopcategory", raw_item.get("shopcategory", "")),
-                "subcategory": raw_item.get(
-                    "@shopsubcategory1", raw_item.get("shopsubcategory1", "")
-                ),
-                "shop_category": raw_item.get("@shopcategory", ""),
-                "shop_subcategory": raw_item.get("@shopsubcategory1", ""),
-                "weight": float(raw_item.get("@weight", 0) or 0),
-                "max_stack": int(raw_item.get("@maxstacksize", 999) or 999),
-                "item_value": float(raw_item.get("@itemvalue", 0) or 0),
+                "tier": tier,
+                "enchant": 0,
+                "category": cat,
+                "subcategory": subcat,
+                "shop_category": cat,
+                "shop_subcategory": subcat,
+                "weight": weight,
+                "max_stack": max_stack,
+                "item_value": item_value,
                 "is_craftable": False,
             }
 
-            # Check for crafting requirements
+            # Check for base crafting requirements
             craftingrequirements = raw_item.get("craftingrequirements", None)
             if craftingrequirements:
                 item["is_craftable"] = True
-                self._parse_recipe(unique_name, craftingrequirements, raw_item)
+                self._parse_recipe(unique_name, craftingrequirements, enchant_level=0)
 
-            # Handle enchantment variants
+            # Handle enchantment variants (.1, .2, .3, .4)
             enchantments = raw_item.get("enchantments", {})
             if isinstance(enchantments, dict):
                 enchant_list = enchantments.get("enchantment", [])
@@ -200,53 +282,88 @@ class StaticDataParser:
                     ench_level = int(ench.get("@enchantmentlevel", 0) or 0)
                     if ench_level > 0:
                         ench_id = f"{unique_name}@{ench_level}"
+                        if ench_id in seen_item_ids:
+                            continue
+
+                        ench_name = self.items_formatted.get(ench_id, f"{name} .{ench_level}")
+                        ench_value = float(ench.get("@itemvalue", item_value) or item_value)
+
                         ench_item = item.copy()
                         ench_item["item_id"] = ench_id
+                        ench_item["name"] = ench_name
                         ench_item["enchant"] = ench_level
-                        ench_item["name"] = f"{name} .{ench_level}"
+                        ench_item["item_value"] = ench_value
 
                         # Parse enchanted recipe if present
                         ench_craft = ench.get("craftingrequirements", None)
                         if ench_craft:
                             ench_item["is_craftable"] = True
-                            self._parse_recipe(ench_id, ench_craft, ench)
+                            self._parse_recipe(
+                                ench_id,
+                                ench_craft,
+                                enchant_level=ench_level,
+                                base_id=unique_name,
+                            )
 
                         self.parsed_items.append(ench_item)
+                        seen_item_ids.add(ench_id)
 
             self.parsed_items.append(item)
+            seen_item_ids.add(unique_name)
 
         log.info(
-            f"Parsed {len(self.parsed_items)} items, {len(self.parsed_recipes)} recipe ingredients"
+            f"Parsed {len(self.parsed_items)} items and {len(self.parsed_recipes)} recipe ingredients."
         )
         return self.parsed_items
 
-    def _parse_recipe(self, crafted_item_id: str, craft_req: dict | list, raw_item: dict) -> None:
-        """Parse crafting requirements into recipe ingredients."""
-        if isinstance(craft_req, list):
-            # Multiple recipe variants — use first
-            craft_req = craft_req[0] if craft_req else {}
+    def _parse_recipe(
+        self,
+        crafted_item_id: str,
+        craft_req: dict | list,
+        enchant_level: int = 0,
+        base_id: str = "",
+    ) -> None:
+        """Parse crafting requirements into recipe ingredients with matching enchanted base equipment."""
+        req_list = craft_req if isinstance(craft_req, list) else [craft_req]
 
-        if not isinstance(craft_req, dict):
-            return
-
-        # Get crafting resources
-        resources = craft_req.get("craftresource", [])
-        if isinstance(resources, dict):
-            resources = [resources]
-
-        crafting_station = craft_req.get("@craftingstation", "")
-        nutrition = float(craft_req.get("@amountofnutrition", 0) or 0)
-        focus = float(craft_req.get("@craftingfocus", 0) or 0)
-        fame = float(craft_req.get("@craftingfame", 0) or 0)
-
-        for resource in resources:
-            if not isinstance(resource, dict):
+        for req in req_list:
+            if not isinstance(req, dict):
                 continue
 
-            ingredient_id = resource.get("@uniquename", "")
-            quantity = float(resource.get("@count", 1) or 1)
+            resources = req.get("craftresource", [])
+            if isinstance(resources, dict):
+                resources = [resources]
 
-            if ingredient_id:
+            crafting_station = req.get("@craftingstation", "")
+            nutrition = float(req.get("@amountofnutrition", 0) or 0)
+            focus = float(req.get("@craftingfocus", 0) or 0)
+            fame = float(req.get("@craftingfame", 0) or 0)
+
+            for resource in resources:
+                if not isinstance(resource, dict):
+                    continue
+
+                ingredient_id = resource.get("@uniquename", "")
+                quantity = float(resource.get("@count", 1) or 1)
+
+                if not ingredient_id:
+                    continue
+
+                # When crafting an enchanted item, match the base equipment ingredient enchantment
+                if enchant_level > 0 and base_id:
+                    if ingredient_id == base_id or (
+                        any(
+                            k in ingredient_id
+                            for k in ["_CAPE", "_ARMOR_", "_HEAD_", "_SHOES_", "_BAG"]
+                        )
+                        and "@" not in ingredient_id
+                        and not any(
+                            x in ingredient_id
+                            for x in ["ARTEFACT", "TOKEN", "QUESTITEM", "SIGIL", "_BP"]
+                        )
+                    ):
+                        ingredient_id = f"{ingredient_id}@{enchant_level}"
+
                 self.parsed_recipes.append(
                     {
                         "crafted_item_id": crafted_item_id,
@@ -272,24 +389,34 @@ class StaticDataParser:
         log.info(f"Saved {len(self.parsed_recipes)} recipes to {recipes_out}")
 
     def populate_database(self, db: Session) -> None:
-        """Insert parsed items and recipes into the database."""
-        log.info("Populating database with static data...")
+        """Cleans and populates items and recipes tables with validated official static data."""
+        log.info("Populating database with validated official static data...")
 
-        # Fast Bulk Item Insertion
-        existing_ids = {i[0] for i in db.query(Item.item_id).all()}
-        new_items = [Item(**d) for d in self.parsed_items if d["item_id"] not in existing_ids]
-        if new_items:
-            db.bulk_save_objects(new_items)
-            db.commit()
-        log.info(f"Upserted {len(self.parsed_items)} items ({len(new_items)} new)")
-
-        # Fast Bulk Recipe Insertion
+        # 1. Clear old recipes and items
         db.query(Recipe).delete()
-        new_recipes = [Recipe(**d) for d in self.parsed_recipes]
-        if new_recipes:
-            db.bulk_save_objects(new_recipes)
+        db.query(Item).delete()
+        db.commit()
+
+        # 2. Bulk Insert Items
+        seen_ids = set()
+        item_objects = []
+        for d in self.parsed_items:
+            iid = d["item_id"]
+            if iid not in seen_ids:
+                seen_ids.add(iid)
+                item_objects.append(Item(**d))
+
+        if item_objects:
+            db.bulk_save_objects(item_objects)
             db.commit()
-        log.info(f"Inserted {len(new_recipes)} recipe ingredients")
+        log.info(f"Inserted {len(item_objects)} validated official items into DB.")
+
+        # 3. Bulk Insert Recipes
+        recipe_objects = [Recipe(**d) for d in self.parsed_recipes]
+        if recipe_objects:
+            db.bulk_save_objects(recipe_objects)
+            db.commit()
+        log.info(f"Inserted {len(recipe_objects)} validated official recipe ingredients into DB.")
 
     async def run_full_pipeline(self) -> dict:
         """

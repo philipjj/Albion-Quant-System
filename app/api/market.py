@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import Item, MarketPrice
 from app.db.session import get_db
 
-router = APIRouter(prefix="/market", tags=["Market"])
+router = APIRouter(tags=["Market"])
 
 
 @router.get("/item/{item_id}")
@@ -63,4 +63,18 @@ def get_latest_updates(
 ):
     """Get most recently captured price records."""
     prices = db.query(MarketPrice).order_by(desc(MarketPrice.captured_at)).limit(limit).all()
-    return prices
+    return [
+        {
+            "item_id": p.item_id,
+            "city": p.city,
+            "server": p.server,
+            "quality": p.quality,
+            "sell_price_min": p.sell_price_min,
+            "buy_price_max": p.buy_price_max,
+            "volume_24h": p.volume_24h,
+            "data_age_seconds": p.data_age_seconds,
+            "captured_at": p.captured_at.isoformat() if p.captured_at else None,
+        }
+        for p in prices
+    ]
+

@@ -99,7 +99,7 @@ class MarketPrice(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     item_id = Column(String(128), nullable=False, index=True)
     city = Column(String, nullable=False)
-    server = Column(String, nullable=False, default="west")
+    server = Column(String, nullable=False, default="europe")
     sell_price_min = Column(BigInteger)
     sell_price_max = Column(BigInteger)
     buy_price_min = Column(BigInteger)
@@ -125,6 +125,7 @@ class MarketPrice(Base):
     __table_args__ = (
         Index("ix_market_item_city", "item_id", "city"),
         Index("ix_market_fetched", "captured_at"),
+        Index("ix_market_server_captured", "server", "captured_at"),
         Index("ix_market_upsert", "item_id", "city", "quality", "captured_at_bucket", unique=True),
     )
 

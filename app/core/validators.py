@@ -23,11 +23,10 @@ def validate_item_id(item_id: str) -> bool:
         log.warning(f"🛡️ ID_VALIDATOR: Malformed ID detected (Double Underscore): {item_id}")
         return False
 
-    # Basic regex for T[1-8]_
-    if not re.match(r"^T[1-8]_", item_id.upper()):
-        # Some items don't have T prefix (like quest items or tokens),
-        # but for market data we mostly care about T4+
-        pass
+    # Reject clearly malformed IDs: must be non-empty and reasonable length
+    if len(item_id) > 128:
+        log.warning(f"🛡️ ID_VALIDATOR: Malformed ID (too long): {item_id[:40]}...")
+        return False
 
     return True
 

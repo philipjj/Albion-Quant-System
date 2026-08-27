@@ -46,13 +46,15 @@ def fmt_k(n: float) -> str:
 
 def _get_category_group(item_id: str) -> str:
     id_upper = item_id.upper()
-    if any(k in id_upper for k in ["POTION", "FOOD", "MEAL", "SOUP", "STEW"]):
+    if any(k in id_upper for k in ["TREASURE", "JOURNAL", "DUNGEON", "HELLGATE", "CORRUPTED", "MAP"]):
+        return "Treasures & Journals"
+    if any(k in id_upper for k in ["POTION", "FOOD", "MEAL", "SOUP", "STEW", "PIE", "OMELETTE", "ROAST"]):
         return "Consumables"
 
     # Prioritize Equipment check so leather/cloth armors are categorized as Equipment
     if any(eq in id_upper for eq in [
         "ARMOR", "ROBE", "JACKET", "GARB", "HEAD", "HELMET", "COWL", "CAP", "SHOES", "BOOTS",
-        "MAIN_", "2H_", "OFF_", "BAG", "CAPE", "MOUNT"
+        "MAIN_", "2H_", "OFF_", "BAG", "CAPE", "MOUNT", "KNUCKLES", "SHAPESHIFTER"
     ]):
         return "Equipment"
 
@@ -92,10 +94,12 @@ def _fmt_age(seconds: int) -> str:
 
 def _premium_badge(opp: dict) -> str:
     is_prem = opp.get("is_premium", getattr(settings, "is_premium", False))
-    tax_pct = (opp.get("tax_rate", 0.04 if is_prem else 0.08)) * 100.0
+    fallback_tax = settings.market_tax_premium_pct if is_prem else settings.market_tax_non_premium_pct
+    tax_pct = (opp.get("tax_rate", fallback_tax)) * 100.0
     if is_prem:
         return f"👑 Premium ({tax_pct:.1f}% Tax)"
     return f"🛡️ Non-Premium ({tax_pct:.1f}% Tax)"
+
 
 
 def _get_true_margin(opp: dict) -> float:
@@ -111,28 +115,47 @@ def _get_true_margin(opp: dict) -> float:
 
 
 ISLAND_CATEGORIES = {
-    "farming", "crops", "herbs", "livestock", "animals", "mounts",
-    "consumables", "cooking", "alchemy", "food", "potions", "journals"
+    "farming", "crops", "herbs", "livestock", "animals", "mounts", "mount",
+    "animal", "consumables", "cooking", "alchemy", "food", "potions", "journals", "farm",
+    "pasture", "kennel", "kennels"
 }
 
 ISLAND_ITEM_KEYWORDS = [
+    # Food, Alchemy & Farming Crops
     "_MEAL_", "_POTION_", "_SEED", "_CROP", "_HERB", "_MILK", "_BUTTER",
     "_EGG", "_FLOUR", "_BREAD", "_STEW", "_OMELETTE", "_PIE", "_SOUP",
-    "_ROAST", "_SANDWICH", "_FOAL", "_CALF", "_PIG", "_SHEEP", "_GOAT",
-    "_CHICKEN", "_GOOSE", "_HORSE", "_OX", "_SWIFTCLAW", "_JOURNAL_",
-    "_CARROT", "_BEAN", "_WHEAT", "_TURNIP", "_CABBAGE", "_POTATO",
-    "_CORN", "_PUMPKIN", "_CHAMOMILE", "_FOXGLOVE", "_FIRETEAR",
-    "_GRENTHISTLE", "_MULLEIN", "_CREEPING_CANDLE", "_GHOUL_YARROW",
-    "_FARM_", "_MEAT", "FARM_CHICKEN", "FARM_PIG", "FARM_COW", "FARM_SHEEP", "FARM_GOOSE"
+    "_ROAST", "_SANDWICH", "_JOURNAL_", "_CARROT", "_BEAN", "_WHEAT",
+    "_TURNIP", "_CABBAGE", "_POTATO", "_CORN", "_PUMPKIN", "_CHAMOMILE",
+    "_FOXGLOVE", "_FIRETEAR", "_GRENTHISTLE", "_MULLEIN", "_CREEPING_CANDLE",
+    "_GHOUL_YARROW", "_FARM_", "_MEAT", "FARM_CHICKEN", "FARM_PIG", "FARM_COW",
+    "FARM_SHEEP", "FARM_GOOSE", "FARM_GOAT",
+
+    # Baby Animals & Growth (Breeding / Pasture / Kennel)
+    "_BABY", "_GROWN", "_FOAL", "_CALF", "_PUP", "_CUB", "_FAWN", "_CHICK",
+    "_GOSLING", "_LAMB", "_PIGLET", "_KID",
+
+    # Mounts & Livestock (Saddled / Farm-Raised / Bred)
+    "_HORSE", "_OX", "_SWIFTCLAW", "_DIREWOLF", "_DIREBEAR", "_DIREBOAR",
+    "_GIANTSTAG", "_STAG", "_MAMMOTH", "_SWAMPDRAGON", "_MOABIRD", "_COUGAR",
+    "_TERRORBIRD", "_RAVEN", "_ARMORED_HORSE", "_MOUNT_", "MOUNT_", "_MOUNT",
+    "_MULE", "_DONKEY", "COTTONTAIL", "RABBIT", "BUNNY", "PANTHER", "WILD_BOAR",
+    "BOAR", "FROSTRAM", "OWL", "SALAMANDER", "SWAMP_DRAGON"
 ]
 
 
 def _is_island_opportunity(opp: dict) -> bool:
     cat = (opp.get("category") or "").lower()
-    if cat in ISLAND_CATEGORIES:
+    subcat = (opp.get("subcategory") or "").lower()
+    if cat in ISLAND_CATEGORIES or subcat in ISLAND_CATEGORIES:
         return True
     item_id = (opp.get("item_id") or "").upper()
-    return any(kw in item_id for kw in ISLAND_ITEM_KEYWORDS)
+    item_name = (opp.get("item_name") or "").upper()
+    if any(kw in item_id for kw in ISLAND_ITEM_KEYWORDS):
+        return True
+    if any(kw.replace("_", " ").strip() in item_name for kw in ISLAND_ITEM_KEYWORDS if len(kw) > 3):
+        return True
+    return False
+
 
 
 class DiscordAlerter:
@@ -151,6 +174,7 @@ class DiscordAlerter:
         self.mm_webhook_url = settings.discord_mm_webhook_url or os.getenv("DISCORD_MM_WEBHOOK_URL", "")
         self.bm_mm_webhook_url = settings.discord_bm_mm_webhook_url or os.getenv("DISCORD_BM_MM_WEBHOOK_URL", "") or os.getenv("DISCORD_B_MM_WEBHOOK_URL", "")
         self.island_webhook_url = settings.discord_island_webhook_url or os.getenv("DISCORD_ISLAND_WEBHOOK_URL", "") or os.getenv("DISCORD_ISLAND_URL", "")
+        self.quality_webhook_url = settings.discord_quality_webhook_url or os.getenv("DISCORD_QUALITY_WEBHOOK_URL", "")
         self.transmute_webhook_url = settings.discord_transmute_webhook_url or os.getenv("DISCORD_TRANSMUTE_WEBHOOK_URL", "") or os.getenv("DISCORD_TRANSMUTATION_WEBHOOK_URL", "")
         self.bm_transmute_webhook_url = settings.discord_bm_transmute_webhook_url or os.getenv("DISCORD_BM_TRANSMUTE_WEBHOOK_URL", "") or os.getenv("DISCORD_BM_TRANSMUTATION_WEBHOOK_URL", "")
 
@@ -158,35 +182,70 @@ class DiscordAlerter:
             self.webhook_url, self.arb_webhook_url, self.bm_webhook_url, self.bm_arb_webhook_url,
             self.crafting_webhook_url, self.bm_crafting_webhook_url, self.refining_webhook_url,
             self.bm_refining_webhook_url, self.enchanting_webhook_url, self.bm_enchanting_webhook_url,
-            self.mm_webhook_url, self.bm_mm_webhook_url, self.island_webhook_url,
+            self.mm_webhook_url, self.bm_mm_webhook_url, self.island_webhook_url, self.quality_webhook_url,
             self.transmute_webhook_url, self.bm_transmute_webhook_url
         ]
         self.enabled = any(u and "YOUR_WEBHOOK" not in u for u in all_urls)
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            limits = httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=30.0)
+            timeout = httpx.Timeout(connect=15.0, read=25.0, write=15.0, pool=15.0)
+            headers = {
+                "User-Agent": "DiscordBot (https://github.com/philipjj/Albion-Quant-System, 3.2)",
+                "Content-Type": "application/json",
+            }
+            self._client = httpx.AsyncClient(limits=limits, timeout=timeout, headers=headers)
+        return self._client
+
+    async def close(self):
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
 
     async def _send_webhook(self, payload: dict, webhook_url: str = None) -> bool:
         if not self.enabled:
+            return False
+
+        from app.core import state
+        if not getattr(state, "discord_alerts_enabled", True) or not getattr(settings, "discord_alerts_enabled", True):
+            log.debug("[DISCORD ALERTS] Alert suppressed: Discord alerts are currently disabled via setting.")
             return False
 
         url = webhook_url or self.webhook_url
         if not url or "YOUR_WEBHOOK" in url:
             return False
 
+        client = self._get_client()
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(url, json=payload)
-                    if resp.status_code in (200, 204):
-                        return True
-                    if resp.status_code == 429:
-                        retry_after = float(resp.headers.get("Retry-After", 1.0))
-                        await asyncio.sleep(retry_after)
-                        continue
-                    log.error(
-                        f"Discord webhook failed ({resp.status_code}): {resp.text}"
-                    )
-                    if attempt == max_retries - 1:
-                        return False
+                resp = await client.post(url, json=payload)
+                if resp.status_code in (200, 204):
+                    # Proactive rate-limit respect if bucket is exhausted
+                    rem = resp.headers.get("X-RateLimit-Remaining")
+                    if rem == "0":
+                        reset_after = float(resp.headers.get("X-RateLimit-Reset-After", 1.0))
+                        log.debug(f"Discord rate limit remaining 0, sleeping {reset_after:.2f}s")
+                        await asyncio.sleep(reset_after)
+                    return True
+
+                if resp.status_code == 429:
+                    retry_after = 1.5
+                    try:
+                        data = resp.json()
+                        retry_after = float(data.get("retry_after", resp.headers.get("Retry-After", 1.5)))
+                    except Exception:
+                        retry_after = float(resp.headers.get("Retry-After", 1.5))
+                    log.warning(f"Discord rate limited (429). Retrying after {retry_after:.2f}s...")
+                    await asyncio.sleep(retry_after + 0.1)
+                    continue
+
+                log.error(
+                    f"Discord webhook failed ({resp.status_code}): {resp.text}"
+                )
+                if attempt == max_retries - 1:
+                    return False
             except Exception as e:
                 log.error(
                     f"Discord webhook failed: {repr(e)} (Attempt {attempt + 1}/{max_retries})"
@@ -194,7 +253,8 @@ class DiscordAlerter:
                 if attempt == max_retries - 1:
                     return False
 
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.0 * (2 ** attempt))
+        return False
 
     def _format_arbitrage_embed(self, opp: dict) -> dict:
         confidence = scorer.calculate_data_confidence(opp)
@@ -359,7 +419,7 @@ class DiscordAlerter:
             desc += "-# ⚠️ Thin Market Liquidity\n"
         desc += f"# Craft @ {craft_city} ➔ Sell @ {sell_city}"
 
-        item_id = opp.get("item_id") or "T4_BAG"
+        item_id = opp.get("item_id") or opp.get("target_item_id") or opp.get("crafted_item_id") or "T4_BAG"
         item_name = opp.get("item_name", item_id)
         quality = opp.get("quality", 1)
         safe_qty = opp.get("safe_limit", 1)
@@ -367,11 +427,13 @@ class DiscordAlerter:
             safe_qty = 1
 
         if is_bm:
+            tax_r = opp.get('tax_rate', 0.04 if opp.get('is_premium', True) else 0.08)
+            net_sell_val = opp.get('sell_price', 0) * (1.0 - tax_r)
             embed_title = f"{badge} 📦 {safe_qty}x {item_name} (BM Crafting Demand)"
             craft_math_val = (
                 f"Target Quantity Needed: **{safe_qty}x items**\n"
                 f"Craft Cost / Item: **{fmt_k(opp.get('craft_cost', 0))}** (`{craft_city}`)\n"
-                f"BM Sell Value / Item: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_city}`)\n"
+                f"BM Sell Value / Item: **{fmt_k(opp.get('sell_price', 0))}** (Net: `{fmt_k(net_sell_val)}` after {tax_r*100:.1f}% tax)\n"
                 f"Net Profit / Item: **+{fmt_k(opp.get('profit', 0))}**\n"
                 f"Total Batch Profit ({safe_qty}x): **+{fmt_k(opp.get('profit', 0) * safe_qty)}**"
             )
@@ -457,7 +519,17 @@ class DiscordAlerter:
         desc += f"-# ⏳ Data Age: Materials {age_mat} | Sell {age_sell}\n"
         if opp.get("coverage_suspect"):
             desc += "-# ⚠️ Thin Volume\n"
-        desc += f"# {buy_city} ➔ Refine @ {refine_city} ➔ Sell @ {sell_city}"
+
+        if buy_city == refine_city == sell_city:
+            desc += f"# {refine_city} (Buy, Refine & Sell)"
+        elif buy_city == refine_city:
+            desc += f"# {refine_city} (Buy & Refine) ➔ {sell_city} (Sell)"
+        elif sell_city == refine_city:
+            desc += f"# {buy_city} (Buy) ➔ {refine_city} (Refine & Sell)"
+        elif buy_city == sell_city:
+            desc += f"# {buy_city} (Buy) ➔ {refine_city} (Refine) ➔ {buy_city} (Sell)"
+        else:
+            desc += f"# {buy_city} ➔ Refine @ {refine_city} ➔ Sell @ {sell_city}"
 
         item_id = opp.get("item_id") or "T4_PLANKS"
         quality = opp.get("quality", 1)
@@ -497,6 +569,98 @@ class DiscordAlerter:
 
         return embed
 
+    def _format_island_embed(self, opp: dict) -> dict:
+        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
+        margin = _get_true_margin(opp)
+        craft_city = opp.get("craft_city") or opp.get("crafting_city") or "Personal Island"
+        sell_city = opp.get("sell_city") or opp.get("destination_city") or "Market"
+        source_city = opp.get("source_city") or craft_city
+        dest_city = opp.get("destination_city") or f"{sell_city} Market"
+        buy_city = opp.get("buy_city") or craft_city.replace("Personal Island (", "").replace(")", "").strip()
+
+        # Theme color: Emerald Green / Gold for island agriculture
+        color = 0x27AE60 if margin >= 20 else 0xF39C12
+
+        prem_info = _premium_badge(opp)
+        age_mat = _fmt_age(opp.get("data_age_materials", 0))
+        age_sell = _fmt_age(opp.get("data_age_sell", 0))
+        focus_str = " • 🔥 Focus: On" if opp.get("use_focus") else ""
+        rrr = opp.get("rrr_used", 0.0)
+
+        # Check if item gets island biome bonus
+        from app.core.market_utils import get_island_farming_bonus
+        item_id = opp.get("item_id") or opp.get("target_item_id") or "T4_CARROT"
+        item_name = opp.get("item_name", item_id)
+        quality = opp.get("quality", 1)
+
+        island_host = buy_city
+        biome_bonus = get_island_farming_bonus(island_host, item_id)
+        biome_tag = f"-# 🌾 **Biome Specialty: +{biome_bonus*100:.0f}% Yield** ({island_host} Specialization)\n" if biome_bonus > 0 else ""
+
+        desc = f"-# 🌴 **ISLAND AGRICULTURE & PRODUCTION** • {prem_info}{focus_str}\n"
+        desc += f"-# ⏳ Data Age: Seeds/Inputs {age_mat} | Market Sell {age_sell}\n"
+        desc += biome_tag
+        if opp.get("coverage_suspect"):
+            desc += "-# ⚠️ Thin Market Liquidity\n"
+        desc += f"# 🏡 {source_city} ➔ 🛒 {dest_city}"
+
+        safe_qty = opp.get("safe_limit", 1)
+        if safe_qty < 1:
+            safe_qty = 1
+
+        details = opp.get("details", opp.get("ingredients", []))
+        path_lines = []
+        for d in details:
+            raw_qty = d.get("quantity", 1)
+            qty = int(raw_qty) if raw_qty == int(raw_qty) else raw_qty
+            name = d.get("name") or d.get("item_id", "Unknown").replace("_", " ").title()
+            price = d.get("unit_price", 0)
+            city_str = f" @ `{d.get('buy_city', buy_city)}`"
+            path_lines.append(f"• {qty}x **{name}** (Buy{city_str} @ {fmt_k(price)})")
+
+        path_str = "\n".join(path_lines)
+
+        harvest_str = f"Harvest Value (+{biome_bonus*100:.0f}% Yield)" if biome_bonus > 0 else "Harvest Market Value"
+
+        embed = {
+            "title": f"{badge} 🌾 {item_name}",
+            "description": desc,
+            "color": color,
+            "thumbnail": {
+                "url": item_icon_url(item_id, quality=quality, size=128)
+            },
+            "fields": [
+                {
+                    "name": "💰 Island Production Math",
+                    "value": (
+                        f"Seed/Input Cost: **{fmt_k(opp.get('craft_cost', opp.get('total_cost', 0)))}** (`{buy_city}`)\n"
+                        f"{harvest_str}: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_city}`)\n"
+                        f"Net Profit: **+{fmt_k(opp.get('profit', 0))}**"
+                    ),
+                    "inline": False,
+                },
+                {
+                    "name": "📊 Yield & Efficiency",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**\n• Focus RRR: **{rrr * 100:.1f}%**",
+                    "inline": True,
+                },
+                {
+                    "name": "📦 Target Batch & Density",
+                    "value": f"• Target Batch: **{safe_qty} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**\n• Yield/kg: **{fmt_k(opp.get('profit_per_kg', 0))}**",
+                    "inline": True,
+                },
+                {
+                    "name": "🌱 Inputs & Seeds Required",
+                    "value": f"{path_str[:1024]}" if path_str else "No material details",
+                    "inline": False,
+                },
+            ],
+            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        return embed
+
     def _format_mm_embed(self, opp: dict) -> dict:
         badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
         margin = opp.get("estimated_margin", opp.get("profit_margin", opp.get("profit_pct", 0.0)))
@@ -517,7 +681,7 @@ class DiscordAlerter:
             desc += "-# ⚠️ Thin Liquidity\n"
         desc += f"# Market Making: {src_city}"
 
-        item_id = opp.get("item_id") or "T4_BAG"
+        item_id = opp.get("item_id") or opp.get("target_item_id") or opp.get("base_item_id") or "T4_BAG"
         quality = opp.get("quality", 1)
 
         embed = {
@@ -563,22 +727,36 @@ class DiscordAlerter:
         base_name = opp.get("base_item_id", "").replace("_", " ").title()
         mat_name = opp.get("material_id", "").replace("_", " ").title()
         base_city = opp.get("base_city", opp.get("source_city", "Caerleon"))
-        dest_city = opp.get("destination_city", opp.get("sell_city", "Black Market"))
-        is_bm = (dest_city in ["Black Market", "Caerleon"])
+        dest_city = opp.get("destination_city", opp.get("sell_city", "Black Market" if base_city == "Caerleon" else base_city))
+        is_bm = (dest_city in ["Black Market", "Caerleon"] or base_city == "Caerleon")
 
         color = 0xE91E63 if not is_bm else 0x8E44AD  # Neon Pink for Enchanting, Purple for BM
 
         prem_info = _premium_badge(opp)
         age_base = _fmt_age(opp.get("data_age_base", 0))
         age_mat = _fmt_age(opp.get("data_age_material", 0))
-        age_bm = _fmt_age(opp.get("data_age_bm", 0))
+        age_sell = _fmt_age(opp.get("data_age_sell", opp.get("data_age_bm", 0)))
 
-        desc = f"-# ✨ **ITEM ENCHANTING** • {prem_info}\n"
-        desc += f"-# ⏳ Data Age: Base Item {age_base} | Mat {age_mat} | Sell Market {age_bm}\n"
-        if base_city != "Caerleon":
-            desc += f"# {base_city} (Buy Base) ➔ Caerleon (Enchant) ➔ {dest_city} (Sell)"
+        if is_bm:
+            if base_city == "Caerleon":
+                header_tag = "🔮 **CAERLEON BM ENCHANTING (0% RISK)**"
+            else:
+                header_tag = "💀 **BLACK MARKET TRANSPORT ENCHANTING**"
         else:
-            desc += f"# Caerleon (Buy & Enchant) ➔ {dest_city} (Sell)"
+            header_tag = "✨ **ROYAL ENCHANTING**"
+
+        desc = f"-# {header_tag} • {prem_info}\n"
+        desc += f"-# ⏳ Data Age: Base Item {age_base} | Mat {age_mat} | Sell Market {age_sell}\n"
+        if is_bm:
+            if base_city != "Caerleon":
+                desc += f"# {base_city} (Buy Base) ➔ Caerleon (Enchant) ➔ {dest_city} (Sell)"
+            else:
+                desc += f"# 🛡️ Caerleon (Buy & Enchant) ➔ {dest_city} (Sell - 0% Risk)"
+        else:
+            if base_city == dest_city:
+                desc += f"# {base_city} (Buy Base, Enchant & Sell)"
+            else:
+                desc += f"# {base_city} (Buy Base) ➔ {dest_city} (Enchant & Sell)"
 
         item_id = opp.get("target_item_id") or opp.get("item_id") or "T7_MAIN_SWORD@1"
         quality = opp.get("quality", 1)
@@ -590,6 +768,13 @@ class DiscordAlerter:
         mat_unit = opp.get('material_price', 0)
         mat_unit_str = f"{mat_unit:,.0f}" if (1000 <= mat_unit < 10000) else fmt_k(mat_unit)
 
+        tax_r = opp.get('tax_rate', 0.04 if opp.get('is_premium', True) else 0.08)
+        if is_bm:
+            net_sell_val = sell_p * (1.0 - tax_r)
+            sell_field_str = f"Target Sell Price: **{fmt_k(sell_p)}** (`{dest_city}` - Net: `{fmt_k(net_sell_val)}` after {tax_r*100:.1f}% tax)"
+        else:
+            sell_field_str = f"Target Sell Price: **{fmt_k(sell_p)}** (`{dest_city}`)"
+
         embed = {
             "title": f"{badge} {opp.get('item_name', item_id)}",
             "description": desc,
@@ -600,7 +785,7 @@ class DiscordAlerter:
             "fields": [
                 {
                     "name": "💰 Enchanting Financial Math",
-                    "value": f"Base Item Cost: **{fmt_k(opp.get('base_price', 0))}** (`{base_city}`)\nMaterial Cost: **{mat_unit_str}** x {opp.get('material_qty', 1)} (**{fmt_k(mat_unit * opp.get('material_qty', 1))}**)\nTarget Sell Price: **{fmt_k(sell_p)}** (`{dest_city}`)\nNet Profit: **+{fmt_k(profit)}**",
+                    "value": f"Base Item Cost: **{fmt_k(opp.get('base_price', 0))}** (`{base_city}`)\nMaterial Cost: **{mat_unit_str}** x {opp.get('material_qty', 1)} (**{fmt_k(mat_unit * opp.get('material_qty', 1))}**)\n{sell_field_str}\nNet Profit: **+{fmt_k(profit)}**",
                     "inline": False,
                 },
                 {
@@ -790,7 +975,7 @@ class DiscordAlerter:
         else:
             desc += f"# {city}: Buy {opp.get('buy_quality_name', 'High Q')} ➔ Relist at {opp.get('reference_quality_name', 'Low Q')} Market Sell Price (Wait on Listing)"
 
-        item_id = opp.get("item_id") or "T4_BAG"
+        item_id = opp.get("item_id") or opp.get("target_item_id") or opp.get("base_item_id") or "T4_BAG"
         quality = opp.get("buy_quality", 1)
 
         embed = {
@@ -831,6 +1016,11 @@ class DiscordAlerter:
         src_price = opp.get("source_price", 0)
         fee = opp.get("transmutation_fee", 0)
         sell_c = opp.get("destination_city", "Royal City")
+        profit = opp.get("profit", opp.get("estimated_profit", 0))
+        safe_limit = opp.get("safe_limit", 1)
+        if safe_limit < 1:
+            safe_limit = 1
+        total_batch_profit = profit * safe_limit
 
         color = 0x9B59B6  # Amethyst Purple for Transmutation
 
@@ -851,64 +1041,24 @@ class DiscordAlerter:
             "fields": [
                 {
                     "name": "🔮 Transmutation Financial Math",
-                    "value": f"Base Material Price: **{fmt_k(src_price)}**\nTransmutation Silver Fee: **{fmt_k(fee)}**\nTotal Cost: **{fmt_k(opp.get('total_cost', 0))}**\nMarket Sell Value: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_c}`)\nNet Profit: **+{fmt_k(opp.get('profit', opp.get('estimated_profit', 0)))}**",
+                    "value": (
+                        f"Base Material Price: **{fmt_k(src_price)}**\n"
+                        f"Transmutation Silver Fee: **{fmt_k(fee)}**\n"
+                        f"Total Cost: **{fmt_k(opp.get('total_cost', 0))}**\n"
+                        f"Market Sell Value: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_c}`)\n"
+                        f"Net Profit / Unit: **+{fmt_k(profit)}**\n"
+                        f"Total Batch Profit ({safe_limit:,}x): **+{fmt_k(total_batch_profit)}**"
+                    ),
                     "inline": False,
                 },
                 {
                     "name": "📊 Yield & ROI",
-                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**",
+                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV Score: **{fmt_k(opp.get('ev_score', 0))}**",
                     "inline": True,
                 },
                 {
                     "name": "📦 Batch & Volume",
-                    "value": f"• Safe Batch: **{opp.get('safe_limit', 1):,} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**",
-                    "inline": True,
-                },
-            ],
-            "footer": {"text": f"AQS Quantitative Engine v3.2 • {settings.active_server.value.upper()}"},
-            "timestamp": datetime.utcnow().isoformat(),
-        }
-        return embed
-
-    def _format_island_embed(self, opp: dict) -> dict:
-        confidence = scorer.calculate_data_confidence(opp)
-        badge = SERVER_BADGES.get(settings.active_server.value, "[UNKNOWN]")
-        margin = _get_true_margin(opp)
-        item_id = opp.get("item_id", "T4_WHEAT")
-        quality = opp.get("quality", 1)
-        sell_c = opp.get("sell_city", "Royal Market")
-        craft_c = opp.get("crafting_city", opp.get("source_city", "Personal Island"))
-
-        color = 0x2ECC71  # Emerald Green for Island Produce
-
-        prem_info = _premium_badge(opp)
-        age = _fmt_age(opp.get("data_age_sell", opp.get("data_age_materials", 0)))
-
-        desc = f"-# 🏝️ **ISLAND PROFIT OPPORTUNITY** • {prem_info}\n"
-        desc += f"-# ⏳ Data Age: {age}\n"
-        desc += f"# Island Produce @ {craft_c} ➔ Sell @ {sell_c}"
-
-        embed = {
-            "title": f"{badge} {opp.get('item_name', item_id)}",
-            "description": desc,
-            "color": color,
-            "thumbnail": {
-                "url": item_icon_url(item_id, quality=quality, size=128)
-            },
-            "fields": [
-                {
-                    "name": "💰 Island Financial Math",
-                    "value": f"Input/Seed Cost: **{fmt_k(opp.get('craft_cost', opp.get('buy_price', 0)))}**\nMarket Sell Price: **{fmt_k(opp.get('sell_price', 0))}** (`{sell_c}`)\nNet Profit: **+{fmt_k(opp.get('profit', opp.get('estimated_profit', 0)))}**",
-                    "inline": False,
-                },
-                {
-                    "name": "📊 Yield & ROI",
-                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**",
-                    "inline": True,
-                },
-                {
-                    "name": "📦 Batch & Volume",
-                    "value": f"• Safe Batch: **{opp.get('safe_limit', 1):,} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**",
+                    "value": f"• Safe Batch: **{safe_limit:,} units**\n• 24h Volume: **{opp.get('daily_volume', 0):,} vol**",
                     "inline": True,
                 },
             ],
@@ -919,8 +1069,8 @@ class DiscordAlerter:
 
     async def send_batch_alerts(
         self,
-        arb_opps: list[dict],
-        craft_opps: list[dict],
+        arb_opps: list[dict] = None,
+        craft_opps: list[dict] = None,
         arb_limit: int = 10,
         craft_limit: int = 10,
         mm_opps: list[dict] = None,
@@ -935,11 +1085,31 @@ class DiscordAlerter:
         transmute_limit: int = 10,
         island_opps: list[dict] = None,
         island_limit: int = 10,
+        bm_arb_opps: list[dict] = None,
+        bm_arb_limit: int = 10,
+        bm_craft_opps: list[dict] = None,
+        bm_craft_limit: int = 10,
+        bm_refine_opps: list[dict] = None,
+        bm_refine_limit: int = 10,
+        bm_enchant_opps: list[dict] = None,
+        bm_enchant_limit: int = 10,
+        bm_mm_opps: list[dict] = None,
+        bm_mm_limit: int = 10,
         max_per_channel: int = 10,
     ):
         from collections import defaultdict
+        from app.core import state
+        if not getattr(state, "discord_alerts_enabled", True) or not getattr(settings, "discord_alerts_enabled", True):
+            log.info("[DISCORD ALERTS] Batch alert dispatch skipped: Discord alerts are currently disabled via setting.")
+            return {}
+
         channel_counts = defaultdict(int)
 
+
+        if arb_opps is None:
+            arb_opps = []
+        if craft_opps is None:
+            craft_opps = []
         if mm_opps is None:
             mm_opps = []
         if refine_opps is None:
@@ -952,126 +1122,161 @@ class DiscordAlerter:
             transmute_opps = []
         if island_opps is None:
             island_opps = [o for o in craft_opps if _is_island_opportunity(o)]
+        elif not island_opps and any(_is_island_opportunity(o) for o in craft_opps):
+            island_opps = [o for o in craft_opps if _is_island_opportunity(o)]
+        craft_opps = [o for o in craft_opps if not _is_island_opportunity(o)]
 
-        # Process Arbitrage Opportunities
-        for opp in arb_opps[:arb_limit]:
-            dest = opp.get("destination_city", "") or opp.get("sell_city", "")
-            src = opp.get("source_city", "") or opp.get("buy_city", "")
-            is_bm = (dest in ["Black Market", "Caerleon"] or src == "Caerleon")
-            target_webhook = (
-                (self.bm_arb_webhook_url or self.bm_webhook_url or self.arb_webhook_url or self.webhook_url)
-                if is_bm
-                else (self.arb_webhook_url or self.webhook_url)
-            )
-            if target_webhook and channel_counts[target_webhook] < max_per_channel:
-                embed = self._format_arbitrage_embed(opp)
-                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                channel_counts[target_webhook] += 1
-                await asyncio.sleep(0.5)
+        if bm_arb_opps is None:
+            bm_arb_opps = []
+        if bm_craft_opps is None:
+            bm_craft_opps = []
+        if bm_refine_opps is None:
+            bm_refine_opps = []
+        if bm_enchant_opps is None:
+            bm_enchant_opps = []
+        if bm_mm_opps is None:
+            bm_mm_opps = []
 
-        # Process Island Opportunities (Farming, Agriculture, Livestock, Butcher, Cooking, Alchemy)
+        # 1. TRANSMUTATION (Safe Royal Cities only)
+        if getattr(settings, "enable_alerts_transmute", True):
+            sent = 0
+            for opp in transmute_opps[:transmute_limit]:
+                target_webhook = self.transmute_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_transmutation_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
+
+        # 2. ISLAND (Safe Royal Cities only)
         if getattr(settings, "enable_alerts_island", True) and self.island_webhook_url:
+            sent = 0
             for opp in island_opps[:island_limit]:
                 target_webhook = self.island_webhook_url
-                if target_webhook and channel_counts[target_webhook] < max_per_channel:
+                if target_webhook and sent < max_per_channel:
                     embed = self._format_island_embed(opp)
-                    await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                    channel_counts[target_webhook] += 1
-                    await asyncio.sleep(0.5)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
 
-        # Process Crafting Opportunities (Pure Equipment: Weapons, Armor, Off-hands, Tools - Never Island/Farming)
-        non_island_craft_opps = [o for o in craft_opps if not _is_island_opportunity(o)]
-        for opp in non_island_craft_opps[:craft_limit]:
-            sell_c = opp.get("sell_city", "")
-            craft_c = opp.get("crafting_city", "") or opp.get("craft_city", "")
-            is_bm = (sell_c in ["Black Market", "Caerleon"] or opp.get("sell_mode") == "BM" or craft_c == "Caerleon")
-            target_webhook = (
-                (self.bm_crafting_webhook_url or self.bm_webhook_url or self.crafting_webhook_url or self.webhook_url)
-                if is_bm
-                else (self.crafting_webhook_url or self.webhook_url)
-            )
-            if target_webhook and channel_counts[target_webhook] < max_per_channel:
-                embed = self._format_crafting_embed(opp)
-                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                channel_counts[target_webhook] += 1
-                await asyncio.sleep(0.5)
+        # 3. B-MARKET-MAKING (Caerleon only)
+        if getattr(settings, "enable_alerts_bm_mm", True):
+            sent = 0
+            for opp in bm_mm_opps[:bm_mm_limit]:
+                target_webhook = self.bm_mm_webhook_url or self.bm_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_mm_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
 
-        # Process Market Making Opportunities
-        for opp in mm_opps[:mm_limit]:
-            dest = opp.get("destination_city", "")
-            src = opp.get("source_city", "")
-            is_bm = (dest in ["Black Market", "Caerleon"] or src in ["Black Market", "Caerleon"])
-            target_webhook = (
-                (self.bm_mm_webhook_url or self.bm_webhook_url or self.mm_webhook_url or self.webhook_url)
-                if is_bm
-                else (self.mm_webhook_url or self.webhook_url)
-            )
-            if target_webhook and channel_counts[target_webhook] < max_per_channel:
-                embed = self._format_mm_embed(opp)
-                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                channel_counts[target_webhook] += 1
-                await asyncio.sleep(0.5)
+        # 4. B-REFINING (Caerleon only)
+        if getattr(settings, "enable_alerts_bm_refining", True):
+            sent = 0
+            for opp in bm_refine_opps[:bm_refine_limit]:
+                target_webhook = self.bm_refining_webhook_url or self.bm_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_refining_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
 
-        # Process Refining Opportunities
-        for opp in refine_opps[:refine_limit]:
-            sell_c = opp.get("sell_city", "")
-            is_bm = (sell_c in ["Black Market", "Caerleon"] or opp.get("sell_mode") == "BM")
-            target_webhook = (
-                (self.bm_refining_webhook_url or self.bm_webhook_url or self.refining_webhook_url or self.webhook_url)
-                if is_bm
-                else (self.refining_webhook_url or self.webhook_url)
-            )
-            if target_webhook and channel_counts[target_webhook] < max_per_channel:
-                embed = self._format_refining_embed(opp)
-                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                channel_counts[target_webhook] += 1
-                await asyncio.sleep(0.5)
-                
-        # Process Enchanting Opportunities
-        for opp in enchant_opps[:enchant_limit]:
-            dest = opp.get("destination_city", "") or opp.get("sell_city", "")
-            is_bm = (dest in ["Black Market", "Caerleon"])
-            target_webhook = (
-                (self.bm_enchanting_webhook_url or self.bm_webhook_url or self.enchanting_webhook_url or self.webhook_url)
-                if is_bm
-                else (self.enchanting_webhook_url or self.webhook_url)
-            )
-            if target_webhook and channel_counts[target_webhook] < max_per_channel:
-                embed = self._format_enchanting_embed(opp)
-                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                channel_counts[target_webhook] += 1
-                await asyncio.sleep(0.5)
+        # 5. B-ENCHANTING (Caerleon -> Black Market)
+        if getattr(settings, "enable_alerts_bm_enchanting", True):
+            sent = 0
+            for opp in bm_enchant_opps[:bm_enchant_limit]:
+                target_webhook = self.bm_enchanting_webhook_url or self.bm_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_enchanting_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
 
-        # Process Quality Misprice Opportunities
-        for opp in quality_opps[:quality_limit]:
-            src = opp.get("source_city", "") or opp.get("city", "")
-            is_bm = (src in ["Black Market", "Caerleon"])
-            target_webhook = (
-                (self.bm_arb_webhook_url or self.bm_webhook_url or self.arb_webhook_url or self.webhook_url)
-                if is_bm
-                else (self.arb_webhook_url or self.webhook_url)
-            )
-            if target_webhook and channel_counts[target_webhook] < max_per_channel:
-                embed = self._format_quality_inversion_embed(opp)
-                await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                channel_counts[target_webhook] += 1
-                await asyncio.sleep(0.5)
+        # 6. B-CRAFTING (Caerleon -> Black Market)
+        if getattr(settings, "enable_alerts_bm_crafting", True):
+            sent = 0
+            for opp in bm_craft_opps[:bm_craft_limit]:
+                target_webhook = self.bm_crafting_webhook_url or self.bm_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_crafting_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
 
-        # Process Transmutation Opportunities
-        if getattr(settings, "enable_alerts_transmute", True):
-            for opp in transmute_opps[:transmute_limit]:
-                dest = opp.get("destination_city", "") or opp.get("sell_city", "")
-                is_bm = (dest in ["Black Market", "Caerleon"])
-                if is_bm and not getattr(settings, "enable_alerts_bm_transmute", True):
-                    continue
-                target_webhook = (
-                    (self.bm_transmute_webhook_url or self.transmute_webhook_url or self.bm_enchanting_webhook_url or self.bm_webhook_url or self.webhook_url)
-                    if is_bm
-                    else (self.transmute_webhook_url or self.enchanting_webhook_url or self.webhook_url)
-                )
-                if target_webhook and channel_counts[target_webhook] < max_per_channel:
-                    embed = self._format_transmutation_embed(opp)
-                    await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook)
-                    channel_counts[target_webhook] += 1
-                    await asyncio.sleep(0.5)
+        # 7. B-ARBITRAGE (Safe Royal Cities -> Black Market)
+        if getattr(settings, "enable_alerts_bm_arb", True):
+            sent = 0
+            for opp in bm_arb_opps[:bm_arb_limit]:
+                target_webhook = self.bm_arb_webhook_url or self.bm_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_arbitrage_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
+
+        # 8. MARKET-MAKING (Safe Royal Cities only)
+        if getattr(settings, "enable_alerts_mm", True):
+            sent = 0
+            for opp in mm_opps[:mm_limit]:
+                target_webhook = self.mm_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_mm_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
+
+        # 9. REFINING (Safe Royal Cities only)
+        if getattr(settings, "enable_alerts_refining", True):
+            sent = 0
+            for opp in refine_opps[:refine_limit]:
+                target_webhook = self.refining_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_refining_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
+
+        # 10. ENCHANTING (Safe Royal Cities only)
+        if getattr(settings, "enable_alerts_enchanting", True):
+            sent = 0
+            for opp in enchant_opps[:enchant_limit]:
+                target_webhook = self.enchanting_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_enchanting_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
+
+        # 11. CRAFTING (Safe Royal Cities only)
+        if getattr(settings, "enable_alerts_crafting", True):
+            sent = 0
+            for opp in craft_opps[:craft_limit]:
+                target_webhook = self.crafting_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_crafting_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
+
+        # 12. ARBITRAGE (Safe Royal Cities only)
+        if getattr(settings, "enable_alerts_arb", True):
+            sent = 0
+            for opp in arb_opps[:arb_limit]:
+                target_webhook = self.arb_webhook_url or self.webhook_url
+                if target_webhook and sent < max_per_channel:
+                    embed = self._format_arbitrage_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent += 1
+                    await asyncio.sleep(0.8)
+
+        # 13. QUALITY MISPRICES (Intra-city quality inversions - MUST NOT leak to Arbitrage webhook)
+        if getattr(settings, "enable_alerts_quality", True) and self.quality_webhook_url:
+            sent_qual = 0
+            for opp in quality_opps[:quality_limit]:
+                target_webhook = self.quality_webhook_url
+                if target_webhook and sent_qual < max_per_channel:
+                    embed = self._format_quality_inversion_embed(opp)
+                    if await self._send_webhook({"embeds": [embed]}, webhook_url=target_webhook):
+                        sent_qual += 1
+                    await asyncio.sleep(0.8)
 

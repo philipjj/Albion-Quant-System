@@ -11,7 +11,16 @@ from sqlalchemy.orm import Session
 from app.db.models import CraftingOpportunity
 from app.db.session import get_db
 
-router = APIRouter(prefix="/crafting", tags=["Crafting"])
+router = APIRouter(tags=["Crafting"])
+
+
+def _safe_json_loads(val: str | None, default=None):
+    if not val:
+        return default if default is not None else []
+    try:
+        return json.loads(val)
+    except Exception:
+        return [val] if isinstance(val, str) else (default if default is not None else [])
 
 
 @router.get("/top")
@@ -55,8 +64,8 @@ def get_top_crafting(
                 "journal_profit": o.journal_profit,
                 "daily_volume": o.daily_volume,
                 "volatility": o.volatility,
-                "ingredients": json.loads(o.ingredients_json) if o.ingredients_json else [],
-                "path": json.loads(o.decision_log) if o.decision_log else [],
+                "ingredients": _safe_json_loads(o.ingredients_json, []),
+                "path": _safe_json_loads(o.decision_log, []),
                 "detected_at": o.detected_at.isoformat() if o.detected_at else None,
             }
             for o in opps

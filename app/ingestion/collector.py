@@ -12,7 +12,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Optional, cast
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import AlbionServer, settings
@@ -33,7 +33,7 @@ def parse_timestamp(ts: str) -> datetime | None:
         return None
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except:
+    except Exception:
         return None
 
 
@@ -51,34 +51,19 @@ class MarketCollector:
     Phase 3: O(n) performance scaling.
     """
 
-    def __init__(
-        self, repository: IMarketDataRepository = None, parquet_storage=None, redis_cache=None
-    ):
+    def __init__(self, repository: IMarketDataRepository = None):
         self.base_url = settings.aodp_base_urls.get(
             settings.active_server, "https://europe.albion-online-data.com"
         )
         self.active_server = settings.active_server
         self._stop_requested = False
+        self._ingest_lock = asyncio.Lock()
         if repository is None:
             from app.db.repository import SQLiteMarketDataRepository
 
             self.repository = SQLiteMarketDataRepository()
         else:
             self.repository = repository
-
-        if parquet_storage is None:
-            from app.storage.parquet_storage import ParquetHistoricalStorage
-
-            self.parquet_storage = ParquetHistoricalStorage()
-        else:
-            self.parquet_storage = parquet_storage
-
-        if redis_cache is None:
-            from app.storage.redis_cache import RedisCache
-
-            self.redis_cache = RedisCache(settings.redis_url)
-        else:
-            self.redis_cache = redis_cache
 
     async def __aenter__(self):
         return self
@@ -121,8 +106,11 @@ class MarketCollector:
                     (now_utc.replace(tzinfo=buy_date.tzinfo) - buy_date).total_seconds()
                 )
 
-            # General data age: prefer sell order age if available, else buy order age
-            age_sec = sell_age_sec if sell_age_sec is not None else buy_age_sec
+            # General data age: for Black Market or when only buy order exists, use buy order age
+            if city == "Black Market" or (item.get("buy_price_max") and not item.get("sell_price_min")):
+                age_sec = buy_age_sec if buy_age_sec is not None else sell_age_sec
+            else:
+                age_sec = sell_age_sec if sell_age_sec is not None else buy_age_sec
 
             results.append(
                 {
@@ -177,15 +165,66 @@ class MarketCollector:
             }
         return volume_map
 
+    async def fetch_volume_data_all_locations(self, item_ids: list[str]) -> dict[tuple[str, str, int], dict[str, Any]]:
+        """Fetches 24-hour volume and historical pool average price across all hubs in a SINGLE multiplexed request."""
+        if not item_ids:
+            return {}
+
+        ids_str = ",".join(item_ids)
+        all_cities_str = ",".join(CITY_API_NAMES.values())
+        url = f"{self.base_url}/api/v2/stats/history/{ids_str}.json?locations={all_cities_str}&time-scale=24&qualities=1,2,3,4,5"
+
+        resp = await aqs_http.get(url)
+        if not resp or resp.status_code != 200:
+            return {}
+
+        raw = resp.json()
+        volume_map = {}
+        for record in raw:
+            data = record.get("data", [])
+            if not data:
+                continue
+            valid_data = [d for d in data if d.get("timestamp")]
+            if not valid_data:
+                continue
+            latest = max(valid_data, key=lambda x: x.get("timestamp"))
+            item_id = record.get("item_id", "")
+            city = record.get("location", "")
+            quality = int(record.get("quality", 1))
+
+            key = (item_id, city, quality)
+            volume_map[key] = {
+                "volume": int(latest.get("item_count", 1)),
+                "avg_price": float(latest.get("avg_price", 0.0)),
+                "timestamp": latest.get("timestamp"),
+            }
+        return volume_map
+
     def _get_tradeable_items_info(self, db: Session) -> dict[str, dict]:
         """Returns map of item_id -> {tier, category} for all scan targets."""
-        # Task 5.4 - Derived tradeability logic instead of missing model field
-        material_cats = ["crafting", "gathering", "consumables", "farming", "magic", "artefacts", "materials", "token"]
-        excluded_cats = ["furniture", "vanity", "other"]
+        material_cats = ["crafting", "gathering", "consumables", "farming", "magic", "artefacts", "materials", "token", "mounts"]
+        
+        tradeable_other_conditions = or_(
+            Item.item_id.like("TREASURE_%"),
+            Item.item_id.like("%_JOURNAL_%"),
+            Item.item_id.like("%_RANDOM_DUNGEON_%"),
+            Item.item_id.like("%_HELLGATE_%"),
+            Item.item_id.like("%_CORRUPTED_%"),
+            Item.item_id.like("%_SIEGE_%"),
+            Item.item_id.like("%_TOOL_SIEGE%"),
+            Item.item_id.like("QUESTITEM_TOKEN_%"),
+            Item.item_id.like("QUESTITEM_EXP_TOME%"),
+        )
 
         query = db.query(Item.item_id, Item.tier, Item.category).filter(
-            Item.category.notin_(excluded_cats),
-            or_(Item.category.in_(material_cats), Item.tier >= 4),
+            Item.category.notin_(["furniture", "vanity"]),
+            or_(
+                Item.category.in_(material_cats),
+                Item.tier >= 3,
+                and_(Item.category == "other", tradeable_other_conditions),
+            ),
+            ~Item.item_id.like("%_TRASH%"),
+            ~Item.item_id.like("SKIN_%"),
         )
         return {
             i[0]: {"tier": i[1], "category": i[2]} for i in query.all() if validate_item_id(i[0])
@@ -231,6 +270,8 @@ class MarketCollector:
             "armors",
             "shoes",
             "offhands",
+            "capes",
+            "bags",
             "artefacts", # Critical for enchanting (RUNES, SOULS, RELICS)
             "materials",
             "magic",
@@ -239,8 +280,8 @@ class MarketCollector:
             return True
 
         # Low Frequency (Every 60 min)
-        if cat in ["mounts", "capes", "bags"]:
-            # If the current minute is 0-10, allow it to be polled to ensure 
+        if cat in ["mounts"]:
+            # If the current minute is 0-15, allow it to be polled to ensure 
             # all partitions (up to 10) get a chance to poll it.
             return (current_minute % 60) < 15
 
@@ -287,73 +328,6 @@ class MarketCollector:
             batches.append(current_batch)
 
         return batches
-
-    async def process_signals(self, snapshots: list[MarketSnapshot]):
-        """Generates signals for new snapshots using MeanReversionEngine and CrossCityModel."""
-        # Hourly throttle
-        if not hasattr(self, "_last_signal_run"):
-            self._last_signal_run = None
-
-        now = datetime.utcnow()
-        if self._last_signal_run and (now - self._last_signal_run).total_seconds() < 3600:
-            return  # Skip if less than an hour has passed
-
-        self._last_signal_run = now
-
-        from app.alerts.discord import DiscordAlerter
-        from app.models.cross_city_model import CrossCityModel
-        from app.models.mean_reversion_engine import MeanReversionEngine
-
-        mr_engine = MeanReversionEngine()
-        cc_model = CrossCityModel()
-        alerter = DiscordAlerter()
-
-        # Group by item_id
-        by_item = {}
-        for s in snapshots:
-            if s.item_id not in by_item:
-                by_item[s.item_id] = []
-            by_item[s.item_id].append(s)
-
-        for item_id, snaps in by_item.items():
-            # 1. Mean Reversion Signals
-            processed = set()
-            for s in snaps:
-                if (s.item_id, s.city) in processed:
-                    continue
-                processed.add((s.item_id, s.city))
-
-                prices = await self.repository.get_historical_prices(
-                    s.item_id, s.city, quality=s.quality
-                )
-                if prices and len(prices) >= 10:
-                    signal = mr_engine.evaluate(s.item_id, s.city, prices)
-                    if signal:
-                        log.debug(
-                            f"📊 Internal signal: {signal.signal_type} for {signal.item_id} in {signal.city} (Strength: {signal.strength:.2f})"
-                        )
-
-            # 2. Cross-City Arbitrage Signals
-            city_prices = {s.city: s.best_ask for s in snaps if s.best_ask > 0}
-            if len(city_prices) > 1:
-                dummy_route = {}
-                for c1 in city_prices:
-                    dummy_route[c1] = {}
-                    for c2 in city_prices:
-                        if c1 != c2:
-                            dummy_route[c1][c2] = {
-                                "distance_zones": 2,
-                                "zone_type": "red",
-                                "killboard_activity": 5,
-                            }
-
-                signals = cc_model.evaluate(
-                    item_id, city_prices, item_weight=1.0, route_info=dummy_route
-                )
-                for sig in signals:
-                    log.debug(
-                        f"📊 Internal arb signal: {sig.signal_type} for {sig.item_id} from {sig.metadata['source_city']} to {sig.metadata['target_city']}"
-                    )
 
     async def collect_prices(self):
         """High-frequency price ingestion (Pass 1 only)."""
@@ -459,6 +433,7 @@ class MarketCollector:
                             market_to_save.append(r)
 
                 # 4. UPSERT via Repository
+                if market_to_save:
                     snapshots = []
                     for r in market_to_save:
                         snapshots.append(
@@ -485,12 +460,10 @@ class MarketCollector:
                             )
                         )
                     await self.repository.save_snapshots(snapshots)
-                    self.parquet_storage.save_snapshots(snapshots)
-                    # Cache hot snapshots in Redis
-                    await asyncio.gather(*(self.redis_cache.set_hot_snapshot(s) for s in snapshots))
-
-                    # Process signals
-                    await self.process_signals(snapshots)
+                    if settings.enable_historical_parquet:
+                        self.parquet_storage.save_snapshots(snapshots)
+                    if settings.enable_redis_cache:
+                        await asyncio.gather(*(self.redis_cache.set_hot_snapshot(s) for s in snapshots))
 
                 # Mandatory Pacing
                 await asyncio.sleep(2.5)
@@ -523,20 +496,56 @@ class MarketCollector:
         now_bucket = get_bucket(now)
         current_min = now.minute
 
-        async with self as collector:
-            with get_db_session() as db:
-                db = cast(Session, db)
-                item_info = self._get_tradeable_items_info(db)
+        self._stop_requested = False
+        async with self._ingest_lock:
+            async with self as collector:
+                with get_db_session() as db:
+                    db = cast(Session, db)
+                    item_info = self._get_tradeable_items_info(db)
 
-                # Apply category frequency filter first
-                all_ids = [
-                    id
-                    for id, info in item_info.items()
-                    if self.should_poll_category(info.get("category"), current_min)
-                ]
+                    # Apply category frequency filter first
+                    all_ids = [
+                        id
+                        for id, info in item_info.items()
+                        if self.should_poll_category(info.get("category"), current_min)
+                    ]
 
             # Slice to this partition only
             partition_ids = self.partition_items(all_ids, num_partitions, partition_idx)
+
+            # High-priority commodities (Runes, Souls, Relics, Avalonian Shards, Royal Sigils, Faction Hearts, Base Capes & Crests)
+            # are polled FIRST in EVERY partition to guarantee zero-staleness on all enchantment, crafting, and royal cape calculations
+            always_poll_commodities = (
+                [
+                    f"T{t}_{m}"
+                    for t in range(4, 9)
+                    for m in ["RUNE", "SOUL", "RELIC", "SHARD_AVALONIAN"]
+                ]
+                + [f"QUESTITEM_TOKEN_ROYAL_T{t}" for t in range(4, 9)]
+                + ["QUESTITEM_TOKEN_AVALON"]
+                + [f"T{t}_CAPE" for t in range(4, 9)]
+                + [
+                    "T1_FACTION_FOREST_TOKEN_1",
+                    "T1_FACTION_HIGHLAND_TOKEN_1",
+                    "T1_FACTION_STEPPE_TOKEN_1",
+                    "T1_FACTION_MOUNTAIN_TOKEN_1",
+                    "T1_FACTION_SWAMP_TOKEN_1",
+                    "T1_FACTION_CAERLEON_TOKEN_1",
+                ]
+                + [
+                    f"T{t}_CAPEITEM_FW_{c}_BP"
+                    for t in range(4, 9)
+                    for c in ["BRIDGEWATCH", "FORTSTERLING", "LYMHURST", "MARTLOCK", "THETFORD", "CAERLEON", "BRECILIEN"]
+                ]
+                + [
+                    f"T{t}_CAPEITEM_{m}_BP"
+                    for t in range(4, 9)
+                    for m in ["AVALON", "HERETIC", "UNDEAD", "KEEPER", "MORGANA", "DEMON", "SMUGGLER"]
+                ]
+            )
+            priority_core = [ap_id for ap_id in always_poll_commodities if ap_id in item_info]
+            partition_ids = priority_core + [iid for iid in partition_ids if iid not in priority_core]
+
             if not partition_ids:
                 log.info(
                     f"⚠️ Partition {partition_idx + 1}/{num_partitions} is empty after filtering. Skipping."
@@ -645,11 +654,6 @@ class MarketCollector:
                             )
                         )
                     await self.repository.save_snapshots(snapshots)
-                    self.parquet_storage.save_snapshots(snapshots)
-                    await asyncio.gather(*(self.redis_cache.set_hot_snapshot(s) for s in snapshots))
-
-                    # Process mean-reversion & cross-city signals
-                    await self.process_signals(snapshots)
 
                 # Mandatory Pacing
                 await asyncio.sleep(0.5)
@@ -660,40 +664,110 @@ class MarketCollector:
             return len(batches)
 
     async def collect_volumes(self):
-        """Lower-frequency volume ingestion (Pass 2). Updates current market records."""
+        """Lower-frequency volume ingestion (Pass 2). Updates current market records with location multiplexing."""
         log.info(f"🚀 Starting AQS v3.1 VOLUME Refresh ({settings.active_server.value})")
 
-        async with self as collector:
-            with get_db_session() as db:
-                db = cast(Session, db)
-                item_info = self._get_tradeable_items_info(db)
-                all_ids = list(item_info.keys())
+        async with self._ingest_lock:
+            async with self as collector:
+                with get_db_session() as db:
+                    db = cast(Session, db)
+                    item_info = self._get_tradeable_items_info(db)
+                    all_ids = list(item_info.keys())
 
-            # Larger batches for history is okay as it's less frequent
-            batches = self.build_safe_batches(all_ids, max_url_len=1500)
+                batches = self.build_safe_batches(all_ids, max_url_len=1200, max_items=25)
 
-            for i, batch in enumerate(batches):
-                if self._stop_requested:
-                    break
+                for i, batch in enumerate(batches):
+                    if self._stop_requested:
+                        break
 
-                for city_name in CITY_API_NAMES:
-                    v_map = await self.fetch_volume_data(city_name, batch)
-                    if not v_map:
-                        continue
+                    v_map = await self.fetch_volume_data_all_locations(batch)
+                    if v_map:
+                        await asyncio.gather(
+                            *(
+                                self.repository.update_volume(
+                                    item_id, city, quality, v_data["volume"], v_data["avg_price"], v_data["timestamp"]
+                                )
+                                for (item_id, city, quality), v_data in v_map.items()
+                            )
+                        )
 
-                    # Update the LATEST records for these items in the DB via repository
-                    async def update_item_volume(k, v_data):
-                        item_id, quality = k.split(":")
-                        vol = v_data.get("volume", 1) if isinstance(v_data, dict) else int(v_data)
-                        avg_p = v_data.get("avg_price", 0.0) if isinstance(v_data, dict) else 0.0
-                        ts = v_data.get("timestamp") if isinstance(v_data, dict) else None
-                        await self.repository.update_volume(item_id, city_name, int(quality), vol, avg_p, ts)
+                    if (i + 1) % 10 == 0 or (i + 1) == len(batches):
+                        log.info(f"✅ Volume Sync: {i + 1}/{len(batches)} batches done.")
 
-                    await asyncio.gather(
-                        *(update_item_volume(key, vol) for key, vol in v_map.items())
-                    )
-
-                if (i + 1) % 5 == 0:
-                    log.info(f"✅ Volume Sync: {i + 1}/{len(batches)} batches done.")
+                    await asyncio.sleep(0.5)
 
         log.info("📊 Volume Refresh Complete.")
+
+    async def collect_full_universe_fast(self, max_concurrency: int = 4) -> int:
+        """
+        Fast Full-Universe Market Sweep.
+        Fetches all tradeable items across all cities using controlled concurrent worker tasks.
+        Completes in 2-3 minutes for the full catalog of ~8,334 items.
+        """
+        log.info(f"🚀 [AODP SWEEP] Starting Full-Universe Fast Ingestion ({settings.active_server.value})...")
+        now = datetime.utcnow()
+        now_bucket = get_bucket(now)
+
+        with get_db_session() as db:
+            db = cast(Session, db)
+            item_info = self._get_tradeable_items_info(db)
+            all_ids = list(item_info.keys())
+
+        batches = self.build_safe_batches(all_ids, max_url_len=1200, max_items=25)
+        log.info(f"📦 [AODP SWEEP] {len(all_ids)} items divided into {len(batches)} batches.")
+
+        all_cities = ",".join(CITY_API_NAMES.values())
+        sem = asyncio.Semaphore(max_concurrency)
+        total_ingested = 0
+
+        async def process_batch(idx: int, batch: list[str]):
+            nonlocal total_ingested
+            if self._stop_requested:
+                return
+
+            async with sem:
+                try:
+                    raw_data = await self.fetch_market_data(all_cities, batch)
+                    if not raw_data:
+                        return
+
+                    market_to_save = []
+                    for r in raw_data:
+                        r["captured_at"] = datetime.utcnow()
+                        r["captured_at_bucket"] = now_bucket
+                        if validate_market_record(r):
+                            market_to_save.append(r)
+
+                    if market_to_save:
+                        snapshots = [
+                            MarketSnapshot(
+                                item_id=r["item_id"],
+                                city=r["city"],
+                                quality=r["quality"],
+                                timestamp=r["captured_at"],
+                                best_bid=float(r["buy_price_max"] or 0),
+                                best_ask=float(r["sell_price_min"] or 0),
+                                bid_depth=0,
+                                ask_depth=0,
+                                spread=float((r["sell_price_min"] or 0) - (r["buy_price_max"] or 0)),
+                                midprice=float(((r["sell_price_min"] or 0) + (r["buy_price_max"] or 0)) / 2),
+                                rolling_volume=r.get("volume_24h") or 0,
+                                volatility=0.0,
+                                sell_price_min_date=r.get("sell_price_min_date"),
+                                buy_price_max_date=r.get("buy_price_max_date"),
+                                data_age_seconds=float(r.get("data_age_seconds") or 0.0),
+                            )
+                            for r in market_to_save
+                        ]
+                        await self.repository.save_snapshots(snapshots)
+                        total_ingested += len(snapshots)
+
+                    await asyncio.sleep(0.3)
+                except Exception as e:
+                    log.warning(f"[AODP SWEEP] Batch {idx + 1} error: {e}")
+
+        tasks = [process_batch(i, b) for i, b in enumerate(batches)]
+        await asyncio.gather(*tasks)
+
+        log.info(f"✅ [AODP SWEEP] Finished full sweep: {total_ingested} records updated.")
+        return total_ingested

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.db.models import UserProfile
 from app.db.session import get_db
 
-router = APIRouter(prefix="/user", tags=["User"])
+router = APIRouter(tags=["User"])
 
 
 class UserProfileIn(BaseModel):
@@ -74,4 +74,15 @@ def upsert_profile(payload: UserProfileIn, db: Session = Depends(get_db)):
 
     db.commit()
     db.refresh(profile)
-    return get_profile(profile.discord_user_id, db)
+    return UserProfileOut(
+        discord_user_id=profile.discord_user_id,
+        is_premium=bool(profile.is_premium),
+        home_city=profile.home_city,
+        api_server=profile.api_server,
+        max_capital_per_trade=profile.max_capital_per_trade,
+        target_exit_hours=profile.target_exit_hours,
+        min_arbitrage_margin=profile.min_arbitrage_margin,
+        min_arbitrage_profit=profile.min_arbitrage_profit,
+        min_crafting_profit=profile.min_crafting_profit,
+    )
+

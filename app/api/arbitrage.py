@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import ArbitrageOpportunity
 from app.db.session import get_db
 
-router = APIRouter(prefix="/arbitrage", tags=["Arbitrage"])
+router = APIRouter(tags=["Arbitrage"])
 
 
 @router.get("/top")

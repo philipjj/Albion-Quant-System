@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.db.models import ArbitrageOpportunity, CraftingOpportunity
 from app.db.session import get_db
 
-router = APIRouter(prefix="/export", tags=["Export"])
+router = APIRouter(tags=["Export"])
 
 
 @router.get("/arbitrage.csv")
@@ -58,20 +58,20 @@ def export_arbitrage_csv(
     for r in rows:
         w.writerow(
             [
-                r.item_id,
-                r.item_name,
-                r.source_city,
-                r.destination_city,
-                r.buy_price,
-                r.sell_price,
-                r.estimated_profit,
-                r.estimated_margin,
-                r.ev_score,
-                r.daily_volume,
-                r.volume_source,
-                r.risk_score,
-                r.volatility,
-                r.persistence,
+                r.item_id or "",
+                r.item_name or "",
+                r.source_city or "",
+                r.destination_city or "",
+                r.buy_price or 0,
+                r.sell_price or 0,
+                r.estimated_profit or 0.0,
+                r.estimated_margin or 0.0,
+                r.ev_score or 0.0,
+                r.daily_volume or 0,
+                r.volume_source or "",
+                r.risk_score or 0.0,
+                r.volatility or 0.0,
+                r.persistence or 1,
                 r.detected_at.isoformat() if r.detected_at else "",
             ]
         )
@@ -120,20 +120,20 @@ def export_crafting_csv(
     for r in rows:
         w.writerow(
             [
-                r.item_id,
-                r.item_name,
-                r.crafting_city,
-                r.sell_city,
-                r.craft_cost,
-                r.sell_price,
-                r.profit,
-                r.profit_margin,
-                r.profit_per_focus,
-                r.ev_score,
-                r.daily_volume,
-                r.volume_source,
-                r.volatility,
-                r.persistence,
+                r.item_id or "",
+                r.item_name or "",
+                r.crafting_city or "",
+                r.sell_city or "",
+                r.craft_cost or 0.0,
+                r.sell_price or 0.0,
+                r.profit or 0.0,
+                r.profit_margin or 0.0,
+                r.profit_per_focus or 0.0,
+                r.ev_score or 0.0,
+                r.daily_volume or 0,
+                r.volume_source or "",
+                r.volatility or 0.0,
+                r.persistence or 1,
                 r.detected_at.isoformat() if r.detected_at else "",
             ]
         )

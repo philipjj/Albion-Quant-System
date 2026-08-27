@@ -47,14 +47,14 @@ def test_detect_quality_inversion_zero_volume_filtered():
         3: {"sell_price_min": 12_000_000, "buy_price_max": 5_000_000, "data_age_seconds": 300, "volume_24h": 5},
         4: {"sell_price_min": 8_000_000, "buy_price_max": 4_000_000, "data_age_seconds": 300, "volume_24h": 0},  # 0 volume!
     }
-    inversions = detect_quality_inversion(prices_high_zero_vol, item_id="T8_NATURESTAFF", city="Bridgewatch", min_volume=1)
+    inversions = detect_quality_inversion(prices_high_zero_vol, item_id="T8_NATURESTAFF", city="Bridgewatch", min_volume=1, allow_zero_volume=False)
     assert len(inversions) == 0
 
     prices_low_zero_vol = {
         3: {"sell_price_min": 12_000_000, "buy_price_max": 5_000_000, "data_age_seconds": 300, "volume_24h": 0},  # 0 volume!
         4: {"sell_price_min": 8_000_000, "buy_price_max": 4_000_000, "data_age_seconds": 300, "volume_24h": 5},
     }
-    inversions2 = detect_quality_inversion(prices_low_zero_vol, item_id="T8_NATURESTAFF", city="Bridgewatch", min_volume=1)
+    inversions2 = detect_quality_inversion(prices_low_zero_vol, item_id="T8_NATURESTAFF", city="Bridgewatch", min_volume=1, allow_zero_volume=False)
     assert len(inversions2) == 0
 
 

@@ -95,11 +95,13 @@ def test_price_valid_normal_spread():
 
 
 def test_price_invalid_tier_min():
-    """T6-T8 items listed for 100-200 silver should be rejected as corrupt data"""
+    """T6-T8 items, refined resources, and artifacts listed for troll silver should be rejected as corrupt data"""
     assert is_price_valid(193, 0, item_id="T8_2H_DUALSWORD@1") is False  # T8 min is 35k
     assert is_price_valid(130, 0, item_id="T7_MAIN_NATURESTAFF_KEEPER@2") is False  # T7 min is 12k
     assert is_price_valid(233, 0, item_id="T6_2H_INFERNOSTAFF@1") is False  # T6 min is 4k
     assert is_price_valid(25000, 0, item_id="T4_HEAD_CLOTH_SET2@2") is True  # 25.5k for T4 is valid
+    assert is_price_valid(759, 0, item_id="T8_PLANKS_LEVEL2@2") is False  # T8.2 plank min is 20k
+    assert is_price_valid(759, 0, item_id="T8_ARTEFACT_OFF_TOME_ROYAL") is False  # T8 Royal artifact min is 120k
 
 
 def test_bm_price_valid_with_item_value():
@@ -249,7 +251,7 @@ def test_bm_scan_skips_stale_bm_price(scanner):
                     "sell_price_min": 0,
                     "buy_price_max": 500_000,
                     "volume_24h": 1,
-                    "data_age_seconds": 5_000,  # ← Stale: >3600s
+                    "data_age_seconds": 50_000,  # ← Stale: >27000s
                     "is_black_market": True,
                 }
             },
@@ -408,22 +410,19 @@ def test_scan_market_making(scanner):
     
     opps = scanner.scan_market_making(prices, names, categories)
     
-    # Martlock -> Bridgewatch
-    # Buy at Martlock buy_price_max + 1 = 10001
-    # Sell at Bridgewatch sell_price_min - 1 = 12999
-    
-    mb_opp = next((o for o in opps if o.source_city == 'Martlock' and o.destination_city == 'Bridgewatch'), None)
-    assert mb_opp is not None
-    assert mb_opp.buy_price == 10001
-    assert mb_opp.sell_price == 12999
+    # Pure Intra-Station Market Making in Martlock (buy 10001, sell 14999)
+    ml_opp = next((o for o in opps if o.source_city == 'Martlock' and o.destination_city == 'Martlock'), None)
+    assert ml_opp is not None
+    assert ml_opp.buy_price == 10001
+    assert ml_opp.sell_price == 14999
     
     # Check gross profit
-    assert mb_opp.gross_profit == 12999 - 10001
+    assert ml_opp.gross_profit == 14999 - 10001
     
     tax_rate = scanner.tax
-    total_fees = 10001 * 0.025 + 12999 * 0.025 + 12999 * tax_rate
-    net = mb_opp.gross_profit - total_fees
-    assert abs(mb_opp.net_profit - round(net, 0)) <= 1
+    total_fees = 10001 * 0.025 + 14999 * 0.025 + 14999 * tax_rate
+    net = ml_opp.gross_profit - total_fees
+    assert abs(ml_opp.net_profit - round(net, 0)) <= 1
 
 
 def test_scan_market_making_zero_volume_filtered(scanner):
@@ -439,12 +438,13 @@ def test_scan_market_making_zero_volume_filtered(scanner):
             }
         }
     }
+    scanner.allow_zero_volume = False
     opps = scanner.scan_market_making(prices, {'T8_SHOES_ROYAL': 'Royal Shoes'}, {'T8_SHOES_ROYAL': 'shoes'})
     assert len(opps) == 0
 
 
 def test_scan_market_making_wide_spread_rejected(scanner):
-    # Ask 2.8M vs Bid 1.2M -> spread ratio 2.33x > 1.5x, margin 98.2% > 40.0%
+    # Ask 2.8M vs Bid 1.2M -> spread ratio 2.33x > 1.6x, margin 98.2% > 40.0%
     prices = {
         'T7_ARMOR_LEATHER_SET3@3': {
             'Martlock': {
@@ -462,7 +462,7 @@ def test_scan_market_making_wide_spread_rejected(scanner):
 
 
 def test_scan_market_making_stale_data_rejected(scanner):
-    # Data age 3,600s > MAX_AGE_MM_SECONDS (1,800s)
+    # Data age 10,000s > tier-based MM age limit for T4 (3,600s)
     prices = {
         'T4_BAG': {
             'Martlock': {
@@ -470,7 +470,7 @@ def test_scan_market_making_stale_data_rejected(scanner):
                     'sell_price_min': 4500,
                     'buy_price_max': 3500,
                     'volume_24h': 100,
-                    'data_age_seconds': 3600,
+                    'data_age_seconds': 10000,
                 }
             }
         }
@@ -504,7 +504,7 @@ def test_scan_enchanting_quality_matching(scanner):
     categories = {'T7_ARMOR_LEATHER_HELL@2': 'armor'}
 
     # Must return 0 opportunities because Q1 base item cannot fulfill Q5 BM order!
-    opps = scanner.scan_enchanting(prices_q1_only, names, categories)
+    opps = scanner.scan_b_enchanting(prices_q1_only, names, categories)
     assert len(opps) == 0
 
     # Now add Q5 Masterpiece base item at 600k silver in Caerleon
@@ -518,7 +518,7 @@ def test_scan_enchanting_quality_matching(scanner):
         },
         'T7_SOUL': prices_q1_only['T7_SOUL'],
     }
-    opps2 = scanner.scan_enchanting(prices_with_q5, names, categories)
+    opps2 = scanner.scan_b_enchanting(prices_with_q5, names, categories)
     assert len(opps2) == 1
     assert opps2[0].quality == 5
     assert opps2[0].base_quality == 5
@@ -620,7 +620,7 @@ def test_scan_enchanting_satchel_of_insight_accurate_math(scanner):
 
 
 def test_scan_enchanting_level_4_rejected(scanner):
-    """Verify level .4 enchantment is rejected because Artifact Foundry only supports up to .3"""
+    """Verify level .4 enchantment is rejected because you cannot enchant/refine from .3 to .4."""
     prices = {
         "T7_2H_BOW@3": {
             "Caerleon": {
@@ -649,34 +649,88 @@ def test_scan_enchanting_level_4_rejected(scanner):
     }
     categories = {"T7_2H_BOW@4": "bows"}
 
-    opps = scanner.scan_enchanting(prices, names, categories)
+    opps = scanner.scan_b_enchanting(prices, names, categories)
     assert len(opps) == 0, "Level .4 items cannot be enchanted at Artifact Foundry and must be rejected"
 
 
 def test_non_enchantable_items_are_skipped():
     """Verify that off-hands, bags, satchels, capes, royal items, and level .4 are rejected by enchanting scanner."""
     scanner = OpportunityScanner()
-    # Level .4 items -> Cannot be enchanted at Artifact Foundry
+    # Level .4 items -> Cannot be enchanted from .3 at Artifact Foundry
     assert scanner._get_enchant_requirements("T5_ARMOR_LEATHER_MORGANA@4") is None
     assert scanner._get_enchant_requirements("T7_2H_BOW@4") is None
 
-    # Taproot / Offhand -> Cannot be enchanted at Artifact Foundry
-    assert scanner._get_enchant_requirements("T5_OFF_TOTEM_KEEPER@3") is None
-    assert scanner._get_enchant_requirements("T4_OFF_SHIELD@1") is None
+    # Invalid enchantment level .5 -> Returns None
+    assert scanner._get_enchant_requirements("T5_ARMOR_LEATHER_MORGANA@5") is None
+
+    # Off-hands -> Can be enchanted at Artifact Foundry (96 materials)
+    assert scanner._get_enchant_requirements("T5_OFF_TOTEM_KEEPER@3") is not None
+    assert scanner._get_enchant_requirements("T4_OFF_SHIELD@1") is not None
+    assert scanner._get_enchant_requirements("T4_OFF_SHIELD@1")[2] == 96
 
     # Royal items -> Cannot be enchanted at Artifact Foundry
     assert scanner._get_enchant_requirements("T5_ARMOR_LEATHER_ROYAL@2") is None
 
-    # Bags & Satchels -> Cannot be enchanted at Artifact Foundry
+    # Standard Bags -> Can be enchanted (192 materials), Bag of Insight -> Cannot
     assert scanner._get_enchant_requirements("T7_BAG_INSIGHT@3") is None
-    assert scanner._get_enchant_requirements("T5_BAG@2") is None
+    assert scanner._get_enchant_requirements("T5_BAG@2") is not None
+    assert scanner._get_enchant_requirements("T5_BAG@2")[2] == 192
 
-    # Capes -> Cannot be enchanted at Artifact Foundry
+    # Faction and Avalonian Capes -> Cannot be enchanted at Artifact Foundry
     assert scanner._get_enchant_requirements("T6_CAPEITEM_FW_BRIDGEWATCH@3") is None
+    assert scanner._get_enchant_requirements("T8_CAPEITEM_AVALON@2") is None
+    assert scanner._get_enchant_requirements("T8_CAPEITEM_HERETIC@1") is None
 
     # Valid weapon & armor (.1, .2, .3) -> Can be enchanted at Artifact Foundry
     assert scanner._get_enchant_requirements("T6_ARMOR_PLATE_SET1@2") is not None
     assert scanner._get_enchant_requirements("T7_2H_BOW@3") is not None
+
+
+def test_scan_b_enchanting_rejects_low_roi_and_desync(scanner):
+    """Verify that BM enchanting rejects trades with near-zero ROI (e.g. 0.06%) and desynchronized data."""
+    # 1. Near-zero ROI test (2.11M cost -> 2.1113M revenue = 0.06% ROI)
+    low_roi_prices = {
+        "T8_HEAD_PLATE_SET1@2": {
+            "Black Market": {
+                1: {"buy_price_max": 2_200_000, "volume_24h": 5, "data_age_seconds": 300}
+            }
+        },
+        "T8_HEAD_PLATE_SET1@1": {
+            "Caerleon": {
+                1: {"sell_price_min": 1_800_000, "buy_price_max": 1_700_000, "volume_24h": 5, "data_age_seconds": 300}
+            }
+        },
+        "T8_SOUL": {
+            "Caerleon": {
+                1: {"sell_price_min": 3300, "buy_price_max": 3000, "volume_24h": 1000, "data_age_seconds": 300}
+            }
+        }
+    }
+    # Total cost = 1.8M + 96 * 3300 = 1.8M + 316.8k = 2.1168M
+    # BM revenue net = 2.2M * 0.96 = 2.112M -> Profit is negative or near zero (< 0.06% ROI)
+    opps = scanner.scan_b_enchanting(low_roi_prices, {"T8_HEAD_PLATE_SET1@2": "Elder's Soldier Helmet .2"})
+    assert len(opps) == 0, "Near-zero ROI trade must be rejected by min_roi and dynamic margin"
+
+    # 2. Desynchronization test: Base item is 10.5h (37,800s) old, BM order is 4.5h (16,200s) old -> delta 21,600s
+    desync_prices = {
+        "T8_OFF_SHIELD@2": {
+            "Black Market": {
+                1: {"buy_price_max": 1_700_000, "volume_24h": 5, "data_age_seconds": 16200}
+            }
+        },
+        "T8_OFF_SHIELD@1": {
+            "Caerleon": {
+                1: {"sell_price_min": 1_200_000, "buy_price_max": 1_100_000, "volume_24h": 5, "data_age_seconds": 37800}
+            }
+        },
+        "T8_SOUL": {
+            "Caerleon": {
+                1: {"sell_price_min": 3000, "buy_price_max": 2800, "volume_24h": 1000, "data_age_seconds": 300}
+            }
+        }
+    }
+    opps_desync = scanner.scan_b_enchanting(desync_prices, {"T8_OFF_SHIELD@2": "Elder's Shield .2"})
+    assert len(opps_desync) == 0, "Desynchronized trade (10.5h base item vs 4.5h BM order) must be rejected"
 
 
 def test_scan_enchanting_rejects_corrupted_material_price(scanner):
@@ -755,6 +809,7 @@ def test_scan_crafting_zero_volume_rejected(scanner):
     categories = {'T4_ARMOR_CLOTH_ROYAL': 'armor'}
     values = {'T4_ARMOR_CLOTH_ROYAL': 64.0}
 
+    scanner.allow_zero_volume = False
     opps = scanner.scan_crafting(prices, names, recipes, categories, values)
     assert len(opps) == 0, "0 volume crafting opportunities must be rejected"
 

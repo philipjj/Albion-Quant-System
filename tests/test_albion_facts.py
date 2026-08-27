@@ -30,22 +30,25 @@ def test_city_crafting_bonuses_integrity():
 
     # Martlock
     assert "plate_shoes" in CITY_CRAFTING_BONUSES["Martlock"]["bonus_categories"]
-    assert "leather_shoes" in CITY_CRAFTING_BONUSES["Martlock"]["bonus_categories"]
+    assert "offhand" in CITY_CRAFTING_BONUSES["Martlock"]["bonus_categories"]
     assert "leather_armor" not in CITY_CRAFTING_BONUSES["Martlock"]["bonus_categories"]
     assert "leather" in CITY_CRAFTING_BONUSES["Martlock"]["refining_bonus"]
 
     # Lymhurst
-    assert "leather_armor" in CITY_CRAFTING_BONUSES["Lymhurst"]["bonus_categories"]
     assert "leather_helmet" in CITY_CRAFTING_BONUSES["Lymhurst"]["bonus_categories"]
+    assert "leather_shoes" in CITY_CRAFTING_BONUSES["Lymhurst"]["bonus_categories"]
     assert "cloth_armor" not in CITY_CRAFTING_BONUSES["Lymhurst"]["bonus_categories"]
+    assert "cloth" in CITY_CRAFTING_BONUSES["Lymhurst"]["refining_bonus"]
 
     # Fort Sterling
     assert "plate_helmet" in CITY_CRAFTING_BONUSES["Fort Sterling"]["bonus_categories"]
     assert "cloth_armor" in CITY_CRAFTING_BONUSES["Fort Sterling"]["bonus_categories"]
+    assert "planks" in CITY_CRAFTING_BONUSES["Fort Sterling"]["refining_bonus"]
 
     # Thetford
     assert "cloth_helmet" in CITY_CRAFTING_BONUSES["Thetford"]["bonus_categories"]
-    assert "leather_boots" in CITY_CRAFTING_BONUSES["Thetford"]["bonus_categories"]
+    assert "leather_armor" in CITY_CRAFTING_BONUSES["Thetford"]["bonus_categories"]
+    assert "metalbar" in CITY_CRAFTING_BONUSES["Thetford"]["refining_bonus"]
 
 
 def test_rrr_mathematical_precision():
@@ -79,8 +82,12 @@ def test_market_utils_rrr_matches_constants():
     rrr_mt = calculate_rrr_utils("Martlock", "plate_armor", tier=4)
     assert rrr_mt == 0.1525
 
-    # Leather armor in Lymhurst gets crafting bonus (33% LPB -> 0.2481)
-    rrr_lym = calculate_rrr_utils("Lymhurst", "leather_armor", tier=4)
+    # Leather armor in Thetford gets crafting bonus (33% LPB -> 0.2481)
+    rrr_thet = calculate_rrr_utils("Thetford", "leather_armor", tier=4)
+    assert rrr_thet == 0.2481
+
+    # Leather shoes in Lymhurst gets crafting bonus (33% LPB -> 0.2481)
+    rrr_lym = calculate_rrr_utils("Lymhurst", "leather_shoes", tier=4)
     assert rrr_lym == 0.2481
 
 
@@ -108,10 +115,23 @@ def test_enchantment_material_quantities():
     assert reqs_head is not None
     assert reqs_head[2] == 96
 
-    # Ineligible gear (Off-hands, Capes, Bags, Satchels, Royal items) -> None
-    assert scanner._get_enchant_requirements("T4_OFF_SHIELD_HELL@1") is None
-    assert scanner._get_enchant_requirements("T5_CAPE@1") is None
-    assert scanner._get_enchant_requirements("T6_BAG@1") is None
+    # Off-hands -> 96
+    reqs_off = scanner._get_enchant_requirements("T4_OFF_SHIELD_HELL@1")
+    assert reqs_off is not None
+    assert reqs_off[2] == 96
+
+    # Standard Capes -> 96, Standard Bags -> 192
+    reqs_cape = scanner._get_enchant_requirements("T5_CAPE@1")
+    assert reqs_cape is not None
+    assert reqs_cape[2] == 96
+
+    reqs_bag = scanner._get_enchant_requirements("T6_BAG@1")
+    assert reqs_bag is not None
+    assert reqs_bag[2] == 192
+
+    # Ineligible gear (Faction Capes, Bags of Insight, Royal items) -> None
+    assert scanner._get_enchant_requirements("T6_CAPEITEM_FW_BRIDGEWATCH@3") is None
+    assert scanner._get_enchant_requirements("T7_BAG_INSIGHT@3") is None
     assert scanner._get_enchant_requirements("T8_ARMOR_ROYAL_SET1@1") is None
 
 

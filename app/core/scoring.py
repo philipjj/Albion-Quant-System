@@ -2,10 +2,12 @@ import math
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from app.core.market_utils import calculate_time_decay
+
 
 class Scorer:
     """
-    Advanced AQS v3.1+ Intelligence Engine.
+    Advanced AQS Intelligence Engine.
     Implements Liquidity-Aware Opportunity Scoring and Confidence Engine.
     Goal: Calculate 'Expected Realized Profit per Hour' (ERPH).
     """
@@ -14,11 +16,9 @@ class Scorer:
         """
         Calculates a 0.0 -> 1.0 confidence score based on data age and market liquidity.
         """
-        # 1. Exponential Freshness Decay (Task 7.1)
-        age_sec = opp.get("data_age_seconds") or 0
-        age_min = age_sec / 60.0
-        # Decay constant: 45 min half-life
-        freshness = math.exp(-age_min / 45.0)
+        # 1. Smooth Half-Life Decay
+        age_sec = float(opp.get("data_age_seconds") or 0.0)
+        freshness = calculate_time_decay(age_sec, half_life_hours=3.0)
 
         # 2. Liquidity Confidence
         volume = opp.get("daily_volume", 0)
