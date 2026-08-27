@@ -536,7 +536,7 @@ function updateStatsUI() {
   if (sub) {
     const lobCount = Number(state.stats.nats_lob_depth || 0);
     sub.textContent = lobCount > 0 
-      ? `Live L2 Orderbook: ${lobCount.toLocaleString()} active markets` 
+      ? `Live L2 Orderbook: ${lobCount.toLocaleString()} active live quotes` 
       : 'Live L2 & regional price snapshots';
   }
 
