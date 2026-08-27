@@ -250,6 +250,8 @@ async def get_system_stats(db: Session = Depends(get_db)):
 # In-memory cache of latest full scan opportunities for instant Web UI browsing
 _LATEST_OPPORTUNITIES_CACHE: dict[str, list[dict]] = {
     "bm_arbitrage": [],
+    "bm_enchanting": [],
+    "bm_market_making": [],
     "arbitrage": [],
     "crafting": [],
     "refining": [],
@@ -258,10 +260,6 @@ _LATEST_OPPORTUNITIES_CACHE: dict[str, list[dict]] = {
     "quality_inversion": [],
     "transmutation": [],
     "island": [],
-    "caerleon_crafting": [],
-    "caerleon_refining": [],
-    "caerleon_enchanting": [],
-    "caerleon_market_making": [],
 }
 _LATEST_SCAN_TIME: str | None = None
 _SCAN_LOCK = asyncio.Lock()
@@ -399,9 +397,7 @@ async def trigger_live_scan(db: Session = Depends(get_db)):
 
             _LATEST_OPPORTUNITIES_CACHE = {
                 "bm_arbitrage": bm_arb,
-                "bm_crafting": bm_craft,
                 "bm_enchanting": bm_enchant,
-                "bm_refining": bm_refine,
                 "bm_market_making": bm_mm,
                 "arbitrage": arb,
                 "crafting": craft,
@@ -445,9 +441,7 @@ async def clear_opportunities_cache(db: Session = Depends(get_db)):
 
     _LATEST_OPPORTUNITIES_CACHE = {
         "bm_arbitrage": [],
-        "bm_crafting": [],
         "bm_enchanting": [],
-        "bm_refining": [],
         "bm_market_making": [],
         "arbitrage": [],
         "crafting": [],

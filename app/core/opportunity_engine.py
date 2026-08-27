@@ -1132,22 +1132,20 @@ class OpportunityScanner:
             except Exception:
                 pass
 
-            # 1. Try local city price
+            # 1. Try local city price (allow up to 24h for high-liquidity commodity materials in Caerleon)
             p = self._get_price(prices, m_id, city, 1)
             if p and p.get("sell_price_min", 0) > 0:
                 sp = p["sell_price_min"]
                 bm = p.get("buy_price_max", 0)
                 age = p.get("data_age_seconds", 99999)
                 vol = p.get("volume_24h", 0)
-                if age <= get_max_material_age_seconds(m_id, volume_24h=vol) and bounds[0] <= sp <= bounds[1] and is_price_valid(sp, bm, item_id=m_id):
+                max_mat_age = max(get_max_material_age_seconds(m_id, volume_24h=vol), 86400 if city == "Caerleon" else 0)
+                if age <= max_mat_age and bounds[0] <= sp <= bounds[1] and is_price_valid(sp, bm, item_id=m_id):
                     unit_cost = _calculate_depth_adjusted_unit_price(p, bounds)
                     return (unit_cost, age, vol)
 
-        # 2. For Caerleon / Black Market enchanting, do NOT fall back to cheap Royal prices!
-        if city == "Caerleon":
-            return (0, 99999, 0)
-
-        # 3. Cross-city Royal median fallback (only for Royal continent cities)
+        # 2. Cross-city Royal median resolution:
+        # If city is Caerleon and local price is missing, apply a +10% transport markup to Royal median cost.
         royal_candidates = []
         for m_id in cand_ids:
             bounds = ENCHANT_MATERIAL_BOUNDS.get(m_id, (5, 600_000))
@@ -1165,7 +1163,12 @@ class OpportunityScanner:
         if royal_candidates:
             royal_candidates.sort(key=lambda x: x[0])
             mid = len(royal_candidates) // 2
-            return royal_candidates[mid]
+            med_cost, med_age, med_vol = royal_candidates[mid]
+            if city == "Caerleon":
+                # Apply conservative +10% Caerleon import premium over Royal median
+                caerleon_imported_cost = int(round(med_cost * 1.10))
+                return (caerleon_imported_cost, med_age, med_vol)
+            return (med_cost, med_age, med_vol)
 
         return (0, 99999, 0)
 
@@ -1178,121 +1181,165 @@ class OpportunityScanner:
     ) -> list[EnchantingOpportunity]:
         """
         Scan Black Market equipment enchantment:
-        Buy base item (Q1-Q5) in Caerleon + enchantment material (Runes/Souls/Relics) in Caerleon
+        Buy base item (.0, .1, .2, .3) in Caerleon + enchantment material (Runes/Souls/Relics/Avalonian Shards) in Caerleon
         -> Enchant at Caerleon Foundry -> Sell directly into Black Market Buy Order.
-        0 transport risk: inside Caerleon.
+        0 transport risk: completely inside Caerleon.
+        Supports direct single-step and multi-stage enchantment (.0 -> .1, .0 -> .2, .0 -> .3, .1 -> .2, .1 -> .3, .2 -> .3, etc.).
         """
         results = []
 
-        for item_id in prices.keys():
-            reqs = self._get_enchant_requirements(item_id)
-            if not reqs:
-                continue
-            base_item_id, material_id, material_qty = reqs
+        FARM_NON_ENCHANTABLE = (
+            "_INSIGHT", "BAG_INSIGHT", "ROYAL", "POTION", "FOOD", "MEAL", "SOUP", "STEW",
+            "MOUNT", "QUESTITEM", "ARENA_TOKEN", "REWARD_TOKEN", "UNIQUE_SKIN", "TRASH", "STARTER_", "GATHERER", "_TOOL_"
+        )
 
-            for quality in [1, 2, 3, 4, 5]:
+        best_by_target: dict[str, EnchantingOpportunity] = {}
+
+        for target_id in prices.keys():
+            if "@" not in target_id:
+                continue
+            raw_base, target_e_str = target_id.rsplit("@", 1)
+            try:
+                target_e = int(target_e_str)
+            except ValueError:
+                continue
+            if target_e < 1 or target_e > 4:
+                continue
+
+            raw_upper = raw_base.upper()
+            if any(x in raw_upper for x in FARM_NON_ENCHANTABLE):
+                continue
+
+            tier = 4
+            if raw_base.startswith("T") and len(raw_base) > 1 and raw_base[1].isdigit():
+                try:
+                    tier = int(raw_base[1])
+                except ValueError:
+                    pass
+
+            qty = self._get_enchant_qty(raw_base)
+            item_val = (item_values.get(target_id, 0.0) if item_values else 0.0) or get_fallback_item_value(target_id)
+
+            for bm_quality in range(1, 6):
                 # BM target buy order
-                bm_data = self._get_price(prices, item_id, BM_CITY, quality)
+                bm_data = self._get_price(prices, target_id, BM_CITY, bm_quality)
                 if not bm_data:
                     continue
                 bm_price = bm_data.get("buy_price_max", 0)
                 bm_volume = bm_data.get("volume_24h", 0)
                 bm_age = bm_data.get("data_age_seconds", 9999)
 
-                item_val = item_values.get(item_id, 0.0) if item_values else 0.0
-                max_bm_age = get_max_allowed_bm_age_seconds(item_id, bm_price)
-                if not is_bm_price_valid(bm_price, item_val) or bm_age > max_bm_age:
+                max_bm_age = get_max_allowed_bm_age_seconds(target_id, bm_price)
+                if not is_bm_price_valid(bm_price, item_val) or bm_age > max_bm_age or bm_price <= 0:
                     continue
 
-                # Base item MUST be sourced locally in Caerleon (zero Red Zone transport risk)
-                base_price, base_age, base_vol, best_base_quality = 0, 9999, 0, quality
-                for q in range(quality, 6):
-                    base_data = self._get_price(prices, base_item_id, CAERLEON, q)
-                    if base_data and base_data.get("sell_price_min", 0) > 0 and base_data.get("data_age_seconds", 9999) <= get_max_material_age_seconds(base_item_id):
-                        cand_sp = base_data["sell_price_min"]
-                        cand_bm = base_data.get("buy_price_max", 0)
-                        cand_age = base_data.get("data_age_seconds", 9999)
-                        if is_price_valid(cand_sp, cand_bm, item_id=base_item_id):
-                            if base_price == 0 or cand_sp < base_price:
-                                base_price = cand_sp
-                                base_age = cand_age
-                                base_vol = base_data.get("volume_24h", 0)
-                                best_base_quality = q
+                # Check ALL possible start tiers (from .0 up to target_e - 1)
+                for start_e in range(0, target_e):
+                    cand_base_id = raw_base if start_e == 0 else f"{raw_base}@{start_e}"
 
-                if base_price <= 0 or base_age > get_max_material_age_seconds(base_item_id):
-                    continue
+                    # Base item MUST be sourced locally in Caerleon (zero Red Zone transport risk)
+                    # Quality matching: In Albion, BM buy orders of quality bm_quality can be filled with quality >= bm_quality
+                    base_price, base_age, base_vol, best_base_quality = 0, 9999, 0, bm_quality
+                    for q in range(bm_quality, 6):
+                        base_data = self._get_price(prices, cand_base_id, CAERLEON, q)
+                        if base_data and base_data.get("sell_price_min", 0) > 0 and base_data.get("data_age_seconds", 9999) <= get_max_material_age_seconds(cand_base_id):
+                            cand_sp = base_data["sell_price_min"]
+                            cand_bm = base_data.get("buy_price_max", 0)
+                            cand_age = base_data.get("data_age_seconds", 9999)
+                            if is_price_valid(cand_sp, cand_bm, item_id=cand_base_id):
+                                if base_price == 0 or cand_sp < base_price:
+                                    base_price = cand_sp
+                                    base_age = cand_age
+                                    base_vol = base_data.get("volume_24h", 0)
+                                    best_base_quality = q
 
-                # Verified Enchantment Material Price in Caerleon ONLY (zero Red Zone transport risk)
-                mat_price, mat_age, mat_vol = self._get_enchant_material_price(prices, material_id, CAERLEON, required_qty=material_qty)
-                if mat_price <= 0 or mat_age > get_max_material_age_seconds(material_id, volume_24h=mat_vol):
-                    continue
+                    if base_price <= 0 or base_age > get_max_material_age_seconds(cand_base_id):
+                        continue
 
-                # Multi-Leg Desynchronization Guard: Base item, enchanting mat, and BM buy order must be aligned in time
-                item_tier, item_enchant = _extract_tier_enchant(item_id)
-                max_allowed_desync = get_max_allowed_leg_desync_seconds(item_tier, item_enchant)
-                if max(abs(bm_age - base_age), abs(bm_age - mat_age)) > max_allowed_desync:
-                    continue
+                    # Calculate verified Enchantment Material Costs in Caerleon for all steps from start_e -> target_e
+                    total_mat_cost = 0.0
+                    max_mat_age = 0
+                    materials_valid = True
+                    primary_mat_id = ""
+                    primary_mat_qty = 0
+                    primary_mat_unit = 0.0
 
-                # Apply slippage model
-                effective_mat_unit = calculate_effective_price(mat_price, material_qty, mat_vol, is_buy=True)
-                total_mat_cost = effective_mat_unit * material_qty
-                
-                trade_vol = self.default_trade_volume if self.use_slippage else 1
-                effective_base = calculate_effective_price(base_price, trade_vol, base_vol, is_buy=True)
-                effective_bm = calculate_effective_price(bm_price, trade_vol, bm_volume, is_buy=False)
-                
-                # Selling to Black Market incurs standard marketplace tax (4% premium, 8% non-premium), but NO setup fee
-                revenue_net = effective_bm * (1.0 - self.tax)
-                total_cost = effective_base + total_mat_cost
-                net_profit = revenue_net - total_cost
+                    for step_e in range(start_e + 1, target_e + 1):
+                        mat_type = "RUNE" if step_e == 1 else ("SOUL" if step_e == 2 else ("RELIC" if step_e == 3 else "SHARD_AVALONIAN"))
+                        mat_id = f"T{tier}_{mat_type}" if mat_type != "SHARD_AVALONIAN" else "QUESTITEM_TOKEN_AVALON"
+                        mat_price, mat_age, mat_vol = self._get_enchant_material_price(prices, mat_id, CAERLEON, required_qty=qty)
+                        if mat_price <= 0:
+                            materials_valid = False
+                            break
 
-                min_profit_silver = max(self.min_bm_profit, 2000) if self.min_bm_profit > 0 else 2000
-                if net_profit < min_profit_silver:
-                    continue
+                        effective_mat_unit = calculate_effective_price(mat_price, qty, mat_vol, is_buy=True)
+                        total_mat_cost += effective_mat_unit * qty
+                        max_mat_age = max(max_mat_age, mat_age)
+                        if not primary_mat_id:
+                            primary_mat_id = mat_id
+                            primary_mat_qty = qty
+                            primary_mat_unit = effective_mat_unit
 
-                profit_pct = (net_profit / total_cost) * 100
-                roi_val = profit_pct
-                dynamic_min_pct = self._dynamic_min_margin(total_cost, is_dangerous=False, default_min=self.min_bm_profit_pct)
-                if profit_pct < dynamic_min_pct or roi_val < self.min_roi:
-                    continue
+                    if not materials_valid:
+                        continue
 
-                # High profit (>60% ROI) items get filled faster in-game; require fresh data <= 2 hours (7200s)
-                if profit_pct > 60.0 and (bm_age > 7200 or base_age > get_max_material_age_seconds(base_item_id)):
-                    continue
+                    # Apply slippage model
+                    trade_vol = self.default_trade_volume if self.use_slippage else 1
+                    effective_base = calculate_effective_price(base_price, trade_vol, base_vol, is_buy=True)
+                    effective_bm = calculate_effective_price(bm_price, trade_vol, bm_volume, is_buy=False)
 
-                safe_limit = calculate_safe_trade_limit(bm_volume, max_slippage_pct=0.03)
+                    # Selling to Black Market incurs standard marketplace tax (4% premium, 8% non-premium), but NO setup fee
+                    revenue_net = effective_bm * (1.0 - self.tax)
+                    total_cost = effective_base + total_mat_cost
+                    net_profit = revenue_net - total_cost
 
-                opp = EnchantingOpportunity(
-                    target_item_id=item_id,
-                    target_item_name=item_names.get(item_id, item_id),
-                    base_item_id=base_item_id,
-                    base_price=effective_base,
-                    material_id=material_id,
-                    material_qty=material_qty,
-                    material_price=effective_mat_unit,
-                    bm_buy_price=effective_bm,
-                    net_profit=round(net_profit, 0),
-                    profit_pct=round(profit_pct, 2),
-                    total_cost=total_cost,
-                    safe_limit=safe_limit,
-                    roi=round((net_profit / total_cost) * 100, 2),
-                    profit_margin=round((net_profit / effective_bm) * 100, 2) if effective_bm > 0 else 0.0,
-                    quality=quality,
-                    base_quality=best_base_quality,
-                    data_age_base=base_age,
-                    data_age_material=mat_age,
-                    data_age_bm=bm_age,
-                    data_age_seconds=bm_age,
-                    base_city=CAERLEON,
-                    sell_city=BM_CITY,
-                    is_dangerous=False,
-                )
-                
-                freshness = max(0.1, 1.0 - (bm_age + base_age) / (get_max_material_age_seconds(item_id) + get_max_material_age_seconds(base_item_id)))
-                vol_score = min(1.0, bm_volume / 50.0) if bm_volume > 0 else 0.2
-                opp.score = round(net_profit * freshness * vol_score, 2)
-                results.append(opp)
+                    min_profit_silver = max(self.min_bm_profit, 2000) if self.min_bm_profit > 0 else 2000
+                    if net_profit < min_profit_silver:
+                        continue
 
+                    profit_pct = (net_profit / total_cost) * 100
+                    roi_val = profit_pct
+                    dynamic_min_pct = self._dynamic_min_margin(total_cost, is_dangerous=False, default_min=self.min_bm_profit_pct)
+                    if profit_pct < dynamic_min_pct or roi_val < self.min_roi:
+                        continue
+
+                    safe_limit = calculate_safe_trade_limit(bm_volume, max_slippage_pct=0.03)
+
+                    opp = EnchantingOpportunity(
+                        target_item_id=target_id,
+                        target_item_name=item_names.get(target_id, target_id),
+                        base_item_id=cand_base_id,
+                        base_price=effective_base,
+                        material_id=primary_mat_id,
+                        material_qty=primary_mat_qty,
+                        material_price=primary_mat_unit,
+                        bm_buy_price=effective_bm,
+                        net_profit=round(net_profit, 0),
+                        profit_pct=round(profit_pct, 2),
+                        total_cost=total_cost,
+                        safe_limit=safe_limit,
+                        roi=round((net_profit / total_cost) * 100, 2),
+                        profit_margin=round((net_profit / effective_bm) * 100, 2) if effective_bm > 0 else 0.0,
+                        quality=bm_quality,
+                        base_quality=best_base_quality,
+                        data_age_base=base_age,
+                        data_age_material=max_mat_age,
+                        data_age_bm=bm_age,
+                        data_age_seconds=bm_age,
+                        base_city=CAERLEON,
+                        sell_city=BM_CITY,
+                        is_dangerous=False,
+                    )
+
+                    freshness = max(0.1, 1.0 - (bm_age + base_age) / (get_max_material_age_seconds(target_id) + get_max_material_age_seconds(cand_base_id)))
+                    vol_score = min(1.0, bm_volume / 50.0) if bm_volume > 0 else 0.2
+                    opp.score = round(net_profit * freshness * vol_score, 2)
+
+                    dedup_key = f"{target_id}:Q{bm_quality}"
+                    if dedup_key not in best_by_target or opp.score > best_by_target[dedup_key].score:
+                        best_by_target[dedup_key] = opp
+
+        results = list(best_by_target.values())
         results.sort(key=lambda x: x.score, reverse=True)
         return results
 
@@ -1660,125 +1707,6 @@ class OpportunityScanner:
         """Backwards-compatible alias for scan_b_arbitrage."""
         return self.scan_b_arbitrage(*args, **kwargs)
 
-    def scan_b_crafting(
-        self,
-        prices: dict,
-        item_names: dict[str, str],
-        recipes: dict,
-        item_categories: dict[str, str],
-        item_values: dict[str, float],
-        item_weights: dict[str, float] = None,
-    ) -> list[CraftingOpportunity]:
-        """
-        Caerleon Crafting -> Black Market:
-        Craft equipment in Caerleon from materials bought locally in Caerleon -> Sell to Black Market.
-        Zero transport risk, 0% Black Market sales tax.
-        """
-        results = []
-        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
-
-        from app.core.market_utils import get_item_crafting_subcategory
-
-        FARM_KEYWORDS = (
-            "_SEED", "_CROP", "_HERB", "_MILK", "_BUTTER", "_EGG", "_FLOUR",
-            "_FOAL", "_CALF", "_PIG", "_SHEEP", "_GOAT", "_CHICKEN", "_GOOSE",
-            "_CARROT", "_BEAN", "_WHEAT", "_TURNIP", "_CABBAGE", "_POTATO", "_CORN", "_PUMPKIN",
-            "_FARM_", "_MEAT", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH",
-            "_POTION_"
-        )
-
-        for item_id, recipe in recipes.items():
-            item_id_upper = item_id.upper()
-            if any(k in item_id_upper for k in FARM_KEYWORDS):
-                continue
-            if any(v in item_id_upper for v in ["_ARTEFACT_", "UNIQUE_", "SKIN_", "FURNITURE", "TOKEN", "QUESTITEM", "_NON_TRADABLE", "NONTRADABLE"]):
-                continue
-            cat = (item_categories.get(item_id, "") or "").lower()
-            if cat in ("farming", "crops", "herbs", "livestock", "animals", "consumables", "cooking", "alchemy", "food", "potions"):
-                continue
-
-            subcat = get_item_crafting_subcategory(item_id, item_categories.get(item_id, ""))
-            category = subcat or item_categories.get(item_id, "")
-            caerleon_rrr = rrr(CAERLEON, category, self.use_focus)
-
-            # Sourced in Caerleon only (zero Red Zone transport risk)
-            material_cost_gross, ingredient_details, mat_age = self._calc_material_cost(
-                item_id, recipe, prices, CAERLEON, quality=1, local_only=True
-            )
-            if material_cost_gross <= 0:
-                continue
-
-            material_cost_net = 0.0
-            for ing in ingredient_details:
-                if ing.get("is_returnable"):
-                    material_cost_net += ing["line_cost"] * (1.0 - caerleon_rrr)
-                else:
-                    material_cost_net += ing["line_cost"]
-
-            item_val = item_values.get(item_id, 0.0) if item_values else 0.0
-            if item_val <= 0:
-                item_val = get_fallback_item_value(item_id)
-            station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
-            station_fee = calculate_station_fee(item_val, station_tax)
-            total_cost = material_cost_net + station_fee
-
-            # Sell to Black Market
-            bm_data = self._get_price(prices, item_id, BM_CITY, 1)
-            if not bm_data:
-                continue
-
-            bm_price = bm_data.get("buy_price_max", 0)
-            bm_age = bm_data.get("data_age_seconds", 9999)
-            bm_vol = bm_data.get("volume_24h", 0)
-
-            max_bm_age = get_max_allowed_bm_age_seconds(item_id, bm_price)
-            if bm_price <= 0 or bm_age > max_bm_age or not is_bm_price_valid(bm_price, item_val):
-                continue
-
-            trade_vol = self.default_trade_volume if self.use_slippage else 1
-            effective_bm_price = calculate_effective_price(bm_price, trade_vol, bm_vol, is_buy=False)
-            safe_limit = calculate_safe_trade_limit(bm_vol, max_slippage_pct=0.03)
-
-            # Selling to Black Market incurs standard marketplace tax (4% premium, 8% non-premium), but NO setup fee
-            revenue_net = float(effective_bm_price) * (1.0 - self.tax)
-            profit = revenue_net - total_cost
-            pct = (profit / material_cost_gross * 100) if material_cost_gross > 0 else 0
-            roi = (profit / total_cost * 100) if total_cost > 0 else 0
-
-            # Black Market NPC buy order profits are uncapped (authentic NPC payout)
-
-            if profit >= self.min_craft_profit and pct >= 1.0 and roi >= self.min_roi:
-                opp = CraftingOpportunity(
-                    item_id=item_id,
-                    item_name=item_names.get(item_id, item_id),
-                    craft_city=CAERLEON,
-                    sell_city=BM_CITY,
-                    sell_mode="BM",
-                    material_cost_gross=round(material_cost_gross, 0),
-                    rrr_used=caerleon_rrr,
-                    material_cost_net=round(material_cost_net, 0),
-                    station_fee=round(station_fee, 0),
-                    sell_price=effective_bm_price,
-                    revenue_net=round(revenue_net, 0),
-                    profit=round(profit, 0),
-                    profit_pct=round(pct, 2),
-                    daily_volume=bm_vol,
-                    data_age_materials=mat_age,
-                    data_age_sell=bm_age,
-                    use_focus=self.use_focus,
-                    ingredients=ingredient_details,
-                    safe_limit=safe_limit,
-                    is_dangerous=False,
-                )
-                opp.roi = roi
-                weight = item_weights.get(item_id, 0.0) if item_weights else 0.0
-                opp.profit_per_kg = round(profit / weight, 2) if weight > 0 else profit
-                opp.score = self._score_craft(opp)
-                results.append(opp)
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
-
     def scan_crafting(
         self,
         prices: dict,
@@ -2138,135 +2066,6 @@ class OpportunityScanner:
 
                 if best_opp:
                     results.append(best_opp)
-
-        results.sort(key=lambda x: x.score, reverse=True)
-        return results
-
-    def scan_b_refining(
-        self,
-        prices: dict,
-        item_names: dict,
-        recipes: dict,
-        categories: dict,
-        values: dict,
-        weights: dict,
-    ) -> list[RefiningOpportunity]:
-        """
-        Caerleon Refining:
-        Sourced in Caerleon -> Refined in Caerleon -> Sold on Caerleon marketplace.
-        Zero transport risk.
-        """
-        from app.core.market_utils import calculate_rrr, get_refining_category
-
-        results = []
-        min_vol = getattr(settings, "anti_bait_min_volume_materials", 20)
-
-        for item_id, recipe in recipes.items():
-            refine_cat = get_refining_category(item_id)
-            if not refine_cat:
-                continue
-
-            ingredients = recipe.get("ingredients", [])
-            if not ingredients:
-                continue
-
-            total_material_gross = 0.0
-            mat_age = 0
-            mat_data_found = True
-            ingredients_detail = []
-
-            for ing in ingredients:
-                ing_id = ing["item_id"]
-                ing_qty = ing["quantity"]
-
-                p = self._get_price(prices, ing_id, CAERLEON, 1)
-                if not p:
-                    mat_data_found = False
-                    break
-                sp = p.get("sell_price_min", 0)
-                bm = p.get("buy_price_max", 0)
-                age = p.get("data_age_seconds", 9999)
-                vol = p.get("volume_24h", 0)
-                if sp <= 0 or age > get_max_material_age_seconds(ing_id, volume_24h=vol) or (vol > 0 and vol < min_vol) or not is_price_valid(sp, bm, item_id=ing_id):
-                    mat_data_found = False
-                    break
-
-                total_material_gross += sp * ing_qty
-                mat_age = max(mat_age, age)
-                ingredients_detail.append({
-                    "item_id": ing_id,
-                    "name": item_names.get(ing_id, ing_id),
-                    "quantity": ing_qty,
-                    "unit_price": sp,
-                    "buy_city": CAERLEON,
-                    "is_returnable": True,
-                })
-
-            if not mat_data_found:
-                continue
-
-            cae_rrr = calculate_rrr(CAERLEON, refine_cat, 1, self.use_focus)
-            material_cost_net = total_material_gross * (1.0 - cae_rrr)
-            item_value = values.get(item_id, 0.0)
-            station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
-            station_fee = calculate_station_fee(item_value, station_tax)
-            total_cost = material_cost_net + station_fee
-
-            # Sell in Caerleon
-            p_cae = self._get_price(prices, item_id, CAERLEON, 1)
-            if not p_cae:
-                continue
-            c_sp = p_cae.get("sell_price_min", 0)
-            c_age = p_cae.get("data_age_seconds", 9999)
-            c_vol = p_cae.get("volume_24h", 0)
-
-            if c_sp <= 0 or c_age > get_max_material_age_seconds(item_id, volume_24h=c_vol) or (c_vol > 0 and c_vol < min_vol):
-                continue
-
-            # Multi-Leg Desynchronization Guard
-            item_tier = int(item_id[1]) if item_id.startswith("T") and len(item_id) > 1 and item_id[1].isdigit() else 4
-            if abs(c_age - mat_age) > get_max_allowed_leg_desync_seconds(item_tier):
-                continue
-
-            trade_vol = self.default_trade_volume if self.use_slippage else 1
-            c_eff = calculate_effective_price(c_sp, trade_vol, c_vol, is_buy=False)
-            c_rev = c_eff * (1.0 - self.tax - self.setup_fee)
-            c_profit = c_rev - total_cost
-            c_profit_pct = (c_profit / total_material_gross * 100) if total_material_gross > 0 else 0
-            c_roi = (c_profit / total_cost * 100) if total_cost > 0 else 0
-
-            # Refining batch profit scaling (100x bars)
-            if (c_profit >= self.min_craft_profit or c_profit * 100 >= self.min_craft_profit) and c_profit_pct >= 1.0 and c_roi >= self.min_roi:
-                weight = weights.get(item_id, 0.0) if weights else 0.0
-                profit_per_kg = c_profit / weight if weight > 0 else 0.0
-                opp = RefiningOpportunity(
-                    item_id=item_id,
-                    item_name=item_names.get(item_id, item_id),
-                    refine_city=CAERLEON,
-                    sell_city=CAERLEON,
-                    material_cost_gross=round(total_material_gross, 0),
-                    rrr_used=cae_rrr,
-                    material_cost_net=round(material_cost_net, 0),
-                    station_fee=round(station_fee, 0),
-                    sell_price=c_eff,
-                    revenue_net=round(c_rev, 0),
-                    profit=round(c_profit, 0),
-                    profit_pct=round(c_profit_pct, 2),
-                    daily_volume=c_vol,
-                    data_age_materials=mat_age,
-                    data_age_sell=c_age,
-                    quality=1,
-                    use_focus=self.use_focus,
-                    focus_cost=0.0,
-                    silver_per_focus=0.0,
-                    roi=round(c_roi, 4),
-                    profit_per_kg=round(profit_per_kg, 2),
-                    safe_limit=calculate_safe_trade_limit(c_vol, max_slippage_pct=0.03),
-                    buy_city=CAERLEON,
-                    ingredients=ingredients_detail,
-                )
-                opp.score = self._score_refining(opp)
-                results.append(opp)
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results

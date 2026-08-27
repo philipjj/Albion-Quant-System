@@ -734,10 +734,8 @@ window.changePageSize = function(size) {
 
 const CATEGORY_META = {
   bm_arbitrage: { label: '⚡ BM Arbitrage', color: '#f85149', bg: 'rgba(248,81,73,0.15)' },
-  bm_crafting: { label: '🔨 Caerleon BM Craft', color: '#ff7b72', bg: 'rgba(255,123,114,0.15)' },
   bm_enchanting: { label: '✨ Caerleon BM Enchant', color: '#d2a8ff', bg: 'rgba(210,168,255,0.15)' },
   bm_market_making: { label: '📊 Caerleon Spread', color: '#79c0ff', bg: 'rgba(121,192,255,0.15)' },
-  bm_refining: { label: '🔥 Caerleon Refining', color: '#ffa657', bg: 'rgba(255,166,87,0.15)' },
   arbitrage: { label: '🏰 Royal Safe Arbitrage', color: '#388bfd', bg: 'rgba(56,139,253,0.15)' },
   market_making: { label: '📈 Station Market Making', color: '#58a6ff', bg: 'rgba(88,166,255,0.15)' },
   crafting: { label: '⚒️ Equipment Craft (+15%)', color: '#e3b341', bg: 'rgba(227,179,65,0.15)' },

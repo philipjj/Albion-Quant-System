@@ -326,7 +326,7 @@ async def cmd_scan():
     log.info(
         f"Scan complete: "
         f"Royal [Transmute: {len(transmute)}, Island: {len(island)}, Craft: {len(crafting)}, Refine: {len(ref)}, Enchant: {len(enchant)}, Arb: {len(arb)}, MM: {len(mm)}] | "
-        f"Caerleon/BM [B-Arb: {len(bm_arb)}, B-Craft: {len(bm_craft)}, B-Refine: {len(bm_ref)}, B-Enchant: {len(bm_enchant)}, B-MM: {len(bm_mm)}]"
+        f"Caerleon/BM [B-Arb: {len(bm_arb)}, B-Enchant: {len(bm_enchant)}, B-MM: {len(bm_mm)}]"
     )
 
 

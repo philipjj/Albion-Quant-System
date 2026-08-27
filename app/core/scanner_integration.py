@@ -580,14 +580,6 @@ class UnifiedScanner:
                 bm_enchant_raw = self.engine.scan_b_enchanting(prices, names, categories)
                 log.info(f"[UNIFIED SCANNER] BM Enchanting: {len(bm_enchant_raw)} opportunities")
 
-                log.info("[UNIFIED SCANNER] Scanning Black Market Crafting...")
-                bm_craft_raw = self.engine.scan_b_crafting(prices, names, recipes, categories, values, weights)
-                log.info(f"[UNIFIED SCANNER] BM Crafting: {len(bm_craft_raw)} opportunities")
-
-                log.info("[UNIFIED SCANNER] Scanning Caerleon Refining...")
-                bm_refine_raw = self.engine.scan_b_refining(prices, names, recipes, categories, values, weights)
-                log.info(f"[UNIFIED SCANNER] Caerleon Refining: {len(bm_refine_raw)} opportunities")
-
                 log.info("[UNIFIED SCANNER] Scanning Caerleon Market Making...")
                 bm_mm_raw = self.engine.scan_b_market_making(prices, names, categories, weights)
                 log.info(f"[UNIFIED SCANNER] Caerleon MM: {len(bm_mm_raw)} opportunities")

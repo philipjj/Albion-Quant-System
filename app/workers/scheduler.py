@@ -114,9 +114,7 @@ class QuantScheduler:
 
                 set_latest_opportunities_cache({
                     "bm_arbitrage": bm_arb,
-                    "bm_crafting": bm_craft,
                     "bm_enchanting": bm_enchant,
-                    "bm_refining": bm_refine,
                     "bm_market_making": bm_mm,
                     "arbitrage": arb,
                     "crafting": craft,
@@ -153,9 +151,9 @@ class QuantScheduler:
 
             # 3. Alert
             log.info(
-                f"[SCHEDULER] Step 3: Sending alerts across 12 channels ("
+                f"[SCHEDULER] Step 3: Sending alerts ("
                 f"Transmute: {len(transmute)}, Island: {len(island)}, "
-                f"B-MM: {len(bm_mm)}, B-Refine: {len(bm_refine)}, B-Enchant: {len(bm_enchant)}, B-Craft: {len(bm_craft)}, B-Arb: {len(bm_arb)}, "
+                f"B-MM: {len(bm_mm)}, B-Enchant: {len(bm_enchant)}, B-Arb: {len(bm_arb)}, "
                 f"MM: {len(mm)}, Refine: {len(refine)}, Enchant: {len(enchant)}, Craft: {len(craft)}, Arb: {len(arb)})"
             )
 
@@ -272,14 +270,7 @@ class QuantScheduler:
                 getattr(settings, "enable_alerts_bm_mm", True)
             )
 
-            # 4. B-Refining (Caerleon)
-            final_bm_refine = _filter_and_group(
-                bm_refine,
-                lambda o, iid: f"bm_refine:{iid}:{o.get('crafting_city', 'Caerleon')}",
-                getattr(settings, "enable_alerts_bm_refining", True)
-            )
-
-            # 5. B-Enchanting (Caerleon -> BM)
+            # 4. B-Enchanting (Caerleon -> BM)
             final_bm_enchant = _filter_and_group(
                 bm_enchant,
                 lambda o, iid: f"bm_enchant:{iid}:{o.get('target_item_id', '')}",
@@ -287,14 +278,10 @@ class QuantScheduler:
                 sort_key="estimated_profit"
             )
 
-            # 6. B-Crafting (Caerleon -> BM)
-            final_bm_craft = _filter_and_group(
-                [o for o in bm_craft if not _is_island_opportunity(o)],
-                lambda o, iid: f"bm_craft:{iid}:{o.get('crafting_city', 'Caerleon')}:{o.get('sell_city', 'Black Market')}",
-                getattr(settings, "enable_alerts_bm_crafting", True)
-            )
+            final_bm_refine = []
+            final_bm_craft = []
 
-            # 7. B-Arbitrage (Royal -> BM)
+            # 5. B-Arbitrage (Royal -> BM)
             final_bm_arb = _filter_and_group(
                 bm_arb,
                 lambda o, iid: f"bm_arb:{iid}:{o.get('source_city', '')}:{o.get('destination_city', 'Black Market')}",
@@ -381,9 +368,7 @@ class QuantScheduler:
 
                 new_partition_cache = {
                     "bm_arbitrage": final_bm_arb,
-                    "bm_crafting": final_bm_craft,
                     "bm_enchanting": final_bm_enchant,
-                    "bm_refining": final_bm_refine,
                     "bm_market_making": final_bm_mm,
                     "arbitrage": final_arb,
                     "crafting": final_craft,
