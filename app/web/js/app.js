@@ -239,6 +239,31 @@ async function toggleDiscordAlerts(enabled) {
   }
 }
 
+async function togglePrivacyMode(enabled) {
+  try {
+    const res = await fetch(`/api/v1/system/privacy-toggle?enabled=${enabled}`, {
+      method: 'POST',
+      headers: { 'Accept': 'application/json' }
+    });
+    if (!res.ok) throw new Error('Failed to update privacy settings');
+    const data = await res.json();
+    state.settings.privacy_mode_enabled = data.privacy_mode_enabled;
+    updateSettingsUI();
+    showToast(
+      enabled
+        ? 'Privacy Mode: ENABLED 🔒'
+        : 'Privacy Mode: DISABLED 🌐',
+      enabled
+    );
+  } catch (err) {
+    console.error('Privacy Toggle error:', err);
+    showToast('Failed to update privacy mode', false);
+    // revert
+    const toggle = document.getElementById('privacy-mode-toggle');
+    if (toggle) toggle.checked = !enabled;
+  }
+}
+
 async function toggleContinuousScan(enabled) {
   try {
     const res = await fetch('/api/v1/system/settings', {
@@ -500,6 +525,11 @@ function updateSettingsUI() {
   const toggle = document.getElementById('discord-alerts-toggle');
   if (toggle) {
     toggle.checked = state.settings.discord_alerts_enabled !== false;
+  }
+
+  const privToggle = document.getElementById('privacy-mode-toggle');
+  if (privToggle) {
+    privToggle.checked = state.settings.privacy_mode_enabled === true;
   }
 
   const contToggle = document.getElementById('continuous-scan-toggle');
@@ -1796,6 +1826,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (discordToggle) {
     discordToggle.addEventListener('change', (e) => {
       toggleDiscordAlerts(e.target.checked);
+    });
+  }
+
+  // Privacy Mode Toggle Switch
+  const privacyToggle = document.getElementById('privacy-mode-toggle');
+  if (privacyToggle) {
+    privacyToggle.addEventListener('change', (e) => {
+      togglePrivacyMode(e.target.checked);
     });
   }
 

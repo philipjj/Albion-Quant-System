@@ -77,6 +77,24 @@ async def get_system_settings(db: Session = Depends(get_db)):
     }
 
 
+@router.post("/discord-alerts")
+async def toggle_discord_alerts(enabled: bool = Query(..., description="Enable or disable Discord alerts")):
+    """Toggle Discord webhook notifications on or off dynamically."""
+    state.discord_alerts_enabled = enabled
+    status_str = "ENABLED" if enabled else "DISABLED"
+    log.info(f"[SYSTEM] Discord alerts dynamically toggled: {status_str}")
+    return {"status": "success", "discord_alerts_enabled": state.discord_alerts_enabled, "message": f"Discord alerts {status_str}"}
+
+
+@router.post("/privacy-toggle")
+async def toggle_privacy_mode(enabled: bool = Query(..., description="Enable or disable Privacy Mode")):
+    """Toggle Privacy Mode on or off dynamically."""
+    state.privacy_mode_enabled = enabled
+    status_str = "ENABLED (Private Local Only)" if enabled else "DISABLED (Forwarding to Public Community)"
+    log.info(f"[SYSTEM] Privacy Mode dynamically toggled: {status_str}")
+    return {"status": "success", "privacy_mode_enabled": state.privacy_mode_enabled, "message": f"Privacy Mode {status_str}"}
+
+
 @router.post("/settings")
 async def update_system_settings(payload: SystemSettingsIn, db: Session = Depends(get_db)):
     """Update runtime settings, toggling Discord alerts, switching regions, or updating thresholds."""
@@ -242,6 +260,7 @@ async def get_system_stats(db: Session = Depends(get_db)):
         "nats_lob_depth": nats_lob_count,
         "active_server": settings.active_server.value,
         "discord_alerts_enabled": getattr(state, "discord_alerts_enabled", True),
+        "privacy_mode_enabled": getattr(state, "privacy_mode_enabled", False),
         "standby_mode": state.standby_mode,
         "timestamp": datetime.utcnow().isoformat(),
     }

@@ -26,6 +26,9 @@ refining_local_sourcing_only: bool = False
 # Discord alert broadcasting toggle (Master ON/OFF switch - starts OFF by default)
 discord_alerts_enabled: bool = False
 
+# Privacy Mode toggle (OFF by default - normal public ingestion)
+privacy_mode_enabled: bool = False
+
 # Dismissed / Filled tracking
 # Standard 15-minute temporary dismissals for royal/crafting: { item_id_upper: expiry_timestamp }
 dismissed_opportunities: dict[str, float] = {}

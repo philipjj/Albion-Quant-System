@@ -18,6 +18,20 @@ async def private_ingest(request: Request):
     except Exception:
         return {"status": "error", "message": "Invalid JSON"}
 
+    from app.core import state
+    import httpx
+    import asyncio
+
+    if not getattr(state, "privacy_mode_enabled", False):
+        async def forward_to_aodp(payload):
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post("https://www.albion-online-data.com/api/v2/stats/ingest", json=payload, timeout=5.0)
+            except Exception as e:
+                log.debug(f"[PROXY] Failed to forward to public AODP: {e}")
+        
+        asyncio.create_task(forward_to_aodp(data))
+
     orders = data.get("Orders")
     if not orders:
         if isinstance(data, list):
