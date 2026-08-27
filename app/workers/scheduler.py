@@ -178,10 +178,11 @@ class QuantScheduler:
             tier_prefix = f"T{state.tier_lock}_" if state.tier_lock is not None else None
             limit = getattr(settings, "alert_limit_per_cycle", 10)
 
-            def _filter_and_group(opps: list[dict], key_fn, enable_flag: bool = True, sort_key="ev_score") -> list[dict]:
+            def _filter_and_group(opps: list[dict], key_fn, enable_flag: bool = True, sort_key="ev_score") -> tuple[list[dict], list[dict]]:
                 if not enable_flag:
-                    return []
-                fresh = []
+                    return [], []
+                
+                valid_for_ui = []
                 for o in opps:
                     item_id = o.get("item_id") or o.get("target_item_id") or ""
                     if tier_prefix and not item_id.upper().startswith(tier_prefix):
@@ -225,31 +226,36 @@ class QuantScheduler:
                         if cost > 500_000 and vol < 1 and not getattr(settings, "allow_zero_volume", False):
                             continue
 
-
-
                     key = key_fn(o, item_id)
+                    valid_for_ui.append((key, o))
+
+                ui_final = [o for k, o in valid_for_ui]
+                ui_final.sort(key=lambda x: x.get(sort_key, x.get("estimated_profit", 0)), reverse=True)
+
+                fresh_for_alerts = []
+                for key, o in valid_for_ui:
                     if key in self._alert_history:
                         last_time = self._alert_history[key]
                         if (now_time - last_time).total_seconds() < cooldown_seconds:
                             continue
-                    fresh.append((key, o))
-
+                    fresh_for_alerts.append((key, o))
 
                 grouped = defaultdict(list)
-                for key, o in fresh:
+                for key, o in fresh_for_alerts:
                     grouped[o.get("category", "Unknown")].append((key, o))
 
-                final = []
+                alert_final = []
                 for cat, items in grouped.items():
                     items.sort(key=lambda x: x[1].get(sort_key, x[1].get("estimated_profit", 0)), reverse=True)
                     for key, o in items[:10]:
-                        final.append(o)
+                        alert_final.append(o)
                         self._alert_history[key] = now_time
-                final.sort(key=lambda x: (x.get("category", "Unknown"), -x.get(sort_key, x.get("estimated_profit", 0))))
-                return final
+                alert_final.sort(key=lambda x: (x.get("category", "Unknown"), -x.get(sort_key, x.get("estimated_profit", 0))))
+                
+                return ui_final, alert_final
 
             # 1. Transmutation (Royal safe cities)
-            final_transmute = _filter_and_group(
+            ui_transmute, alert_transmute = _filter_and_group(
                 transmute,
                 lambda o, iid: f"transmute:{iid}:{o.get('source_city', '')}:{o.get('source_item_id', '')}",
                 getattr(settings, "enable_alerts_transmute", True)
@@ -257,46 +263,48 @@ class QuantScheduler:
 
             # 2. Island (Royal safe cities)
             all_island = island + [o for o in craft if _is_island_opportunity(o)]
-            final_island = _filter_and_group(
+            ui_island, alert_island = _filter_and_group(
                 all_island,
                 lambda o, iid: f"island:{iid}:{o.get('sell_city', o.get('destination_city', 'Any'))}",
                 getattr(settings, "enable_alerts_island", True)
             )
 
             # 3. B-Market Making (Caerleon)
-            final_bm_mm = _filter_and_group(
+            ui_bm_mm, alert_bm_mm = _filter_and_group(
                 bm_mm,
                 lambda o, iid: f"bm_mm:{iid}:{o.get('source_city', 'Caerleon')}",
                 getattr(settings, "enable_alerts_bm_mm", True)
             )
 
             # 4. B-Enchanting (Caerleon -> BM)
-            final_bm_enchant = _filter_and_group(
+            ui_bm_enchant, alert_bm_enchant = _filter_and_group(
                 bm_enchant,
                 lambda o, iid: f"bm_enchant:{iid}:{o.get('target_item_id', '')}",
                 getattr(settings, "enable_alerts_bm_enchanting", True),
                 sort_key="estimated_profit"
             )
 
-            final_bm_refine = []
-            final_bm_craft = []
+            ui_bm_refine = []
+            alert_bm_refine = []
+            ui_bm_craft = []
+            alert_bm_craft = []
 
             # 5. B-Arbitrage (Royal -> BM)
-            final_bm_arb = _filter_and_group(
+            ui_bm_arb, alert_bm_arb = _filter_and_group(
                 bm_arb,
                 lambda o, iid: f"bm_arb:{iid}:{o.get('source_city', '')}:{o.get('destination_city', 'Black Market')}",
                 getattr(settings, "enable_alerts_bm_arb", True)
             )
 
             # 8. Market Making (Royal safe cities)
-            final_mm = _filter_and_group(
+            ui_mm, alert_mm = _filter_and_group(
                 mm,
                 lambda o, iid: f"mm:{iid}:{o.get('source_city', '')}",
                 getattr(settings, "enable_alerts_mm", True)
             )
 
             # 9. Refining (Royal safe cities)
-            final_refine = _filter_and_group(
+            ui_refine, alert_refine = _filter_and_group(
                 refine,
                 lambda o, iid: f"refine:{iid}:{o.get('crafting_city', '')}:{o.get('sell_city', '')}",
                 getattr(settings, "enable_alerts_refining", True)
@@ -309,7 +317,7 @@ class QuantScheduler:
                 and o.get("source_city") not in ["Black Market", "Caerleon"]
                 and o.get("base_city") not in ["Black Market", "Caerleon"]
             ]
-            final_enchant = _filter_and_group(
+            ui_enchant, alert_enchant = _filter_and_group(
                 safe_enchant,
                 lambda o, iid: f"enchant:{iid}:{o.get('source_city', '')}:{o.get('destination_city', '')}",
                 getattr(settings, "enable_alerts_enchanting", True),
@@ -317,21 +325,21 @@ class QuantScheduler:
             )
 
             # 11. Crafting (Royal safe cities)
-            final_craft = _filter_and_group(
+            ui_craft, alert_craft = _filter_and_group(
                 [o for o in craft if not _is_island_opportunity(o)],
                 lambda o, iid: f"craft:{iid}:{o.get('crafting_city', '')}:{o.get('sell_city', '')}",
                 getattr(settings, "enable_alerts_crafting", True)
             )
 
             # 12. Arbitrage (Royal safe cities)
-            final_arb = _filter_and_group(
+            ui_arb, alert_arb = _filter_and_group(
                 arb,
                 lambda o, iid: f"arb:{iid}:{o.get('source_city', '')}:{o.get('destination_city', '')}",
                 getattr(settings, "enable_alerts_arb", True)
             )
 
             # Quality Misprice
-            final_quality = _filter_and_group(
+            ui_quality, alert_quality = _filter_and_group(
                 quality,
                 lambda o, iid: f"quality:{iid}:{o.get('source_city', o.get('city', ''))}:{o.get('buy_quality', 1)}",
                 True,
@@ -367,17 +375,17 @@ class QuantScheduler:
                     return res
 
                 new_partition_cache = {
-                    "bm_arbitrage": final_bm_arb,
-                    "bm_enchanting": final_bm_enchant,
-                    "bm_market_making": final_bm_mm,
-                    "arbitrage": final_arb,
-                    "crafting": final_craft,
-                    "refining": final_refine,
-                    "market_making": final_mm,
-                    "enchanting": final_enchant,
-                    "transmutation": final_transmute,
-                    "quality_inversion": final_quality,
-                    "island": final_island,
+                    "bm_arbitrage": ui_bm_arb,
+                    "bm_enchanting": ui_bm_enchant,
+                    "bm_market_making": ui_bm_mm,
+                    "arbitrage": ui_arb,
+                    "crafting": ui_craft,
+                    "refining": ui_refine,
+                    "market_making": ui_mm,
+                    "enchanting": ui_enchant,
+                    "transmutation": ui_transmute,
+                    "quality_inversion": ui_quality,
+                    "island": ui_island,
                 }
 
                 for cat_key, incoming_items in new_partition_cache.items():
@@ -392,31 +400,31 @@ class QuantScheduler:
 
             # Dispatch alerts across all 12 channels
             await self.alerter.send_batch_alerts(
-                arb_opps=final_arb,
+                arb_opps=alert_arb,
                 arb_limit=limit,
-                craft_opps=final_craft,
+                craft_opps=alert_craft,
                 craft_limit=limit,
-                refine_opps=final_refine,
+                refine_opps=alert_refine,
                 refine_limit=limit,
-                enchant_opps=final_enchant,
+                enchant_opps=alert_enchant,
                 enchant_limit=limit,
-                mm_opps=final_mm,
+                mm_opps=alert_mm,
                 mm_limit=limit,
-                transmute_opps=final_transmute,
+                transmute_opps=alert_transmute,
                 transmute_limit=limit,
-                island_opps=final_island,
+                island_opps=alert_island,
                 island_limit=limit,
-                bm_arb_opps=final_bm_arb,
+                bm_arb_opps=alert_bm_arb,
                 bm_arb_limit=limit,
-                bm_craft_opps=final_bm_craft,
+                bm_craft_opps=alert_bm_craft,
                 bm_craft_limit=limit,
-                bm_refine_opps=final_bm_refine,
+                bm_refine_opps=alert_bm_refine,
                 bm_refine_limit=limit,
-                bm_enchant_opps=final_bm_enchant,
+                bm_enchant_opps=alert_bm_enchant,
                 bm_enchant_limit=limit,
-                bm_mm_opps=final_bm_mm,
+                bm_mm_opps=alert_bm_mm,
                 bm_mm_limit=limit,
-                quality_opps=final_quality,
+                quality_opps=alert_quality,
                 quality_limit=limit,
             )
 
