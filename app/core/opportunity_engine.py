@@ -936,25 +936,29 @@ class OpportunityScanner:
 
     def _dynamic_min_margin(self, buy_price: float, is_dangerous: bool, default_min: float) -> float:
         """
-        Dynamic minimum margin curve for routes.
-        For low-cost items (e.g. 20k), higher margin % is required.
-        For high-cost whale items (e.g. >= 1M - 20M+ silver), high absolute silver profit is primary;
-        realistic margins of 10% - 15% are fully permitted.
+        Risk-Proportional Dynamic Minimum Margin Curve:
+        Strictly enforces that profits justify the capital at risk, especially in Red Zone / dangerous routes.
+        Low-cost items in Red Zones (< 150k) require >= 20% margin.
+        Mid-cost items (150k - 1M) require 20% down to 12% margin.
+        High-cost whale items (1M - 10M+) require 12% down to 8% margin, with massive absolute silver payouts.
         """
         if not is_dangerous:
             return default_min
 
-        LOW_PRICE = 50_000
+        LOW_PRICE = 150_000
         HIGH_PRICE = 1_000_000
-        MIN_MARGIN = max(default_min, 10.0)
+        WHALE_PRICE = 5_000_000
 
         if buy_price <= LOW_PRICE:
-            return max(default_min, 15.0)
-        if buy_price >= HIGH_PRICE:
-            return MIN_MARGIN
-
-        t = (buy_price - LOW_PRICE) / (HIGH_PRICE - LOW_PRICE)
-        return max(default_min, 15.0 - t * 5.0)
+            return max(default_min, 20.0)
+        elif buy_price <= HIGH_PRICE:
+            t = (buy_price - LOW_PRICE) / (HIGH_PRICE - LOW_PRICE)
+            return max(default_min, 20.0 - (t * 8.0))  # 20% down to 12%
+        elif buy_price <= WHALE_PRICE:
+            t = (buy_price - HIGH_PRICE) / (WHALE_PRICE - HIGH_PRICE)
+            return max(default_min, 12.0 - (t * 4.0))  # 12% down to 8%
+        else:
+            return max(default_min, 8.0)
 
     def _apply_weight_penalty(self, score: float, profit_per_kg: float) -> float:
         """
@@ -1591,7 +1595,9 @@ class OpportunityScanner:
                     continue
 
                 profit_pct = (net_profit / effective_buy_price) * 100
-                min_profit_silver = max(self.min_bm_profit, 1000) if self.min_bm_profit > 0 else 1000
+                # Risk-Proportional Absolute Silver Floor for Dangerous Red Zone Routes:
+                # E.g. for a 100k item, require at least 20k profit; for 500k, at least 60k profit; for 1M+, at least 120k profit.
+                min_profit_silver = max(self.min_bm_profit, int(buy_price * 0.12), 2000)
                 if net_profit < min_profit_silver:
                     continue
 
@@ -2565,10 +2571,12 @@ class OpportunityScanner:
                         pct = (net_profit / effective_src_sell * 100) if effective_src_sell > 0 else 0
                         roi = (net_profit / effective_src_sell * 100) if effective_src_sell > 0 else 0
 
-                        if net_profit < self.min_arb_profit or pct > 60.0:
+                        is_danger = (src_city == CAERLEON or dest_city == CAERLEON)
+                        min_profit_floor = max(self.min_arb_profit, int(src_sell * 0.12), 2000) if is_danger else self.min_arb_profit
+                        if net_profit < min_profit_floor or pct > 60.0:
                             continue
 
-                        dynamic_min_pct = self._dynamic_min_margin(src_sell, is_dangerous=False, default_min=self.min_arb_profit_pct)
+                        dynamic_min_pct = self._dynamic_min_margin(src_sell, is_dangerous=is_danger, default_min=self.min_arb_profit_pct)
                         if pct < dynamic_min_pct or roi < self.min_roi:
                             continue
 
