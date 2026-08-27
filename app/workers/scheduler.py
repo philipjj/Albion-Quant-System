@@ -179,9 +179,6 @@ class QuantScheduler:
             limit = getattr(settings, "alert_limit_per_cycle", 10)
 
             def _filter_and_group(opps: list[dict], key_fn, enable_flag: bool = True, sort_key="ev_score") -> tuple[list[dict], list[dict]]:
-                if not enable_flag:
-                    return [], []
-                
                 valid_for_ui = []
                 for o in opps:
                     item_id = o.get("item_id") or o.get("target_item_id") or ""
@@ -245,12 +242,13 @@ class QuantScheduler:
                     grouped[o.get("category", "Unknown")].append((key, o))
 
                 alert_final = []
-                for cat, items in grouped.items():
-                    items.sort(key=lambda x: x[1].get(sort_key, x[1].get("estimated_profit", 0)), reverse=True)
-                    for key, o in items[:10]:
-                        alert_final.append(o)
-                        self._alert_history[key] = now_time
-                alert_final.sort(key=lambda x: (x.get("category", "Unknown"), -x.get(sort_key, x.get("estimated_profit", 0))))
+                if enable_flag and getattr(settings, "discord_alerts_enabled", True):
+                    for cat, items in grouped.items():
+                        items.sort(key=lambda x: x[1].get(sort_key, x[1].get("estimated_profit", 0)), reverse=True)
+                        for key, o in items[:10]:
+                            alert_final.append(o)
+                            self._alert_history[key] = now_time
+                    alert_final.sort(key=lambda x: (x.get("category", "Unknown"), -x.get(sort_key, x.get("estimated_profit", 0))))
                 
                 return ui_final, alert_final
 

@@ -362,7 +362,7 @@ class Settings(BaseSettings):
         description="Minutes to wait before repeating an alert for the exact same item and route.",
     )
     discord_alerts_enabled: bool = Field(
-        default=True,
+        default=False,
         alias="DISCORD_ALERTS_ENABLED",
         description="Master ON/OFF switch for Discord alert webhook notifications.",
     )
