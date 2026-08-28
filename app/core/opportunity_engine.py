@@ -1203,7 +1203,10 @@ class OpportunityScanner:
                 target_e = int(target_e_str)
             except ValueError:
                 continue
-            if target_e < 1 or target_e > 4:
+            
+            # In Albion Online, you cannot enchant items to .4 at the Artifact Foundry. 
+            # .4 items must be crafted natively from Pristine resources.
+            if target_e < 1 or target_e > 3:
                 continue
 
             raw_upper = raw_base.upper()
@@ -1265,8 +1268,8 @@ class OpportunityScanner:
                     primary_mat_unit = 0.0
 
                     for step_e in range(start_e + 1, target_e + 1):
-                        mat_type = "RUNE" if step_e == 1 else ("SOUL" if step_e == 2 else ("RELIC" if step_e == 3 else "SHARD_AVALONIAN"))
-                        mat_id = f"T{tier}_{mat_type}" if mat_type != "SHARD_AVALONIAN" else "QUESTITEM_TOKEN_AVALON"
+                        mat_type = "RUNE" if step_e == 1 else ("SOUL" if step_e == 2 else "RELIC")
+                        mat_id = f"T{tier}_{mat_type}"
                         mat_price, mat_age, mat_vol = self._get_enchant_material_price(prices, mat_id, CAERLEON, required_qty=qty)
                         if mat_price <= 0:
                             materials_valid = False
