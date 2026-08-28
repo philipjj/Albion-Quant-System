@@ -11,7 +11,7 @@ class DeterministicRateLimiter:
     Ensures hard spacing between requests and dynamic adjustment based on server pressure.
     """
 
-    def __init__(self, min_interval: float = 0.5):
+    def __init__(self, min_interval: float = 1.2):
         self.min_interval = min_interval
         self.slowdown_factor = 1.0
         self.max_slowdown = 5.0

@@ -84,6 +84,8 @@ class AQSHttpClient:
                         log.error(
                             f"🌐 HTTP: Max retries reached for {url} (Status: {resp.status_code})"
                         )
+                        if resp.status_code == 429:
+                            raise Exception("429 Too Many Requests")
                         break
 
                     # Exponential backoff + jitter

@@ -574,13 +574,15 @@ class MarketCollector:
                 except Exception as e:
                     if "429" in str(e):
                         consecutive_429s += 1
-                        if consecutive_429s >= 5:
+                        if consecutive_429s >= 2:
                             log.warning(
                                 "🛑 CIRCUIT BREAKER: Too many 429s. Cooling down for 60s..."
                             )
                             await asyncio.sleep(60)
                             consecutive_429s = 0
-                    raise
+                        continue
+                    else:
+                        raise
 
                 # Group by city
                 city_groups = {}
