@@ -790,6 +790,7 @@ class UnifiedScanner:
             "data_age_bm": getattr(o, "data_age_bm", 0),
             "data_age_sell": getattr(o, "data_age_bm", 0),
             "is_dangerous": getattr(o, "is_dangerous", False),
+            "ingredients": getattr(o, "ingredients", []),
             "category": category,
             "category_key": "bm_enchanting" if base_c == "Caerleon" else "enchanting",
             "type": "enchanting",

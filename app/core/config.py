@@ -115,6 +115,13 @@ class Settings(BaseSettings):
         AlbionServer.EUROPE: "https://europe.albion-online-data.com",
     }
 
+    # AODP Regional NATS Hosts (Europe: 34222, Asia: 24222, Americas: 4222)
+    aodp_nats_urls: dict = {
+        AlbionServer.AMERICAS: "nats://public:thenewalbiondata@nats.albion-online-data.com:4222",
+        AlbionServer.ASIA: "nats://public:thenewalbiondata@nats.albion-online-data.com:24222",
+        AlbionServer.EUROPE: "nats://public:thenewalbiondata@nats.albion-online-data.com:34222",
+    }
+
     # AODP Rate Limits
     aodp_rate_limit_per_minute: int = 180
     aodp_rate_limit_per_5_min: int = 750
@@ -222,7 +229,11 @@ class Settings(BaseSettings):
 
     # NATS Ingestion & Depth Pooling
     enable_nats_ingestion: bool = Field(default=True, alias="ENABLE_NATS_INGESTION")
-    nats_url: str = Field(default="nats://public:thenewalbiondata@nats.albion-online-data.com:4222", alias="NATS_URL")
+    nats_url: str = Field(
+        default="",
+        alias="NATS_URL",
+        description="Public NATS broker endpoint. If empty, automatically resolves to the active regional server port (Americas: 4222, Europe: 34222, Asia: 24222).",
+    )
     anti_bait_min_volume: int = Field(default=5, alias="ANTI_BAIT_MIN_VOLUME", description="Minimum cumulative volume required to consider a sell price valid.")
     anti_bait_min_volume_equipment: int = Field(default=3, alias="ANTI_BAIT_MIN_VOLUME_EQUIPMENT", description="Minimum volume for equipment depth pool.")
     anti_bait_min_volume_materials: int = Field(default=20, alias="ANTI_BAIT_MIN_VOLUME_MATERIALS", description="Minimum volume for raw/refined materials depth pool.")

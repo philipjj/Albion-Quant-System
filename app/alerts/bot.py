@@ -1042,7 +1042,7 @@ async def patch(ctx):
 @bot.command(name="caravan")
 async def caravan_cmd(ctx, source: str, dest: str, weight: int = 1000):
     """Transport route profit optimizer using greedy knapsack packing."""
-    from app.arbitrage.caravan import optimize_caravan
+    from app.core.caravan import optimize_caravan
 
     def norm_city(c: str) -> str:
         c_clean = c.strip()

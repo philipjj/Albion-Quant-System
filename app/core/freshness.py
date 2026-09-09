@@ -32,188 +32,188 @@ def safe_int(val, default: int = 0) -> int:
 # ═══════════════════════════════════════════════════════════════
 
 # Raw / Refined Crafting Materials (Ore, Bar, Hide, Leather, Fiber, Cloth, Wood, Planks, Rock, Stoneblock)
-# Calibrated for realistic Albion online market activity and liquidity
+# Strict empirical calibration for Royal non-lethal markets (eliminates phantom spreads from local snipers)
 MATERIAL_AGE_LIMITS = {
-    (2, 0): 43_200,    # T2.0: 12.0h
-    (3, 0): 43_200,    # T3.0: 12.0h
-    (4, 0): 28_800,    # T4.0: 8.0h
-    (4, 1): 43_200,    # T4.1: 12.0h
-    (4, 2): 57_600,    # T4.2: 16.0h
-    (4, 3): 86_400,    # T4.3: 24.0h
-    (5, 0): 36_000,    # T5.0: 10.0h
-    (5, 1): 50_400,    # T5.1: 14.0h
-    (5, 2): 86_400,    # T5.2: 24.0h
-    (5, 3): 129_600,   # T5.3: 36.0h
-    (6, 0): 43_200,    # T6.0: 12.0h
-    (6, 1): 64_800,    # T6.1: 18.0h
-    (6, 2): 100_800,   # T6.2: 28.0h
-    (6, 3): 172_800,   # T6.3: 48.0h
-    (7, 0): 57_600,    # T7.0: 16.0h
-    (7, 1): 86_400,    # T7.1: 24.0h
-    (7, 2): 172_800,   # T7.2: 48.0h
-    (7, 3): 259_200,   # T7.3: 72.0h
-    (8, 0): 86_400,    # T8.0: 24.0h
-    (8, 1): 172_800,   # T8.1: 48.0h
-    (8, 2): 259_200,   # T8.2: 72.0h
-    (8, 3): 432_000,   # T8.3: 120.0h
-    (8, 4): 622_080,   # T8.4: 172.8h — Whale tier, extremely illiquid
+    (2, 0): 14_400,    # T2.0: 4.0h
+    (3, 0): 14_400,    # T3.0: 4.0h
+    (4, 0): 3_600,     # T4.0: 1.0h (60 min)
+    (4, 1): 4_500,     # T4.1: 1.25h (75 min)
+    (4, 2): 5_400,     # T4.2: 1.5h (90 min)
+    (4, 3): 7_200,     # T4.3: 2.0h (120 min)
+    (5, 0): 4_500,     # T5.0: 1.25h (75 min)
+    (5, 1): 5_400,     # T5.1: 1.5h (90 min)
+    (5, 2): 7_200,     # T5.2: 2.0h (120 min)
+    (5, 3): 10_800,    # T5.3: 3.0h
+    (6, 0): 5_400,     # T6.0: 1.5h
+    (6, 1): 7_200,     # T6.1: 2.0h
+    (6, 2): 10_800,    # T6.2: 3.0h
+    (6, 3): 14_400,    # T6.3: 4.0h
+    (7, 0): 7_200,     # T7.0: 2.0h
+    (7, 1): 10_800,    # T7.1: 3.0h
+    (7, 2): 14_400,    # T7.2: 4.0h
+    (7, 3): 21_600,    # T7.3: 6.0h
+    (8, 0): 10_800,    # T8.0: 3.0h
+    (8, 1): 18_000,    # T8.1: 5.0h
+    (8, 2): 28_800,    # T8.2: 8.0h
+    (8, 3): 43_200,    # T8.3: 12.0h
+    (8, 4): 86_400,    # T8.4: 24.0h — Whale tier
 }
 
 # Enchantment Materials (Runes, Souls, Relics, Avalonian Shards)
-# High-volume commodities (Runes/Souls) have strict freshness (1.5h-2.0h) to protect multi-stack profit margins
+# High-velocity commodities (Runes/Souls) have ultra-tight freshness (45m-2h) to protect margins
 ENCHANT_MATERIAL_AGE_LIMITS = {
-    # Runes (high volume commodity)
-    (4, "RUNE"): 5_400,       # 1.5h
-    (5, "RUNE"): 5_400,       # 1.5h
-    (6, "RUNE"): 7_200,       # 2.0h
-    (7, "RUNE"): 7_200,       # 2.0h
-    (8, "RUNE"): 10_800,      # 3.0h
-    # Souls (mid volume commodity)
-    (4, "SOUL"): 5_400,       # 1.5h
-    (5, "SOUL"): 5_400,       # 1.5h
-    (6, "SOUL"): 7_200,       # 2.0h
-    (7, "SOUL"): 7_200,       # 2.0h
-    (8, "SOUL"): 14_400,      # 4.0h
-    # Relics (low volume, expensive)
-    (4, "RELIC"): 7_200,      # 2.0h
-    (5, "RELIC"): 7_200,      # 2.0h
-    (6, "RELIC"): 10_800,     # 3.0h
-    (7, "RELIC"): 21_600,     # 6.0h
-    (8, "RELIC"): 43_200,     # 12.0h
+    # Runes (ultra-high volume commodity)
+    (4, "RUNE"): 2_700,       # 45m
+    (5, "RUNE"): 2_700,       # 45m
+    (6, "RUNE"): 3_600,       # 1.0h
+    (7, "RUNE"): 5_400,       # 1.5h
+    (8, "RUNE"): 7_200,       # 2.0h
+    # Souls (high volume commodity)
+    (4, "SOUL"): 2_700,       # 45m
+    (5, "SOUL"): 2_700,       # 45m
+    (6, "SOUL"): 3_600,       # 1.0h
+    (7, "SOUL"): 5_400,       # 1.5h
+    (8, "SOUL"): 7_200,       # 2.0h
+    # Relics (mid volume, expensive)
+    (4, "RELIC"): 3_600,      # 1.0h
+    (5, "RELIC"): 3_600,      # 1.0h
+    (6, "RELIC"): 5_400,      # 1.5h
+    (7, "RELIC"): 9_000,      # 2.5h
+    (8, "RELIC"): 14_400,     # 4.0h
     # Avalonian Shards & Tokens
-    (4, "SHARD"): 14_400,     # 4.0h
-    (5, "SHARD"): 14_400,     # 4.0h
-    (6, "SHARD"): 21_600,     # 6.0h
-    (7, "SHARD"): 43_200,     # 12.0h
-    (8, "SHARD"): 86_400,     # 24.0h
+    (4, "SHARD"): 7_200,      # 2.0h
+    (5, "SHARD"): 7_200,      # 2.0h
+    (6, "SHARD"): 10_800,     # 3.0h
+    (7, "SHARD"): 21_600,     # 6.0h
+    (8, "SHARD"): 43_200,     # 12.0h
 }
 
 # Crafting Artifacts (Rune, Soul, Relic, Hell & Avalonian Artifacts)
 ARTIFACT_AGE_LIMITS = {
-    (4, 0): 7_200,      # 2.0h
-    (5, 0): 10_800,     # 3.0h
-    (6, 0): 14_400,     # 4.0h
-    (7, 0): 21_600,     # 6.0h
-    (8, 0): 43_200,     # 12.0h
+    (4, 0): 3_600,      # 1.0h
+    (5, 0): 5_400,      # 1.5h
+    (6, 0): 7_200,      # 2.0h
+    (7, 0): 10_800,     # 3.0h
+    (8, 0): 18_000,     # 5.0h
 }
 
 # Equipment / Finished Goods (weapons, armor, off-hands, bags, capes)
-# Base items and low-tier gear have fast freshness; high tier/enchantments scale progressively
+# High-volume player gear on Royal markets reprice rapidly; tightened to eliminate phantom orders
 EQUIPMENT_AGE_LIMITS = {
-    (4, 0): 7_200,      # 2.0h
-    (4, 1): 10_800,     # 3.0h
-    (4, 2): 14_400,     # 4.0h
-    (4, 3): 21_600,     # 6.0h
-    (5, 0): 9_000,      # 2.5h
-    (5, 1): 14_400,     # 4.0h
-    (5, 2): 21_600,     # 6.0h
-    (5, 3): 28_800,     # 8.0h
-    (6, 0): 10_800,     # 3.0h
-    (6, 1): 18_000,     # 5.0h
-    (6, 2): 28_800,     # 8.0h
-    (6, 3): 43_200,     # 12.0h
-    (7, 0): 14_400,     # 4.0h
-    (7, 1): 21_600,     # 6.0h
-    (7, 2): 43_200,     # 12.0h
-    (7, 3): 86_400,     # 24.0h
-    (8, 0): 21_600,     # 6.0h
-    (8, 1): 43_200,     # 12.0h
-    (8, 2): 86_400,     # 24.0h
-    (8, 3): 172_800,    # 48.0h (2 days)
-    (8, 4): 345_600,    # 96.0h (4 days)
+    (4, 0): 2_700,      # 45m
+    (4, 1): 3_600,      # 1.0h
+    (4, 2): 4_500,      # 1.25h (75 min)
+    (4, 3): 5_400,      # 1.5h
+    (5, 0): 3_600,      # 1.0h
+    (5, 1): 4_500,      # 1.25h (75 min)
+    (5, 2): 5_400,      # 1.5h
+    (5, 3): 7_200,      # 2.0h
+    (6, 0): 4_500,      # 1.25h (75 min)
+    (6, 1): 5_400,      # 1.5h
+    (6, 2): 7_200,      # 2.0h
+    (6, 3): 10_800,     # 3.0h
+    (7, 0): 7_200,      # 2.0h
+    (7, 1): 10_800,     # 3.0h
+    (7, 2): 14_400,     # 4.0h
+    (7, 3): 21_600,     # 6.0h
+    (8, 0): 10_800,     # 3.0h
+    (8, 1): 18_000,     # 5.0h
+    (8, 2): 28_800,     # 8.0h
+    (8, 3): 43_200,     # 12.0h
+    (8, 4): 86_400,     # 24.0h
 }
 
 # Consumables (Food, Potions)
 CONSUMABLE_AGE_LIMITS = {
-    (1, 0): 3_600,      # 1.0h
-    (2, 0): 3_600,      # 1.0h
-    (3, 0): 3_600,      # 1.0h
-    (4, 0): 3_600,      # 1.0h   — High volume staples
-    (4, 1): 5_400,      # 1.5h
-    (4, 2): 7_200,      # 2.0h
-    (4, 3): 10_800,     # 3.0h
-    (5, 0): 5_400,      # 1.5h
-    (5, 1): 7_200,      # 2.0h
-    (5, 2): 10_800,     # 3.0h
-    (5, 3): 14_400,     # 4.0h
-    (6, 0): 7_200,      # 2.0h
-    (6, 1): 10_800,     # 3.0h
-    (6, 2): 14_400,     # 4.0h
-    (6, 3): 21_600,     # 6.0h
-    (7, 0): 14_400,     # 4.0h
-    (7, 1): 21_600,     # 6.0h
-    (7, 2): 28_800,     # 8.0h
-    (7, 3): 43_200,     # 12.0h
-    (8, 0): 21_600,     # 6.0h
-    (8, 1): 43_200,     # 12.0h
-    (8, 2): 43_200,     # 12.0h
-    (8, 3): 86_400,     # 24.0h
+    (1, 0): 1_800,      # 30m
+    (2, 0): 1_800,      # 30m
+    (3, 0): 1_800,      # 30m
+    (4, 0): 1_800,      # 30m   — High volume staples
+    (4, 1): 2_700,      # 45m
+    (4, 2): 3_600,      # 1.0h
+    (4, 3): 5_400,      # 1.5h
+    (5, 0): 2_700,      # 45m
+    (5, 1): 3_600,      # 1.0h
+    (5, 2): 5_400,      # 1.5h
+    (5, 3): 7_200,      # 2.0h
+    (6, 0): 3_600,      # 1.0h
+    (6, 1): 5_400,      # 1.5h
+    (6, 2): 7_200,      # 2.0h
+    (6, 3): 10_800,     # 3.0h
+    (7, 0): 7_200,      # 2.0h
+    (7, 1): 10_800,     # 3.0h
+    (7, 2): 14_400,     # 4.0h
+    (7, 3): 21_600,     # 6.0h
+    (8, 0): 10_800,     # 3.0h
+    (8, 1): 18_000,     # 5.0h
+    (8, 2): 21_600,     # 6.0h
+    (8, 3): 43_200,     # 12.0h
 }
 
 # Mounts, Journals, Gathering Gear, Furniture, Trophies
 SPECIALTY_AGE_LIMITS = {
-    (1, 0): 14_400,     # 4.0h
-    (2, 0): 14_400,     # 4.0h
-    (3, 0): 14_400,     # 4.0h
-    (4, 0): 14_400,     # 4.0h
-    (4, 1): 21_600,     # 6.0h
-    (4, 2): 28_800,     # 8.0h
-    (4, 3): 43_200,     # 12.0h
-    (5, 0): 21_600,     # 6.0h
-    (5, 1): 28_800,     # 8.0h
-    (5, 2): 43_200,     # 12.0h
-    (5, 3): 86_400,     # 24.0h
-    (6, 0): 43_200,     # 12.0h
-    (6, 1): 86_400,     # 24.0h
-    (6, 2): 86_400,     # 24.0h
-    (6, 3): 172_800,    # 48.0h
-    (7, 0): 86_400,     # 24.0h
-    (7, 1): 172_800,    # 48.0h
-    (7, 2): 172_800,    # 48.0h
-    (7, 3): 259_200,    # 72.0h
-    (8, 0): 172_800,    # 48.0h
-    (8, 1): 259_200,    # 72.0h
-    (8, 2): 345_600,    # 96.0h
-    (8, 3): 604_800,    # 168.0h (7 days)
-    (8, 4): 604_800,    # 168.0h (7 days)
+    (1, 0): 7_200,      # 2.0h
+    (2, 0): 7_200,      # 2.0h
+    (3, 0): 7_200,      # 2.0h
+    (4, 0): 7_200,      # 2.0h
+    (4, 1): 10_800,     # 3.0h
+    (4, 2): 14_400,     # 4.0h
+    (4, 3): 21_600,     # 6.0h
+    (5, 0): 10_800,     # 3.0h
+    (5, 1): 14_400,     # 4.0h
+    (5, 2): 21_600,     # 6.0h
+    (5, 3): 43_200,     # 12.0h
+    (6, 0): 21_600,     # 6.0h
+    (6, 1): 43_200,     # 12.0h
+    (6, 2): 43_200,     # 12.0h
+    (6, 3): 86_400,     # 24.0h
+    (7, 0): 43_200,     # 12.0h
+    (7, 1): 86_400,     # 24.0h
+    (7, 2): 86_400,     # 24.0h
+    (7, 3): 129_600,    # 36.0h
+    (8, 0): 86_400,     # 24.0h
+    (8, 1): 129_600,    # 36.0h
+    (8, 2): 172_800,    # 48.0h
+    (8, 3): 259_200,    # 72.0h
+    (8, 4): 259_200,    # 72.0h
 }
 
 # Market Making — tight limits since MM depends on live spread capture
 MARKET_MAKING_AGE_LIMITS = {
-    (4, 0): 3_600,      # 1.0h
-    (4, 1): 5_400,      # 1.5h
-    (4, 2): 7_200,      # 2.0h
-    (4, 3): 10_800,     # 3.0h
-    (5, 0): 5_400,      # 1.5h
-    (5, 1): 7_200,      # 2.0h
-    (5, 2): 10_800,     # 3.0h
-    (5, 3): 14_400,     # 4.0h
-    (6, 0): 7_200,      # 2.0h
-    (6, 1): 10_800,     # 3.0h
-    (6, 2): 14_400,     # 4.0h
-    (6, 3): 21_600,     # 6.0h
-    (7, 0): 10_800,     # 3.0h
-    (7, 1): 14_400,     # 4.0h
-    (7, 2): 21_600,     # 6.0h
-    (7, 3): 43_200,     # 12.0h
-    (8, 0): 14_400,     # 4.0h
-    (8, 1): 21_600,     # 6.0h
-    (8, 2): 43_200,     # 12.0h
-    (8, 3): 86_400,     # 24.0h
-    (8, 4): 172_800,    # 48.0h
+    (4, 0): 1_800,      # 30m
+    (4, 1): 2_700,      # 45m
+    (4, 2): 3_600,      # 1.0h
+    (4, 3): 5_400,      # 1.5h
+    (5, 0): 2_700,      # 45m
+    (5, 1): 3_600,      # 1.0h
+    (5, 2): 5_400,      # 1.5h
+    (5, 3): 7_200,      # 2.0h
+    (6, 0): 3_600,      # 1.0h
+    (6, 1): 5_400,      # 1.5h
+    (6, 2): 7_200,      # 2.0h
+    (6, 3): 10_800,     # 3.0h
+    (7, 0): 5_400,      # 1.5h
+    (7, 1): 7_200,      # 2.0h
+    (7, 2): 10_800,     # 3.0h
+    (7, 3): 21_600,     # 6.0h
+    (8, 0): 7_200,      # 2.0h
+    (8, 1): 10_800,     # 3.0h
+    (8, 2): 21_600,     # 6.0h
+    (8, 3): 43_200,     # 12.0h
+    (8, 4): 86_400,     # 24.0h
 }
 
 # Maximum Allowed Multi-Leg Desynchronization (seconds)
 # Max time gap between input cost data (materials/base) and finished product sell order data
 MAX_LEG_DESYNC_SECONDS = {
-    1: 3_600,       # 1.0h
-    2: 3_600,       # 1.0h
-    3: 3_600,       # 1.0h
-    4: 5_400,       # 1.5h
-    5: 7_200,       # 2.0h
-    6: 10_800,      # 3.0h
-    7: 18_000,      # 5.0h
-    8: 28_800,      # 8.0h
+    1: 1_800,       # 30m
+    2: 1_800,       # 30m
+    3: 1_800,       # 30m
+    4: 2_700,       # 45m
+    5: 3_600,       # 1.0h
+    6: 5_400,       # 1.5h
+    7: 7_200,       # 2.0h
+    8: 10_800,      # 3.0h
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -389,10 +389,14 @@ def get_max_material_age_seconds(
     volume_24h: int = 0,
     context: str = "default",
     scan_elapsed_seconds: int = 0,
+    city: str = None,
 ) -> int:
     """
     Returns the maximum allowed data age (seconds) for ANY item in Albion Online.
     Includes continuous velocity/volume scaling and scan elapsed time allowance.
+    Dual-segment calibrated:
+    - Royal Non-Lethal Continent: Strict high-velocity bounds to eliminate phantom snipes.
+    - Caerleon / Black Market: Scaled for Red Zone travel and buy order lifespan.
     """
     # Auto-extract tier and enchant from item_id if not provided
     if tier is None or enchant is None:
@@ -417,8 +421,8 @@ def get_max_material_age_seconds(
             age_limit = ENCHANT_MATERIAL_AGE_LIMITS[key]
         else:
             rune_key = (tier, "RUNE")
-            base = ENCHANT_MATERIAL_AGE_LIMITS.get(rune_key, 21_600)
-            type_multipliers = {"RUNE": 1.0, "SOUL": 2.0, "RELIC": 4.0, "SHARD": 4.0}
+            base = ENCHANT_MATERIAL_AGE_LIMITS.get(rune_key, 7_200)
+            type_multipliers = {"RUNE": 1.0, "SOUL": 1.0, "RELIC": 2.0, "SHARD": 3.0}
             age_limit = int(base * type_multipliers.get(mat_type, 2.0))
     elif category == "artifact":
         age_limit = _lookup_with_fallback(ARTIFACT_AGE_LIMITS, tier, 0)
@@ -431,14 +435,23 @@ def get_max_material_age_seconds(
     else:
         age_limit = _lookup_with_fallback(EQUIPMENT_AGE_LIMITS, tier, enchant)
 
+    # Dual-segmentation: Caerleon / Black Market route allowance
+    # Red zone transit requires travel time and Caerleon's local market is less liquid than royal hubs.
+    is_lethal_or_bm = (
+        (city is not None and str(city).strip() in ("Caerleon", "Black Market"))
+        or (context in ("caerleon", "black_market"))
+    )
+    if is_lethal_or_bm:
+        age_limit = max(5_400, int(round(age_limit * 2.0)))
+
     # Continuous Volume Scaling: High-velocity market items reprice faster
     v24 = safe_int(volume_24h)
     if v24 >= 5_000:
-        age_limit = max(1_500, int(round(age_limit * 0.35)))   # 35% of TTL, floor 25 min
+        age_limit = max(900, int(round(age_limit * 0.35)))   # 35% of TTL, floor 15 min
     elif v24 >= 1_000:
-        age_limit = max(1_800, int(round(age_limit * 0.55)))   # 55% of TTL, floor 30 min
+        age_limit = max(1_200, int(round(age_limit * 0.55)))  # 55% of TTL, floor 20 min
     elif v24 >= 200:
-        age_limit = max(2_400, int(round(age_limit * 0.80)))   # 80% of TTL, floor 40 min
+        age_limit = max(1_800, int(round(age_limit * 0.80)))  # 80% of TTL, floor 30 min
 
     return age_limit + max(0, safe_int(scan_elapsed_seconds, default=0))
 
@@ -514,6 +527,7 @@ def is_market_data_fresh(
     volume_24h: int | None = 0,
     tier: int | None = None,
     scan_elapsed_seconds: int = None,
+    city: str = None,
 ) -> bool:
     """
     Determines if market data is fresh enough to be ingested into the database.
@@ -531,12 +545,13 @@ def is_market_data_fresh(
         tier=tier,
         volume_24h=safe_int(volume_24h),
         scan_elapsed_seconds=scan_elapsed_seconds,
+        city=city,
     )
 
     is_fresh = age_seconds <= threshold
 
     if not is_fresh:
-        log.debug(f"🗑️ FRESHNESS: Rejected {item_id} (Age: {age_seconds}s, Threshold: {threshold}s)")
+        log.debug(f"🗑️ FRESHNESS: Rejected {item_id} in {city or 'Royal'} (Age: {age_seconds}s, Threshold: {threshold}s)")
 
     return is_fresh
 

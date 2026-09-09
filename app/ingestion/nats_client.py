@@ -95,20 +95,39 @@ class AlbionNatsClient:
         if self._running:
             log.info("[NATS] Connection closed.")
 
+    @property
+    def nats_url(self) -> str:
+        """Returns the appropriate NATS broker URL for the active regional server."""
+        if settings.nats_url and settings.nats_url.strip():
+            return settings.nats_url.strip()
+        return settings.aodp_nats_urls.get(
+            settings.active_server,
+            "nats://public:thenewalbiondata@nats.albion-online-data.com:34222",
+        )
+
     async def start(self):
         if not settings.enable_nats_ingestion:
             log.info("[NATS] NATS ingestion is disabled in settings.")
             return
 
+        self._running = True
+
+        # Always start background buffer flusher and expiration pruner.
+        # This guarantees private direct ingestion flushes immediately even if public NATS is offline.
+        if not self.flush_task or self.flush_task.done():
+            self.flush_task = asyncio.create_task(self._buffer_flusher())
+        if not self.purge_task or self.purge_task.done():
+            self.purge_task = asyncio.create_task(self._expiration_purger())
+
         if nats is None:
-            log.warning("[NATS] nats-py is not installed. Live NATS streaming disabled.")
+            log.warning("[NATS] nats-py is not installed. Public NATS streaming disabled (private local ingestion remains active).")
             return
 
-        self._running = True
-        log.info(f"[NATS] Connecting to {settings.nats_url}...")
+        target_url = self.nats_url
+        log.info(f"[NATS] Connecting to {target_url} (region: {settings.active_server.value})...")
         try:
             self.nc = await nats.connect(
-                settings.nats_url,
+                target_url,
                 connect_timeout=6.0,
                 reconnect_time_wait=10.0,
                 max_reconnect_attempts=60,
@@ -126,9 +145,6 @@ class AlbionNatsClient:
             # Subscribe to gold prices
             self.sub_gold = await self.nc.subscribe("goldprices.deduped", cb=self.gold_message_handler)
 
-            # Start background flusher and expiration pruner
-            self.flush_task = asyncio.create_task(self._buffer_flusher())
-            self.purge_task = asyncio.create_task(self._expiration_purger())
             log.info("[NATS] Real-time LOB orderbook stream active.")
         except Exception as e:
             err_type = type(e).__name__

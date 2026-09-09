@@ -93,35 +93,40 @@ from app.core.freshness import (
 def get_max_allowed_bm_age_seconds(item_id: str, bm_price: float) -> int:
     """
     Calculates realistic Black Market buy order lifespan based on capital barrier to entry and item tier.
-    - Low-tier items (T4.0-T5.1, < 80k): 2.5 to 4 hours
-    - Mid-tier items (T5.2-T6.2, 80k - 500k): 4 to 8 hours
-    - High-tier items (T7.0-T8.2, 500k - 5M): 8 to 12 hours
-    - Whale / Artifact items (> 5M - 35M+, T8.3-T8.4): 24 to 72 hours
+    Dual-segment calibrated for lethal Red Zone / Black Market delivery routes:
+    - Low-tier items (T4.0-T5.1, < 60k): 1.5 hours (5,400s)
+    - Mid-tier items (60k - 150k): 2.0 hours (7,200s)
+    - T6 items (150k - 500k): 3.0 hours (10,800s)
+    - T7 items (500k - 1.5M): 6.0 hours (21,600s)
+    - T8 items (1.5M - 4M): 8.0 hours (28,800s)
+    - Elite (.3 / 4M - 8M): 16.0 hours (57,600s)
+    - Whale (8M - 20M / T8.4): 24.0 hours (86,400s)
+    - Ultra-Whale (> 20M): 48.0 hours (172,800s)
     """
     upper = str(item_id).upper()
 
-    # 1. Whale / Ultra-High Value (>15M - 35M+, T8.4, T8.3, T7.4) -> Up to 72 hours
+    # 1. Whale / Ultra-High Value (> 20M, T8.4, or Whale price)
     is_tier_8_4 = "@4" in upper or "LEVEL4" in upper or (upper.startswith("T8_") and ("@3" in upper or "@4" in upper))
-    if bm_price >= 20_000_000 or (is_tier_8_4 and bm_price >= 10_000_000):
-        return 259_200    # 72 hours (3 days)
+    if bm_price >= 20_000_000:
+        return 172_800    # 48.0 hours (2 days)
     if bm_price >= 8_000_000 or is_tier_8_4:
-        return 129_600    # 36 hours (1.5 days)
+        return 86_400     # 24.0 hours (1 day)
     if bm_price >= 4_000_000 or "@3" in upper:
-        return 86_400     # 24 hours (1 day)
+        return 57_600     # 16.0 hours
 
-    # 2. High Capital Tiers (T8.0-T8.2, T7.2-T7.3, 1M - 4M silver)
+    # 2. High Capital Tiers (T8.0-T8.2, T7.2-T7.3, 500k - 4M silver)
     if bm_price >= 1_500_000 or upper.startswith("T8_"):
-        return 43_200     # 12.0 hours
-    elif bm_price >= 500_000 or (upper.startswith("T7_") and ("@1" in upper or "@2" in upper)):
         return 28_800     # 8.0 hours
+    elif bm_price >= 500_000 or (upper.startswith("T7_") and ("@1" in upper or "@2" in upper)):
+        return 21_600     # 6.0 hours
     elif bm_price >= 150_000 or upper.startswith("T6_"):
-        return 18_000     # 5.0 hours
+        return 10_800     # 3.0 hours
 
     # 3. Low-Mid Capital Tiers (T4.0-T5.2, < 150k silver)
     if bm_price >= 60_000 or upper.startswith("T5_"):
-        return 14_400     # 4.0 hours
+        return 7_200      # 2.0 hours
     else:
-        return 9_000      # 2.5 hours
+        return 5_400      # 1.5 hours (90 min)
 
 RAW_REFINED_KEYWORDS = (
     "_ORE", "_HIDE", "_FIBER", "_WOOD", "_ROCK",
@@ -495,6 +500,7 @@ class EnchantingOpportunity:
     base_city: str = "Caerleon"
     sell_city: str = "Black Market"
     is_dangerous: bool = False
+    ingredients: list[dict] = field(default_factory=list)
 
     @property
     def item_id(self) -> str:
@@ -1266,6 +1272,7 @@ class OpportunityScanner:
                     primary_mat_id = ""
                     primary_mat_qty = 0
                     primary_mat_unit = 0.0
+                    step_ingredients = []
 
                     for step_e in range(start_e + 1, target_e + 1):
                         mat_type = "RUNE" if step_e == 1 else ("SOUL" if step_e == 2 else "RELIC")
@@ -1278,6 +1285,17 @@ class OpportunityScanner:
                         effective_mat_unit = calculate_effective_price(mat_price, qty, mat_vol, is_buy=True)
                         total_mat_cost += effective_mat_unit * qty
                         max_mat_age = max(max_mat_age, mat_age)
+
+                        mat_name = getattr(self, "_item_names", {}).get(mat_id, mat_id)
+                        step_ingredients.append({
+                            "item_id": mat_id,
+                            "name": mat_name,
+                            "qty": qty,
+                            "quantity": qty,
+                            "unit_price": effective_mat_unit,
+                            "buy_city": CAERLEON
+                        })
+
                         if not primary_mat_id:
                             primary_mat_id = mat_id
                             primary_mat_qty = qty
@@ -1296,13 +1314,13 @@ class OpportunityScanner:
                     total_cost = effective_base + total_mat_cost
                     net_profit = revenue_net - total_cost
 
-                    min_profit_silver = max(self.min_bm_profit, 2000) if self.min_bm_profit > 0 else 2000
+                    min_profit_silver = max(self.min_craft_profit, 2000) if self.min_craft_profit > 0 else 2000
                     if net_profit < min_profit_silver:
                         continue
 
                     profit_pct = (net_profit / total_cost) * 100
                     roi_val = profit_pct
-                    dynamic_min_pct = self._dynamic_min_margin(total_cost, is_dangerous=False, default_min=self.min_bm_profit_pct)
+                    dynamic_min_pct = self._dynamic_min_margin(total_cost, is_dangerous=False, default_min=self.min_craft_profit_pct)
                     if profit_pct < dynamic_min_pct or roi_val < self.min_roi:
                         continue
 
@@ -1332,6 +1350,7 @@ class OpportunityScanner:
                         base_city=CAERLEON,
                         sell_city=BM_CITY,
                         is_dangerous=False,
+                        ingredients=step_ingredients,
                     )
 
                     freshness = max(0.1, 1.0 - (bm_age + base_age) / (get_max_material_age_seconds(target_id) + get_max_material_age_seconds(cand_base_id)))
@@ -1417,6 +1436,16 @@ class OpportunityScanner:
 
                     effective_mat_unit = calculate_effective_price(mat_price, material_qty, mat_vol, is_buy=True)
                     total_mat_cost = effective_mat_unit * material_qty
+                    
+                    mat_name = getattr(self, "_item_names", {}).get(material_id, material_id)
+                    step_ingredients = [{
+                        "item_id": material_id,
+                        "name": mat_name,
+                        "qty": material_qty,
+                        "quantity": material_qty,
+                        "unit_price": effective_mat_unit,
+                        "buy_city": city
+                    }]
 
                     trade_vol = self.default_trade_volume if self.use_slippage else 1
                     effective_base = calculate_effective_price(base_price, trade_vol, base_vol, is_buy=True)
@@ -2744,9 +2773,12 @@ class OpportunityScanner:
                 if any(r in ing_id for r in ["PLANKS", "CLOTH", "LEATHER", "BAR", "METALBAR", "WOOD", "ORE", "HIDE", "FIBER", "ROCK", "STONE", "BLOCK"]):
                     is_returnable = True
 
+            ing_name = getattr(self, "_item_names", {}).get(ing_id, ing_id)
             ingredients.append({
                 "item_id": ing_id,
+                "name": ing_name,
                 "quantity": qty,
+                "qty": qty,
                 "unit_price": best_price,
                 "buy_city": best_city,
                 "line_cost": round(line_cost, 0),

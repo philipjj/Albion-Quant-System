@@ -157,46 +157,74 @@ async def stop_system(db: Session = Depends(get_db)):
     return await get_system_settings(db)
 
 
-@router.post("/clear")
-@router.post("/opportunities/clear")
-async def clear_stale_data(db: Session = Depends(get_db)):
-    """
-    Intelligently purges stale quotes (>24h) and duplicate snapshots,
-    while preserving high-value Black Market buy orders (>= 500k silver) up to 7 days old.
-    """
-    log.info("[SYSTEM] Web UI requested intelligent stale quote purge...")
+def _sync_purge_stale_data() -> tuple[int, int]:
+    """Worker function executed in a background thread to safely delete stale records in chunks."""
+    from app.db.session import get_db_session
     now = datetime.utcnow()
     c24 = now - timedelta(hours=24)
     c_bm_long = now - timedelta(days=7)
 
-    res_mp = db.execute(
-        text("""
-            DELETE FROM market_prices 
-            WHERE captured_at < :c24
-            AND NOT (city = 'Black Market' AND buy_price_max >= 500000 AND captured_at >= :c_bm_long)
-        """),
-        {"c24": c24, "c_bm_long": c_bm_long},
-    )
-    res_bm = db.execute(
-        text("DELETE FROM black_market_snapshots WHERE captured_at < :cutoff"),
-        {"cutoff": c_bm_long},
-    )
-    db.commit()
+    purged_total = 0
+    with get_db_session() as session:
+        # Batch deletion of stale market_prices to avoid long SQLite write-locks
+        batch_size = 10000
+        while True:
+            res = session.execute(
+                text("""
+                    DELETE FROM market_prices 
+                    WHERE id IN (
+                        SELECT id FROM market_prices
+                        WHERE captured_at < :c24
+                        AND NOT (city = 'Black Market' AND buy_price_max >= 500000 AND captured_at >= :c_bm_long)
+                        LIMIT :batch_size
+                    )
+                """),
+                {"c24": c24, "c_bm_long": c_bm_long, "batch_size": batch_size},
+            )
+            session.commit()
+            purged_total += res.rowcount
+            if res.rowcount < batch_size:
+                break
 
-    # Clear in-memory opportunity cache
-    try:
-        from app.api.opportunities import _cached_opportunities
-        _cached_opportunities.clear()
-    except Exception:
-        pass
+        # Prune black_market_snapshots
+        session.execute(
+            text("DELETE FROM black_market_snapshots WHERE captured_at < :cutoff"),
+            {"cutoff": c_bm_long},
+        )
+        session.commit()
 
-    total_remaining = db.execute(text("SELECT COUNT(*) FROM market_prices")).scalar() or 0
-    log.info(f"[SYSTEM] Purged {res_mp.rowcount} stale records. Active quotes remaining: {total_remaining}")
+        # Checkpoint WAL to release disk space
+        try:
+            session.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        except Exception:
+            pass
+
+        remaining = session.execute(text("SELECT COUNT(*) FROM market_prices")).scalar() or 0
+
+    return purged_total, remaining
+
+
+@router.post("/clear")
+@router.post("/stale-purge")
+async def clear_stale_data():
+    """
+    Intelligently purges stale quotes (>24h) and duplicate snapshots,
+    while preserving high-value Black Market buy orders (>= 500k silver) up to 7 days old.
+    Executes asynchronously in a worker thread to prevent freezing the event loop.
+    """
+    log.info("[SYSTEM] Web UI requested intelligent stale quote purge in background thread...")
+    purged_count, total_remaining = await asyncio.to_thread(_sync_purge_stale_data)
+
+    # Invalidate stats cache
+    global _STATS_CACHE_TIME
+    _STATS_CACHE_TIME = 0.0
+
+    log.info(f"[SYSTEM] Purged {purged_count} stale records. Active quotes remaining: {total_remaining}")
     return {
         "status": "cleared",
-        "purged_records": res_mp.rowcount,
+        "purged_records": purged_count,
         "remaining_records": total_remaining,
-        "message": f"Successfully purged {res_mp.rowcount:,} stale quotes. High-value BM orders preserved.",
+        "message": f"Successfully purged {purged_count:,} stale quotes. High-value BM orders preserved.",
     }
 
 
@@ -214,19 +242,35 @@ async def shutdown_system():
     return {"status": "shutting_down", "message": "AQS Server process terminated cleanly (SIGINT / Ctrl+C equivalent)."}
 
 
-@router.get("/stats")
-async def get_system_stats(db: Session = Depends(get_db)):
+_STATS_CACHE: dict[str, Any] = {}
+_STATS_CACHE_TIME: float = 0.0
 
-    """Summary statistics for the Web UI dashboard."""
+
+def _get_cached_db_counts(db: Session, server_value: str) -> tuple[int, int, int]:
+    """Cache heavy count queries for 30s to prevent 45s UI polling from blocking the event loop."""
+    global _STATS_CACHE, _STATS_CACHE_TIME
+    now = datetime.utcnow().timestamp()
+    if (now - _STATS_CACHE_TIME < 30.0) and "counts" in _STATS_CACHE:
+        return _STATS_CACHE["counts"]
+
     item_count = db.query(func.count(Item.item_id)).scalar() or 0
     price_count = db.query(func.count(MarketPrice.id)).scalar() or 0
-
     recent_price_count = (
         db.query(func.count(MarketPrice.id))
-        .filter(MarketPrice.server == settings.active_server.value)
+        .filter(MarketPrice.server == server_value)
         .scalar()
         or 0
     )
+    res = (item_count, price_count, recent_price_count)
+    _STATS_CACHE["counts"] = res
+    _STATS_CACHE_TIME = now
+    return res
+
+
+@router.get("/stats")
+async def get_system_stats(db: Session = Depends(get_db)):
+    """Summary statistics for the Web UI dashboard."""
+    item_count, price_count, recent_price_count = _get_cached_db_counts(db, settings.active_server.value)
 
     arb_count = (
         db.query(func.count(ArbitrageOpportunity.id))
@@ -362,8 +406,8 @@ def set_latest_opportunities_cache(cache_dict: dict[str, list[dict]]):
         ]
 
     _LATEST_OPPORTUNITIES_CACHE = filtered_cache
-    _LATEST_SCAN_TIME = datetime.utcnow().isoformat()
-    log.info(f"[CACHE] Updated live opportunities cache with {sum(len(v) for v in filtered_cache.values())} records.")
+    total_records = sum(len(v) for k, v in filtered_cache.items() if k != "island")
+    log.info(f"[CACHE] Updated live opportunities cache with {total_records} records.")
 
 
 @router.post("/scan")
@@ -433,7 +477,7 @@ async def trigger_live_scan(db: Session = Depends(get_db)):
             }
             _LATEST_SCAN_TIME = datetime.utcnow().isoformat()
 
-        total_opps = sum(len(v) for v in _LATEST_OPPORTUNITIES_CACHE.values())
+        total_opps = sum(len(v) for k, v in _LATEST_OPPORTUNITIES_CACHE.items() if k != "island")
         return {
             "status": "success",
             "message": f"Scan completed. Found {total_opps} verified filtered opportunities.",
@@ -511,7 +555,10 @@ async def dismiss_opportunity(payload: DismissOpportunityIn):
     For other opportunities: sets 15-minute temporary suppression.
     """
     global _LATEST_OPPORTUNITIES_CACHE
-    item_id_upper = payload.item_id.upper()
+    if not payload.item_id or payload.item_id.strip().upper() in ("", "UNDEFINED", "NULL"):
+        return {"status": "ignored", "message": "Invalid item_id provided"}
+
+    item_id_upper = payload.item_id.strip().upper()
     now_ts = datetime.utcnow().timestamp()
 
     is_bm = is_bm_category(payload.category_key) or (bool(payload.city) and "black market" in payload.city.lower())

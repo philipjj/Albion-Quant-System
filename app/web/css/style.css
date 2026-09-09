@@ -1054,8 +1054,8 @@ h1, h2, h3, h4, .font-heading {
 }
 
 .item-icon-wrap {
-  width: 52px;
-  height: 52px;
+  width: 64px;
+  height: 64px;
   background: var(--bg-surface-1);
   border: 1px solid var(--border-medium);
   border-radius: var(--r-sm);
@@ -1541,66 +1541,11 @@ h1, h2, h3, h4, .font-heading {
    MODAL INSPECTION CHAMBER
    ═══════════════════════════════════════════════════════════════ */
 
-.modal-screen {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.15s ease;
-  padding: 1.25rem;
-}
 
-.modal-screen.open {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.modal-frame {
-  background: var(--bg-surface-0);
-  border: 1px solid #363022;
-  border-top: 2px solid var(--accent-gold);
-  border-radius: var(--r-lg);
-  width: 100%;
-  max-width: 640px;
-  max-height: 88vh;
-  overflow-y: auto;
-  padding: 1.5rem;
-  position: relative;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8);
-}
-
-.modal-close-ico {
-  position: absolute;
-  top: 1rem;
-  right: 1rem;
-  background: var(--bg-surface-1);
-  border: 1px solid var(--border-medium);
-  color: var(--text-gold);
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: background-color 0.08s ease, color 0.08s ease;
-}
-
-.modal-close-ico:hover {
-  color: #FFF;
-  border-color: var(--accent-gold);
-  background: var(--bg-surface-2);
-}
 
 .icon-frame-clean {
-  width: 54px;
-  height: 54px;
+  width: 72px;
+  height: 72px;
   background: var(--bg-surface-1);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-sm);

@@ -73,21 +73,42 @@ function getItemIconUrl(itemId, quality = 1, size = 128) {
   return `https://render.albiononline.com/v1/item/${safeIdentifier}.png?quality=${q}&size=${s}`;
 }
 
-// Graceful icon error fallback (try base item without enchantment, then fallback)
 function handleIconError(img, itemId, quality = 1) {
   if (!img) return;
+  const currentSrc = img.src || '';
+  if (currentSrc.includes('T4_BAG')) return;
+
   img.onerror = null;
   const cleanId = String(itemId || '').trim();
+  const q = parseInt(quality || 1);
+
+  const fallbacks = [];
+
+  if (q > 1) {
+    fallbacks.push(`https://render.albiononline.com/v1/item/${encodeURIComponent(cleanId).replace(/%40/g, '@')}.png?quality=1&size=128`);
+  }
+
   if (cleanId.includes('@')) {
     const baseId = cleanId.split('@')[0].toUpperCase();
-    img.src = `https://render.albiononline.com/v1/item/${baseId}.png?quality=${quality}&size=128`;
-    img.onerror = function() {
-      img.onerror = null;
-      img.src = 'https://render.albiononline.com/v1/item/T4_BAG.png';
-    };
-  } else {
-    img.src = 'https://render.albiononline.com/v1/item/T4_BAG.png';
+    fallbacks.push(`https://render.albiononline.com/v1/item/${encodeURIComponent(baseId)}.png?quality=${q}&size=128`);
+    if (q > 1) {
+      fallbacks.push(`https://render.albiononline.com/v1/item/${encodeURIComponent(baseId)}.png?quality=1&size=128`);
+    }
   }
+
+  fallbacks.push('https://render.albiononline.com/v1/item/T4_BAG.png');
+
+  let fallbackIndex = 0;
+  
+  img.onerror = function() {
+    if (fallbackIndex < fallbacks.length) {
+      img.src = fallbacks[fallbackIndex++];
+    } else {
+      img.onerror = null;
+    }
+  };
+  
+  img.src = fallbacks[fallbackIndex++];
 }
 
 // Numerical & Currency Formatter
@@ -663,9 +684,26 @@ window.resetAllFilters = function() {
   showToast('All active filters reset');
 };
 
+function formatItemName(rawId) {
+  if (!rawId) return '';
+  let clean = rawId.split('@')[0];
+  if (/^T\d+_/.test(clean)) {
+    const tier = clean.slice(0, 2);
+    const rest = clean.slice(3).replace(/_/g, ' ').toLowerCase();
+    const capitalized = rest.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return `${tier} ${capitalized}`;
+  }
+  return clean.replace(/_/g, ' ');
+}
+
 function updateTabCounts() {
   let allCount = 0;
-  const hasSubSectors = Boolean(state.opportunities.potions || state.opportunities.cooking || state.opportunities.farming);
+  const hasSubSectors = Boolean(
+    (state.opportunities.potions && state.opportunities.potions.length > 0) ||
+    (state.opportunities.cooking && state.opportunities.cooking.length > 0) ||
+    (state.opportunities.farming && state.opportunities.farming.length > 0) ||
+    (state.opportunities.mounts && state.opportunities.mounts.length > 0)
+  );
 
   for (const [key, list] of Object.entries(state.opportunities)) {
     const count = (list || []).length;
@@ -883,8 +921,10 @@ function renderCardsView(pageSlice, offset) {
     const enchant = itemId.includes('@') ? itemId.split('@')[1] : '0';
     const enchantLabel = enchant !== '0' ? `.${enchant}` : '';
 
+    const catStr = String(opp.category_key || state.activeTab || '').toLowerCase();
+    const isBm = catStr.includes('bm') || catStr.includes('black_market') || (opp.destination_city && opp.destination_city.toLowerCase() === 'black market');
     const srcCity = opp.buy_city || opp.source_city || opp.craft_city || opp.refine_city || opp.base_city || 'Martlock';
-    const dstCity = opp.sell_city || opp.destination_city || (opp.craft_city ? opp.craft_city : 'Caerleon');
+    const dstCity = opp.sell_city || opp.destination_city || (isBm ? 'Black Market' : srcCity);
     const isDangerous = isLethalRoute(opp, srcCity, dstCity);
     const zoneMeta = getRouteZoneMeta(opp, srcCity, dstCity);
     const catMeta = getCategoryMeta(opp.category_key || state.activeTab, opp);
@@ -982,7 +1022,7 @@ function renderCardsView(pageSlice, offset) {
         <div class="card-actions-bar">
           <span class="card-ev-score font-mono">Score: <strong style="color: var(--accent-gold-bright);">${Math.round(opp.score !== undefined ? opp.score : (opp.ev_score || 0))}</strong></span>
           <div style="display: flex; gap: 0.4rem;">
-            <button class="btn-dismiss-sub" onclick="dismissOpportunity('${opp.item_id}', '${opp.category_key || state.activeTab}', event, ${opp.data_age_bm || opp.data_age_sell || 0}, ${opp.bm_buy_price || opp.sell_price || 0}, ${opp.quality || 1})" title="Mark as filled or dismiss">✓ Filled</button>
+            <button class="btn-dismiss-sub" onclick="dismissOpportunity('${itemId}', '${opp.category_key || state.activeTab}', event, ${opp.data_age_bm || opp.data_age_sell || 0}, ${opp.bm_buy_price || opp.sell_price || 0}, ${opp.quality || 1})" title="Mark as filled or dismiss">✓ Filled</button>
             <button class="btn-blueprint-action" onclick="openDetailModal(${globalIdx}, '${opp.category_key || state.activeTab}')">🔍 Blueprint & Math</button>
           </div>
         </div>
@@ -1019,8 +1059,10 @@ function renderTableView(pageSlice, offset) {
     const enchant = itemId.includes('@') ? itemId.split('@')[1] : '0';
     const enchantLabel = enchant !== '0' ? `.${enchant}` : '';
 
+    const catStr = String(opp.category_key || state.activeTab || '').toLowerCase();
+    const isBm = catStr.includes('bm') || catStr.includes('black_market') || (opp.destination_city && opp.destination_city.toLowerCase() === 'black market');
     const srcCity = opp.buy_city || opp.source_city || opp.craft_city || opp.refine_city || opp.base_city || 'Martlock';
-    const dstCity = opp.sell_city || opp.destination_city || 'Caerleon';
+    const dstCity = opp.sell_city || opp.destination_city || (isBm ? 'Black Market' : srcCity);
     const isDangerous = isLethalRoute(opp, srcCity, dstCity);
     const zoneMeta = getRouteZoneMeta(opp, srcCity, dstCity);
     const catMeta = getCategoryMeta(opp.category_key || state.activeTab, opp);
@@ -1077,7 +1119,7 @@ function renderTableView(pageSlice, offset) {
           </div>
         </td>
         <td style="white-space: nowrap;">
-          <button class="btn-dismiss-sub" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; margin-right: 0.3rem;" onclick="dismissOpportunity('${opp.item_id}', '${opp.category_key || state.activeTab}', event, ${opp.data_age_bm || opp.data_age_sell || 0}, ${opp.bm_buy_price || opp.sell_price || 0}, ${opp.quality || 1})" title="Mark as filled">✓</button>
+          <button class="btn-dismiss-sub" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; margin-right: 0.3rem;" onclick="dismissOpportunity('${itemId}', '${opp.category_key || state.activeTab}', event, ${opp.data_age_bm || opp.data_age_sell || 0}, ${opp.bm_buy_price || opp.sell_price || 0}, ${opp.quality || 1})" title="Mark as filled">✓</button>
           <button class="btn-blueprint-action" style="padding: 0.25rem 0.5rem; font-size: 0.7rem;" onclick="openDetailModal(${globalIdx}, '${opp.category_key || state.activeTab}')">Blueprint</button>
         </td>
       </tr>
@@ -1088,8 +1130,9 @@ function renderTableView(pageSlice, offset) {
 }
 
 window.dismissOpportunity = async function(itemId, categoryKey, event, dataAgeBm = 0, bmPrice = 0, quality = 1) {
-  if (!itemId) return;
+  if (!itemId || itemId === 'undefined' || itemId === 'null') return;
   const idUpper = itemId.trim().toUpperCase();
+  if (!idUpper || idUpper === 'UNDEFINED' || idUpper === 'NULL') return;
   const isBm = (categoryKey || '').includes('black_market') || (categoryKey || '').includes('b_') || categoryKey === 'bm';
 
   // 1. Instantly register in local dismissed set & storage
@@ -1312,7 +1355,12 @@ function passesOpportunityFilter(opp) {
 
 function getFilteredOpportunities() {
   let pool = [];
-  const hasSubSectors = Boolean(state.opportunities.potions || state.opportunities.cooking || state.opportunities.farming);
+  const hasSubSectors = Boolean(
+    (state.opportunities.potions && state.opportunities.potions.length > 0) ||
+    (state.opportunities.cooking && state.opportunities.cooking.length > 0) ||
+    (state.opportunities.farming && state.opportunities.farming.length > 0) ||
+    (state.opportunities.mounts && state.opportunities.mounts.length > 0)
+  );
 
   if (state.activeTab === 'all') {
     for (const [catKey, list] of Object.entries(state.opportunities)) {
@@ -1387,10 +1435,11 @@ window.openDetailModal = function(globalIdx, catKey) {
   const tier = itemId.startsWith('T') ? itemId.slice(0, 2) : 'T4';
   const quality = opp.quality || 1;
   const stars = '★'.repeat(quality);
-  const cat = opp.category_key || catKey || state.activeTab;
+  const cat = String(opp.category_key || catKey || state.activeTab || '').toLowerCase();
   const catMeta = getCategoryMeta(cat, opp);
+  const isBm = cat.includes('bm') || cat.includes('black_market') || (opp.destination_city && opp.destination_city.toLowerCase() === 'black market');
   const srcCity = opp.buy_city || opp.source_city || opp.craft_city || opp.refine_city || opp.base_city || 'Local';
-  const dstCity = opp.sell_city || opp.destination_city || 'Marketplace';
+  const dstCity = opp.sell_city || opp.destination_city || (isBm ? 'Black Market' : srcCity);
   const isDangerous = isLethalRoute(opp, srcCity, dstCity);
 
   // ─── Dynamic Recipe / Blueprint Breakdown for All Categories ───
@@ -1400,11 +1449,41 @@ window.openDetailModal = function(globalIdx, catKey) {
   if (cat.includes('enchant') || opp.material_id || opp.base_item_id) {
     const baseId = opp.base_item_id || itemId.split('@')[0];
     const basePrice = Number(opp.base_price || 0);
-    const matId = opp.material_id || (itemId.startsWith('T') ? `T${itemId[1]}_SOUL` : 'T4_SOUL');
-    const matQty = Number(opp.material_qty || 96);
-    const matPrice = Number(opp.material_price || 0);
-    const totalMatCost = matPrice * matQty * qty;
     const totalBaseCost = basePrice * qty;
+
+    const materials = (opp.ingredients && opp.ingredients.length > 0) ? opp.ingredients : [{
+      item_id: opp.material_id || (itemId.startsWith('T') ? `T${itemId[1]}_SOUL` : 'T4_SOUL'),
+      name: opp.material_id ? formatItemName(opp.material_id) : (itemId.startsWith('T') ? `T${itemId[1]} Soul` : 'T4 Soul'),
+      qty: Number(opp.material_qty || 96),
+      quantity: Number(opp.material_qty || 96),
+      unit_price: Number(opp.material_price || 0),
+      buy_city: srcCity
+    }];
+
+    const materialsHtml = materials.map(mat => {
+      const matQty = Number(mat.quantity || mat.qty || 1);
+      const matPrice = Number(mat.unit_price || 0);
+      const totalMatCost = matPrice * matQty * qty;
+      const matId = mat.item_id;
+      const matName = mat.name || mat.item_name || formatItemName(matId);
+      const matCity = mat.buy_city || srcCity;
+      
+      return `
+        <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-1); padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-subtle);">
+          <div style="display: flex; align-items: center; gap: 0.6rem;">
+            <img src="${getItemIconUrl(matId, 1, 64)}" style="width: 32px; height: 32px; border-radius: 4px;" loading="lazy" decoding="async" onerror="handleIconError(this, '${matId}', 1)" />
+            <div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${matName} (Enchanting Material)</div>
+              <div style="font-size: 0.7rem; color: var(--text-muted);">Sourced at: <strong>${matCity}</strong> @ ${fmtK(matPrice)} silver/ea (${matQty} per item)</div>
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-weight: 800; color: var(--accent-gold-bright); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">${(matQty * qty).toLocaleString()}x</div>
+            <div style="font-size: 0.7rem; color: var(--text-secondary);">${fmtK(totalMatCost)} silver</div>
+          </div>
+        </div>
+      `;
+    }).join('');
 
     blueprintHtml = `
       <h4 style="margin-top: 1.25rem; font-size: 0.9rem; color: var(--accent-gold-bright); font-family: 'Outfit', sans-serif;">🔮 Artifact Foundry Enchanting Recipe (${qty}x Batch):</h4>
@@ -1414,7 +1493,7 @@ window.openDetailModal = function(globalIdx, catKey) {
           <div style="display: flex; align-items: center; gap: 0.6rem;">
             <img src="${getItemIconUrl(baseId, opp.base_quality || quality, 64)}" style="width: 32px; height: 32px; border-radius: 4px;" loading="lazy" decoding="async" onerror="handleIconError(this, '${baseId}', ${opp.base_quality || quality})" />
             <div>
-              <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${baseId} (Base Item)</div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${formatItemName(baseId)} (Base Item)</div>
               <div style="font-size: 0.7rem; color: var(--text-muted);">Sourced at: <strong>${srcCity}</strong> @ ${fmtK(basePrice)} silver</div>
             </div>
           </div>
@@ -1424,19 +1503,7 @@ window.openDetailModal = function(globalIdx, catKey) {
           </div>
         </div>
         <!-- Enchanting Materials -->
-        <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-1); padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-subtle);">
-          <div style="display: flex; align-items: center; gap: 0.6rem;">
-            <img src="${getItemIconUrl(matId, 1, 64)}" style="width: 32px; height: 32px; border-radius: 4px;" loading="lazy" decoding="async" onerror="handleIconError(this, '${matId}', 1)" />
-            <div>
-              <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${matId} (Enchanting Material)</div>
-              <div style="font-size: 0.7rem; color: var(--text-muted);">Sourced at: <strong>${srcCity}</strong> @ ${fmtK(matPrice)} silver/ea (${matQty} per item)</div>
-            </div>
-          </div>
-          <div style="text-align: right;">
-            <div style="font-weight: 800; color: var(--accent-gold-bright); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">${(matQty * qty).toLocaleString()}x</div>
-            <div style="font-size: 0.7rem; color: var(--text-secondary);">${fmtK(totalMatCost)} silver</div>
-          </div>
-        </div>
+        ${materialsHtml}
       </div>
       <div style="margin-top: 0.5rem; font-size: 0.72rem; color: var(--accent-cyan); background: rgba(56, 189, 248, 0.08); padding: 0.45rem 0.75rem; border-radius: 5px; border: 1px solid rgba(56, 189, 248, 0.2);">
         ⚡ <strong>Execution:</strong> Buy base item and materials in <strong>${srcCity}</strong> ➔ Walk to local Artifact Foundry (0% loss risk, instant enchant) ➔ List or Sell at <strong>${dstCity}</strong> for <strong>${fmtK(m.unitRevenue)}</strong> silver.
@@ -1448,21 +1515,25 @@ window.openDetailModal = function(globalIdx, catKey) {
     blueprintHtml = `
       <h4 style="margin-top: 1.25rem; font-size: 0.9rem; color: var(--accent-gold-bright); font-family: 'Outfit', sans-serif;">⚒️ Required Ingredients & Resources (${qty}x Batch):</h4>
       <div style="margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem;">
-        ${opp.ingredients.map(ing => `
+        ${opp.ingredients.map(ing => {
+          const ingQty = Number(ing.quantity || ing.qty || 1);
+          const ingPrice = Number(ing.unit_price || 0);
+          const ingName = ing.name || ing.item_name || formatItemName(ing.item_id);
+          return `
           <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-1); padding: 0.55rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-subtle);">
             <div style="display: flex; align-items: center; gap: 0.55rem;">
               <img src="${getItemIconUrl(ing.item_id, 1, 64)}" style="width: 28px; height: 28px; border-radius: 4px;" loading="lazy" decoding="async" onerror="handleIconError(this, '${ing.item_id}', 1)" />
               <div>
-                <div style="font-weight: 700; font-size: 0.82rem; color: #fff;">${ing.name || ing.item_id}</div>
-                <div style="font-size: 0.68rem; color: var(--text-muted);">Buy at: <strong>${ing.buy_city || srcCity}</strong> @ ${fmtK(ing.unit_price)} s</div>
+                <div style="font-weight: 700; font-size: 0.82rem; color: #fff;">${ingName}</div>
+                <div style="font-size: 0.68rem; color: var(--text-muted);">Buy at: <strong>${ing.buy_city || srcCity}</strong> @ ${fmtK(ingPrice)} s</div>
               </div>
             </div>
             <div style="text-align: right;">
-              <div style="font-weight: 800; color: var(--accent-gold-bright); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">${(ing.quantity * qty).toLocaleString()}x</div>
-              <div style="font-size: 0.68rem; color: var(--text-secondary);">${fmtK(ing.unit_price * ing.quantity * qty)} silver</div>
+              <div style="font-weight: 800; color: var(--accent-gold-bright); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">${(ingQty * qty).toLocaleString()}x</div>
+              <div style="font-size: 0.68rem; color: var(--text-secondary);">${fmtK(ingPrice * ingQty * qty)} silver</div>
             </div>
           </div>
-        `).join('')}
+        `;}).join('')}
       </div>
     `;
   }
