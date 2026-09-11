@@ -400,7 +400,7 @@ class MarketCollector:
                 for item in real_bm_raw:
                     info = item_info.get(item["item_id"], {})
                     if not is_market_data_fresh(
-                        item["item_id"], item["data_age_seconds"], volume_24h=item.get("volume_24h"), tier=info.get("tier", 4), city="Black Market"
+                        item["item_id"], item["data_age_seconds"], volume_24h=item.get("volume_24h"), tier=info.get("tier", 4), city="Black Market", context="ingestion"
                     ):
                         continue
                     item["captured_at"] = datetime.utcnow()
@@ -423,7 +423,7 @@ class MarketCollector:
                     for r in city_raw:
                         info = item_info.get(r["item_id"], {})
                         if not is_market_data_fresh(
-                            r["item_id"], r["data_age_seconds"], volume_24h=r.get("volume_24h"), tier=info.get("tier", 4), city=city_name
+                            r["item_id"], r["data_age_seconds"], volume_24h=r.get("volume_24h"), tier=info.get("tier", 4), city=city_name, context="ingestion"
                         ):
                             continue
 
@@ -598,7 +598,7 @@ class MarketCollector:
                 for item in real_bm_raw:
                     info = item_info.get(item["item_id"], {})
                     if not is_market_data_fresh(
-                        item["item_id"], item["data_age_seconds"], volume_24h=item.get("volume_24h"), tier=info.get("tier", 4), city="Black Market"
+                        item["item_id"], item["data_age_seconds"], volume_24h=item.get("volume_24h"), tier=info.get("tier", 4), city="Black Market", context="ingestion"
                     ):
                         continue
                     item["captured_at"] = datetime.utcnow()
@@ -620,7 +620,7 @@ class MarketCollector:
                     for r in city_raw:
                         info = item_info.get(r["item_id"], {})
                         if not is_market_data_fresh(
-                            r["item_id"], r["data_age_seconds"], volume_24h=r.get("volume_24h"), tier=info.get("tier", 4), city=city_name
+                            r["item_id"], r["data_age_seconds"], volume_24h=r.get("volume_24h"), tier=info.get("tier", 4), city=city_name, context="ingestion"
                         ):
                             continue
                         r["captured_at"] = datetime.utcnow()

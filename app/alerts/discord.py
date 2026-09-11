@@ -641,7 +641,13 @@ class DiscordAlerter:
                 },
                 {
                     "name": "📊 Yield & Efficiency",
-                    "value": f"• Margin: **{margin:.1f}%**\n• ROI: **{opp.get('roi', 0):.1f}%**\n• EV/hr: **{fmt_k(opp.get('ev_score', 0))}**\n• Focus RRR: **{rrr * 100:.1f}%**",
+                    "value": (
+                        f"• Margin: **{margin:.1f}%**\n"
+                        f"• ROI: **{opp.get('roi', 0):.1f}%**\n"
+                        f"• Plot Profit/Day: **+{fmt_k(opp.get('profit_per_plot_day', opp.get('profit', 0) * 9))}**\n"
+                        + (f"• Silver/Focus: **{opp.get('silver_per_focus', 0):.1f} s/f**\n" if opp.get('silver_per_focus', 0) > 0 else "")
+                        + f"• Cycle: **{opp.get('cycle_hours', 22.0):.0f}h**"
+                    ),
                     "inline": True,
                 },
                 {
@@ -1136,6 +1142,27 @@ class DiscordAlerter:
             bm_enchant_opps = []
         if bm_mm_opps is None:
             bm_mm_opps = []
+
+        # Anti-loss protection: Automated Discord alerts strictly dispatch verified fresh (<45m) alpha by default
+        allow_candidate_alerts = getattr(settings, "alert_candidate_opportunities", False)
+        def _filter_verified(opps: list[dict]) -> list[dict]:
+            if allow_candidate_alerts:
+                return opps
+            return [o for o in opps if o.get("freshness_tier", "verified") == "verified"]
+
+        arb_opps = _filter_verified(arb_opps)
+        craft_opps = _filter_verified(craft_opps)
+        mm_opps = _filter_verified(mm_opps)
+        refine_opps = _filter_verified(refine_opps)
+        enchant_opps = _filter_verified(enchant_opps)
+        quality_opps = _filter_verified(quality_opps)
+        transmute_opps = _filter_verified(transmute_opps)
+        bm_arb_opps = _filter_verified(bm_arb_opps)
+        bm_craft_opps = _filter_verified(bm_craft_opps)
+        bm_refine_opps = _filter_verified(bm_refine_opps)
+        bm_enchant_opps = _filter_verified(bm_enchant_opps)
+        bm_mm_opps = _filter_verified(bm_mm_opps)
+        island_opps = _filter_verified(island_opps)
 
         # 1. TRANSMUTATION (Safe Royal Cities only)
         if getattr(settings, "enable_alerts_transmute", True):

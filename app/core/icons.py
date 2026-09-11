@@ -35,6 +35,10 @@ def item_icon_url(item_id: str | None, *, quality: int = 1, size: int = 128) -> 
 
     safe_identifier = quote(clean_id, safe="@_-.")
     q = max(1, min(5, int(quality or 1)))
-    s = max(32, min(217, int(size or 128)))
+    # Albion render service only reliably supports size >= 64 (sizes < 60 throw HTTP 502)
+    s = max(64, min(217, int(size or 128)))
 
-    return f"https://render.albiononline.com/v1/item/{safe_identifier}.png?quality={q}&size={s}"
+    if q > 1:
+        return f"https://render.albiononline.com/v1/item/{safe_identifier}.png?quality={q}"
+    return f"https://render.albiononline.com/v1/item/{safe_identifier}.png"
+

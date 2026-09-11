@@ -33,121 +33,138 @@ def safe_int(val, default: int = 0) -> int:
 
 # Raw / Refined Crafting Materials (Ore, Bar, Hide, Leather, Fiber, Cloth, Wood, Planks, Rock, Stoneblock)
 # Strict empirical calibration for Royal non-lethal markets (eliminates phantom spreads from local snipers)
+# Raw / Refined Crafting Materials (Ore, Bar, Hide, Leather, Fiber, Cloth, Wood, Planks, Rock, Stoneblock)
+# Candidate Ceilings (12h - 48h) to enable continent-wide discovery while scoring applies exponential decay
 MATERIAL_AGE_LIMITS = {
-    (2, 0): 14_400,    # T2.0: 4.0h
-    (3, 0): 14_400,    # T3.0: 4.0h
-    (4, 0): 3_600,     # T4.0: 1.0h (60 min)
-    (4, 1): 4_500,     # T4.1: 1.25h (75 min)
-    (4, 2): 5_400,     # T4.2: 1.5h (90 min)
-    (4, 3): 7_200,     # T4.3: 2.0h (120 min)
-    (5, 0): 4_500,     # T5.0: 1.25h (75 min)
-    (5, 1): 5_400,     # T5.1: 1.5h (90 min)
-    (5, 2): 7_200,     # T5.2: 2.0h (120 min)
-    (5, 3): 10_800,    # T5.3: 3.0h
-    (6, 0): 5_400,     # T6.0: 1.5h
-    (6, 1): 7_200,     # T6.1: 2.0h
-    (6, 2): 10_800,    # T6.2: 3.0h
-    (6, 3): 14_400,    # T6.3: 4.0h
-    (7, 0): 7_200,     # T7.0: 2.0h
-    (7, 1): 10_800,    # T7.1: 3.0h
-    (7, 2): 14_400,    # T7.2: 4.0h
-    (7, 3): 21_600,    # T7.3: 6.0h
-    (8, 0): 10_800,    # T8.0: 3.0h
-    (8, 1): 18_000,    # T8.1: 5.0h
-    (8, 2): 28_800,    # T8.2: 8.0h
-    (8, 3): 43_200,    # T8.3: 12.0h
-    (8, 4): 86_400,    # T8.4: 24.0h — Whale tier
+    (2, 0): 86_400,    # T2.0: 24h
+    (3, 0): 86_400,    # T3.0: 24h
+    (4, 0): 43_200,    # T4.0: 12h
+    (4, 1): 43_200,    # T4.1: 12h
+    (4, 2): 57_600,    # T4.2: 16h
+    (4, 3): 57_600,    # T4.3: 16h
+    (5, 0): 43_200,    # T5.0: 12h
+    (5, 1): 43_200,    # T5.1: 12h
+    (5, 2): 57_600,    # T5.2: 16h
+    (5, 3): 57_600,    # T5.3: 16h
+    (6, 0): 57_600,    # T6.0: 16h
+    (6, 1): 57_600,    # T6.1: 16h
+    (6, 2): 86_400,    # T6.2: 24h
+    (6, 3): 86_400,    # T6.3: 24h
+    (7, 0): 57_600,    # T7.0: 16h
+    (7, 1): 86_400,    # T7.1: 24h
+    (7, 2): 86_400,    # T7.2: 24h
+    (7, 3): 86_400,    # T7.3: 24h
+    (8, 0): 86_400,    # T8.0: 24h
+    (8, 1): 86_400,    # T8.1: 24h
+    (8, 2): 86_400,    # T8.2: 24h
+    (8, 3): 172_800,   # T8.3: 48h
+    (8, 4): 172_800,   # T8.4: 48h
 }
 
 # Enchantment Materials (Runes, Souls, Relics, Avalonian Shards)
-# High-velocity commodities (Runes/Souls) have ultra-tight freshness (45m-2h) to protect margins
 ENCHANT_MATERIAL_AGE_LIMITS = {
-    # Runes (ultra-high volume commodity)
-    (4, "RUNE"): 2_700,       # 45m
-    (5, "RUNE"): 2_700,       # 45m
-    (6, "RUNE"): 3_600,       # 1.0h
-    (7, "RUNE"): 5_400,       # 1.5h
-    (8, "RUNE"): 7_200,       # 2.0h
+    # Runes (high volume commodity)
+    (4, "RUNE"): 43_200,      # 12h
+    (5, "RUNE"): 43_200,      # 12h
+    (6, "RUNE"): 43_200,      # 12h
+    (7, "RUNE"): 57_600,      # 16h
+    (8, "RUNE"): 86_400,      # 24h
     # Souls (high volume commodity)
-    (4, "SOUL"): 2_700,       # 45m
-    (5, "SOUL"): 2_700,       # 45m
-    (6, "SOUL"): 3_600,       # 1.0h
-    (7, "SOUL"): 5_400,       # 1.5h
-    (8, "SOUL"): 7_200,       # 2.0h
-    # Relics (mid volume, expensive)
-    (4, "RELIC"): 3_600,      # 1.0h
-    (5, "RELIC"): 3_600,      # 1.0h
-    (6, "RELIC"): 5_400,      # 1.5h
-    (7, "RELIC"): 9_000,      # 2.5h
-    (8, "RELIC"): 14_400,     # 4.0h
+    (4, "SOUL"): 43_200,      # 12h
+    (5, "SOUL"): 43_200,      # 12h
+    (6, "SOUL"): 43_200,      # 12h
+    (7, "SOUL"): 57_600,      # 16h
+    (8, "SOUL"): 86_400,      # 24h
+    # Relics
+    (4, "RELIC"): 43_200,     # 12h
+    (5, "RELIC"): 43_200,     # 12h
+    (6, "RELIC"): 57_600,     # 16h
+    (7, "RELIC"): 86_400,     # 24h
+    (8, "RELIC"): 86_400,     # 24h
     # Avalonian Shards & Tokens
-    (4, "SHARD"): 7_200,      # 2.0h
-    (5, "SHARD"): 7_200,      # 2.0h
-    (6, "SHARD"): 10_800,     # 3.0h
-    (7, "SHARD"): 21_600,     # 6.0h
-    (8, "SHARD"): 43_200,     # 12.0h
+    (4, "SHARD"): 57_600,     # 16h
+    (5, "SHARD"): 57_600,     # 16h
+    (6, "SHARD"): 86_400,     # 24h
+    (7, "SHARD"): 86_400,     # 24h
+    (8, "SHARD"): 172_800,    # 48h
 }
 
 # Crafting Artifacts (Rune, Soul, Relic, Hell & Avalonian Artifacts)
 ARTIFACT_AGE_LIMITS = {
-    (4, 0): 3_600,      # 1.0h
-    (5, 0): 5_400,      # 1.5h
-    (6, 0): 7_200,      # 2.0h
-    (7, 0): 10_800,     # 3.0h
-    (8, 0): 18_000,     # 5.0h
+    (4, 0): 57_600,     # 16h
+    (5, 0): 57_600,     # 16h
+    (6, 0): 57_600,     # 16h
+    (7, 0): 86_400,     # 24h
+    (8, 0): 86_400,     # 24h
 }
 
 # Equipment / Finished Goods (weapons, armor, off-hands, bags, capes)
-# High-volume player gear on Royal markets reprice rapidly; tightened to eliminate phantom orders
 EQUIPMENT_AGE_LIMITS = {
-    (4, 0): 2_700,      # 45m
-    (4, 1): 3_600,      # 1.0h
-    (4, 2): 4_500,      # 1.25h (75 min)
-    (4, 3): 5_400,      # 1.5h
-    (5, 0): 3_600,      # 1.0h
-    (5, 1): 4_500,      # 1.25h (75 min)
-    (5, 2): 5_400,      # 1.5h
-    (5, 3): 7_200,      # 2.0h
-    (6, 0): 4_500,      # 1.25h (75 min)
-    (6, 1): 5_400,      # 1.5h
-    (6, 2): 7_200,      # 2.0h
-    (6, 3): 10_800,     # 3.0h
-    (7, 0): 7_200,      # 2.0h
-    (7, 1): 10_800,     # 3.0h
-    (7, 2): 14_400,     # 4.0h
-    (7, 3): 21_600,     # 6.0h
-    (8, 0): 10_800,     # 3.0h
-    (8, 1): 18_000,     # 5.0h
-    (8, 2): 28_800,     # 8.0h
-    (8, 3): 43_200,     # 12.0h
-    (8, 4): 86_400,     # 24.0h
+    (4, 0): 43_200,     # 12h
+    (4, 1): 43_200,     # 12h
+    (4, 2): 43_200,     # 12h
+    (4, 3): 57_600,     # 16h
+    (5, 0): 43_200,     # 12h
+    (5, 1): 43_200,     # 12h
+    (5, 2): 57_600,     # 16h
+    (5, 3): 57_600,     # 16h
+    (6, 0): 57_600,     # 16h
+    (6, 1): 57_600,     # 16h
+    (6, 2): 86_400,     # 24h
+    (6, 3): 86_400,     # 24h
+    (7, 0): 57_600,     # 16h
+    (7, 1): 86_400,     # 24h
+    (7, 2): 86_400,     # 24h
+    (7, 3): 86_400,     # 24h
+    (8, 0): 86_400,     # 24h
+    (8, 1): 86_400,     # 24h
+    (8, 2): 172_800,    # 48h
+    (8, 3): 172_800,    # 48h
+    (8, 4): 172_800,    # 48h
 }
 
 # Consumables (Food, Potions)
 CONSUMABLE_AGE_LIMITS = {
-    (1, 0): 1_800,      # 30m
-    (2, 0): 1_800,      # 30m
-    (3, 0): 1_800,      # 30m
-    (4, 0): 1_800,      # 30m   — High volume staples
-    (4, 1): 2_700,      # 45m
-    (4, 2): 3_600,      # 1.0h
-    (4, 3): 5_400,      # 1.5h
-    (5, 0): 2_700,      # 45m
-    (5, 1): 3_600,      # 1.0h
-    (5, 2): 5_400,      # 1.5h
-    (5, 3): 7_200,      # 2.0h
-    (6, 0): 3_600,      # 1.0h
-    (6, 1): 5_400,      # 1.5h
-    (6, 2): 7_200,      # 2.0h
-    (6, 3): 10_800,     # 3.0h
-    (7, 0): 7_200,      # 2.0h
-    (7, 1): 10_800,     # 3.0h
-    (7, 2): 14_400,     # 4.0h
-    (7, 3): 21_600,     # 6.0h
-    (8, 0): 10_800,     # 3.0h
-    (8, 1): 18_000,     # 5.0h
-    (8, 2): 21_600,     # 6.0h
-    (8, 3): 43_200,     # 12.0h
+    (1, 0): 43_200,     # 12h
+    (2, 0): 43_200,     # 12h
+    (3, 0): 43_200,     # 12h
+    (4, 0): 43_200,     # 12h
+    (4, 1): 43_200,     # 12h
+    (4, 2): 43_200,     # 12h
+    (4, 3): 57_600,     # 16h
+    (5, 0): 43_200,     # 12h
+    (5, 1): 43_200,     # 12h
+    (5, 2): 57_600,     # 16h
+    (5, 3): 57_600,     # 16h
+    (6, 0): 57_600,     # 16h
+    (6, 1): 57_600,     # 16h
+    (6, 2): 86_400,     # 24h
+    (6, 3): 86_400,     # 24h
+    (7, 0): 57_600,     # 16h
+    (7, 1): 86_400,     # 24h
+    (7, 2): 86_400,     # 24h
+    (7, 3): 86_400,     # 24h
+    (8, 0): 86_400,     # 24h
+    (8, 1): 86_400,     # 24h
+    (8, 2): 86_400,     # 24h
+    (8, 3): 172_800,    # 48h
+}
+
+# Farming, Livestock, Agricultural Commodities & Ingredients (Crops, Herbs, Milk, Meat, Eggs, Flour, Butter)
+COMMODITY_AGE_LIMITS = {
+    (1, 0): 86_400,     # 24.0h
+    (2, 0): 86_400,     # 24.0h
+    (3, 0): 86_400,     # 24.0h
+    (4, 0): 86_400,     # 24.0h
+    (4, 1): 86_400,     # 24.0h
+    (5, 0): 86_400,     # 24.0h
+    (5, 1): 86_400,     # 24.0h
+    (6, 0): 86_400,     # 24.0h
+    (6, 1): 86_400,     # 24.0h
+    (7, 0): 86_400,     # 24.0h
+    (7, 1): 86_400,     # 24.0h
+    (8, 0): 86_400,     # 24.0h
+    (8, 1): 86_400,     # 24.0h
 }
 
 # Mounts, Journals, Gathering Gear, Furniture, Trophies
@@ -206,14 +223,14 @@ MARKET_MAKING_AGE_LIMITS = {
 # Maximum Allowed Multi-Leg Desynchronization (seconds)
 # Max time gap between input cost data (materials/base) and finished product sell order data
 MAX_LEG_DESYNC_SECONDS = {
-    1: 1_800,       # 30m
-    2: 1_800,       # 30m
-    3: 1_800,       # 30m
-    4: 2_700,       # 45m
-    5: 3_600,       # 1.0h
-    6: 5_400,       # 1.5h
-    7: 7_200,       # 2.0h
-    8: 10_800,      # 3.0h
+    1: 43_200,      # 12.0h
+    2: 43_200,      # 12.0h
+    3: 43_200,      # 12.0h
+    4: 43_200,      # 12.0h
+    5: 43_200,      # 12.0h
+    6: 57_600,      # 16.0h
+    7: 86_400,      # 24.0h
+    8: 86_400,      # 24.0h
 }
 
 # ═══════════════════════════════════════════════════════════════
@@ -242,6 +259,13 @@ ARTIFACT_KEYWORDS = (
 CONSUMABLE_KEYWORDS = (
     "MEAL", "SOUP", "STEW", "PIE", "OMELETTE", "ROAST", "SANDWICH",
     "COOKED", "POTION", "POTION_", "FOOD_",
+)
+
+COMMODITY_KEYWORDS = (
+    "_CARROT", "_BEAN", "_WHEAT", "_TURNIP", "_CABBAGE", "_POTATO", "_CORN", "_PUMPKIN",
+    "_AGARIC", "_COMFREY", "_BURDOCK", "_TEASEL", "_FOXGLOVE", "_MULLEIN", "_YARROW",
+    "_EGG", "_MILK", "_BUTTER", "_MEAT", "_FLOUR", "_BREAD", "_ALCOHOL",
+    "_FISHCHOPS", "_FISHSAUCE", "_SEAWEED", "FARM_", "SEED_", "CROP_", "HERB_",
 )
 
 SPECIALTY_KEYWORDS = (
@@ -321,15 +345,19 @@ def _classify_item(item_id: str) -> str:
     if any(kw in upper for kw in SPECIALTY_KEYWORDS):
         return "specialty"
 
-    # 4. Consumables (food, potions)
+    # 4. Agricultural / Farm Commodities (check before equipment)
+    if any(kw in upper for kw in COMMODITY_KEYWORDS):
+        return "commodity"
+
+    # 5. Consumables (food, potions)
     if any(kw in upper for kw in CONSUMABLE_KEYWORDS):
         return "consumable"
 
-    # 5. Equipment (weapons, armor, off-hands, bags, capes)
+    # 6. Equipment (weapons, armor, off-hands, bags, capes)
     if any(kw in upper for kw in EQUIPMENT_KEYWORDS):
         return "equipment"
 
-    # 6. Raw / Refined materials (Planks, Bars, Leather, Cloth, Ores, etc.)
+    # 7. Raw / Refined materials (Planks, Bars, Leather, Cloth, Ores, etc.)
     if any(kw in upper for kw in RAW_REFINED_KEYWORDS):
         return "material"
 
@@ -426,6 +454,8 @@ def get_max_material_age_seconds(
             age_limit = int(base * type_multipliers.get(mat_type, 2.0))
     elif category == "artifact":
         age_limit = _lookup_with_fallback(ARTIFACT_AGE_LIMITS, tier, 0)
+    elif category == "commodity":
+        age_limit = _lookup_with_fallback(COMMODITY_AGE_LIMITS, tier, enchant)
     elif category == "consumable":
         age_limit = _lookup_with_fallback(CONSUMABLE_AGE_LIMITS, tier, enchant)
     elif category == "specialty":
@@ -442,16 +472,16 @@ def get_max_material_age_seconds(
         or (context in ("caerleon", "black_market"))
     )
     if is_lethal_or_bm:
-        age_limit = max(5_400, int(round(age_limit * 2.0)))
+        age_limit = max(86_400, int(round(age_limit * 2.0)))
 
     # Continuous Volume Scaling: High-velocity market items reprice faster
     v24 = safe_int(volume_24h)
     if v24 >= 5_000:
-        age_limit = max(900, int(round(age_limit * 0.35)))   # 35% of TTL, floor 15 min
+        age_limit = max(14_400, int(round(age_limit * 0.45)))
     elif v24 >= 1_000:
-        age_limit = max(1_200, int(round(age_limit * 0.55)))  # 55% of TTL, floor 20 min
+        age_limit = max(21_600, int(round(age_limit * 0.65)))
     elif v24 >= 200:
-        age_limit = max(1_800, int(round(age_limit * 0.80)))  # 80% of TTL, floor 30 min
+        age_limit = max(28_800, int(round(age_limit * 0.85)))
 
     return age_limit + max(0, safe_int(scan_elapsed_seconds, default=0))
 
@@ -468,7 +498,7 @@ def get_max_allowed_leg_desync_seconds(
     """
     t = max(1, min(8, safe_int(tier, default=4)))
     e = max(0, min(4, safe_int(enchant, default=0)))
-    base_desync = MAX_LEG_DESYNC_SECONDS.get(t, 9_000)
+    base_desync = MAX_LEG_DESYNC_SECONDS.get(t, 43_200)
     if t >= 7 and e >= 2:
         desync = int(base_desync * (1.0 + e * 0.25))
     else:
@@ -528,13 +558,24 @@ def is_market_data_fresh(
     tier: int | None = None,
     scan_elapsed_seconds: int = None,
     city: str = None,
+    context: str = "execution",
 ) -> bool:
     """
-    Determines if market data is fresh enough to be ingested into the database.
-    Includes scan sweep elapsed time allowance to prevent borderline records from being discarded.
+    Determines if market data is fresh enough for ingestion or execution.
+    - When context='ingestion': Allows up to 24h (86,400s) for Royal cities and 48h (172,800s) for BM/Whale,
+      ensuring crowd-sourced orderbook records from other cities are not thrown away at the database door.
+    - When context='execution': Uses tier-aware candidate age limits.
     """
     if age_seconds is None:
         return False
+
+    if context == "ingestion":
+        is_lethal_or_bm = (
+            (city is not None and str(city).strip() in ("Caerleon", "Black Market"))
+            or (tier and tier >= 8)
+        )
+        ingest_ceiling = 172_800 if is_lethal_or_bm else 86_400
+        return age_seconds <= ingest_ceiling
 
     if scan_elapsed_seconds is None:
         from app.core.config import settings
@@ -546,6 +587,7 @@ def is_market_data_fresh(
         volume_24h=safe_int(volume_24h),
         scan_elapsed_seconds=scan_elapsed_seconds,
         city=city,
+        context=context,
     )
 
     is_fresh = age_seconds <= threshold
@@ -554,6 +596,52 @@ def is_market_data_fresh(
         log.debug(f"🗑️ FRESHNESS: Rejected {item_id} in {city or 'Royal'} (Age: {age_seconds}s, Threshold: {threshold}s)")
 
     return is_fresh
+
+
+def get_freshness_tier(leg_ages: Sequence[float] | float) -> dict:
+    """
+    Returns uniform 3-tier classification:
+    - 'verified': max leg age <= 2,700s (45m)
+    - 'candidate': max leg age <= 86,400s (24h)
+    - 'stale': > 86,400s
+    """
+    if isinstance(leg_ages, (int, float)):
+        ages = [float(leg_ages)]
+    elif leg_ages:
+        ages = [float(a) for a in leg_ages if a is not None and a > 0]
+    else:
+        ages = []
+
+    max_age = max(ages) if ages else 0.0
+    min_age = min(ages) if ages else 0.0
+
+    if max_age <= 2700:
+        return {
+            "tier": "verified",
+            "badge": "🟢 Verified Fresh (<45m)",
+            "label": "Verified Fresh",
+            "max_age": int(max_age),
+            "min_age": int(min_age),
+            "is_auto_alert_eligible": True,
+        }
+    elif max_age <= 86400:
+        return {
+            "tier": "candidate",
+            "badge": "🟡 Candidate (Verify Orderbook)",
+            "label": "Candidate Spread",
+            "max_age": int(max_age),
+            "min_age": int(min_age),
+            "is_auto_alert_eligible": False,
+        }
+    else:
+        return {
+            "tier": "stale",
+            "badge": "⚪ Historical Reference",
+            "label": "Historical Reference",
+            "max_age": int(max_age),
+            "min_age": int(min_age),
+            "is_auto_alert_eligible": False,
+        }
 
 
 def get_tier_based_half_life_hours(item_id: str, tier: int = None, enchant: int = None) -> float:

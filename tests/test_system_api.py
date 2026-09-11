@@ -135,3 +135,23 @@ def test_post_system_opportunities_dismiss_bm_and_fresh_scan_unsuppression(clien
     assert "T4_BAG" in state.dismissed_opportunities
 
 
+def test_post_system_scan_quick_default(client):
+    """Verify POST /api/v1/system/scan defaults to quick DB scan and returns immediately."""
+    resp = client.post("/api/v1/system/scan")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "total_opportunities" in data
+    assert "counts" in data
+    assert isinstance(data["counts"], dict)
+
+
+def test_post_system_scan_background_dispatched(client):
+    """Verify POST /api/v1/system/scan?quick=false returns in_progress without blocking."""
+    resp = client.post("/api/v1/system/scan?quick=false")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] in ("in_progress", "success")
+
+
+

@@ -98,6 +98,10 @@ async def lifespan(app: FastAPI):
     from app.ingestion.nats_client import nats_client
     nats_task = asyncio.create_task(nats_client.start())
 
+    # Warm up system stats cache in background thread (non-blocking)
+    from app.api.system import _refresh_stats_counts_thread
+    asyncio.create_task(asyncio.to_thread(_refresh_stats_counts_thread, settings.active_server.value))
+
     try:
         yield
     except (asyncio.CancelledError, KeyboardInterrupt):
@@ -147,6 +151,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# High-Performance HTTP Response Compression (Brotli/GZip)
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 
 class SuppressCancelASGIMiddleware:
     """Pure ASGI middleware that absorbs CancelledError during server teardown so uvicorn exits cleanly."""
@@ -183,7 +191,17 @@ WEB_DIR = Path(__file__).resolve().parent / "app" / "web"
 if not WEB_DIR.exists():
     WEB_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")
+
+class CachedStaticFiles(StaticFiles):
+    """StaticFiles handler that attaches Cache-Control headers for instant local loading."""
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=86400, must-revalidate"
+        return response
+
+
+app.mount("/static", CachedStaticFiles(directory=str(WEB_DIR)), name="static")
 
 
 from fastapi import FastAPI, Request

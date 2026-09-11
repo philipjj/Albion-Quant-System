@@ -165,7 +165,7 @@ class UnifiedScanner:
                 continue  # Already processed this quality level
 
             city_dict[quality] = {
-                "sell_price_min": sp_min if is_sp_valid else (sp_min or 0),
+                "sell_price_min": sp_min if is_sp_valid else 0,
                 "buy_price_max": bp_max or 0,
                 "volume_24h": vol_24h or 0,
                 "data_age_seconds": int(effective_age),
@@ -312,6 +312,34 @@ class UnifiedScanner:
             r.item_id: (float(getattr(r, "weight", 0.0) or 0.0) or _estimate_fallback_weight(r.item_id, r.category or ""))
             for r in rows
         }
+
+        # Bidirectional alias resolution for @enchantment and _LEVEL variants
+        for item_id, name in list(names.items()):
+            if "@" in item_id:
+                base = item_id.split("@")[0]
+                if base not in names:
+                    names[base] = name
+                    if base not in categories and item_id in categories:
+                        categories[base] = categories[item_id]
+                    if base not in values and item_id in values:
+                        values[base] = values[item_id]
+                    if base not in weights and item_id in weights:
+                        weights[base] = weights[item_id]
+            elif "_LEVEL" in item_id:
+                try:
+                    parts = item_id.split("_LEVEL")
+                    alias = f"{parts[0]}@{parts[1]}"
+                    if alias not in names:
+                        names[alias] = name
+                    if alias not in categories:
+                        categories[alias] = categories[item_id]
+                    if alias not in values:
+                        values[alias] = values[item_id]
+                    if alias not in weights:
+                        weights[alias] = weights[item_id]
+                except Exception:
+                    pass
+
         return names, categories, values, weights
 
     def _load_recipes(self, db: Session) -> dict:
@@ -616,6 +644,12 @@ class UnifiedScanner:
             quality_raw = self.engine.scan_quality_inversions(prices, names)
             log.info(f"[UNIFIED SCANNER] Quality Inversions: {len(quality_raw)} opportunities")
 
+            log.info("[UNIFIED SCANNER] Scanning Consumables (Alchemy & Cooking)...")
+            potions_raw, cooking_raw = self.engine.scan_consumables(prices, names, recipes, categories, values, weights)
+            log.info(f"[UNIFIED SCANNER] Consumables: {len(potions_raw)} Potions, {len(cooking_raw)} Cooking")
+            raw_potion_dicts = [self._craft_to_dict(o, "potions") for o in potions_raw]
+            raw_cooking_dicts = [self._craft_to_dict(o, "cooking") for o in cooking_raw]
+
             from app.alerts.discord import _is_island_opportunity
 
             raw_craft_dicts = [self._craft_to_dict(o, categories.get(o.item_id, "Unknown")) for o in craft_raw]
@@ -658,18 +692,24 @@ class UnifiedScanner:
                 o["buy_city"] = clean_host
                 o["sell_city"] = clean_sell
 
+                o["island_city"] = clean_host
+
                 item_upper = str(o.get("item_id", "")).upper()
                 cat_lower = str(o.get("category", "")).lower()
-                if "_POTION_" in item_upper or "potion" in cat_lower or "alchemy" in cat_lower:
-                    o["category_key"] = "potions"
-                elif any(k in item_upper for k in ["_MEAL_", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH", "_SALAD", "_BUTCHER", "_MEAT"]):
-                    o["category_key"] = "cooking"
-                elif any(k in item_upper for k in ["_MOUNT_", "_HORSE", "_OX", "_STAG", "_WOLF", "_FOAL", "_CALF", "_PIG", "_SHEEP", "_GOAT", "_CHICKEN", "_GOOSE", "_RAM", "_BEAR", "_OWL"]):
+                sub = o.get("subsector", "")
+
+                if sub == "crops" or sub == "herbs":
+                    o["category_key"] = "farming"
+                elif sub == "mounts" or any(k in item_upper for k in ["_MOUNT", "MOUNT_", "_HORSE", "_OX", "_STAG", "_WOLF", "_FOAL", "_CALF", "_RAM", "_BEAR", "_OWL"]):
                     o["category_key"] = "mounts"
+                elif sub == "potions" or "_POTION_" in item_upper or "potion" in cat_lower or "alchemy" in cat_lower:
+                    o["category_key"] = "potions"
+                elif sub == "cooking" or any(k in item_upper for k in ["_MEAL_", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH", "_SALAD", "_BUTCHER", "_MEAT"]):
+                    o["category_key"] = "cooking"
                 else:
                     o["category_key"] = "farming"
 
-            return (
+            all_categories = (
                 [self._bm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_arb_raw],
                 pure_craft,
                 [self._arb_to_dict(o, categories.get(o.item_id, "Unknown")) for o in arb_raw],
@@ -683,7 +723,48 @@ class UnifiedScanner:
                 [self._refine_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_refine_raw],
                 [self._enchant_to_dict(o, categories.get(o.target_item_id, "Unknown")) for o in bm_enchant_raw],
                 [self._mm_to_dict(o, categories.get(o.item_id, "Unknown")) for o in bm_mm_raw],
+                raw_potion_dicts,
+                raw_cooking_dicts,
             )
+            return tuple([self._enrich_freshness_tier(opp) for opp in lst] for lst in all_categories)
+
+    def _enrich_freshness_tier(self, opp: dict[str, Any]) -> dict[str, Any]:
+        """
+        Tags opportunity with uniform 3-tier anti-loss freshness classification:
+        - 'verified': All leg prices verified fresh (<= 45m / 2700s) or live NATS. High conviction, safe for auto-alerts.
+        - 'candidate': Leg prices 45m - 24h. Profitable spread requiring pre-flight orderbook check before hauling.
+        - 'stale': Historical reference (> 24h).
+        """
+        leg_ages = []
+        for k in ("data_age_seconds", "data_age_buy", "data_age_sell", "data_age_bm", "data_age_materials", "data_age_base", "data_age_source", "data_age_material"):
+            val = opp.get(k)
+            if val is not None and isinstance(val, (int, float)) and val > 0:
+                leg_ages.append(float(val))
+
+        max_age = max(leg_ages) if leg_ages else float(opp.get("data_age_seconds", 0) or 0)
+        min_age = min(leg_ages) if leg_ages else max_age
+
+        if max_age <= 2700:
+            tier = "verified"
+            badge = "🟢 Verified Fresh (<45m)"
+            label = "Verified Fresh"
+        elif max_age <= 86400:
+            tier = "candidate"
+            badge = "🟡 Candidate (Verify Orderbook)"
+            label = "Candidate Spread"
+        else:
+            tier = "stale"
+            badge = "⚪ Historical Reference"
+            label = "Historical Reference"
+
+        opp["freshness_tier"] = tier
+        opp["freshness_badge"] = badge
+        opp["freshness_label"] = label
+        opp["max_leg_age_seconds"] = int(max_age)
+        opp["min_leg_age_seconds"] = int(min_age)
+        if not opp.get("data_age_seconds"):
+            opp["data_age_seconds"] = int(max_age)
+        return opp
 
 
 
@@ -892,11 +973,30 @@ class UnifiedScanner:
             "ev_score": o.score,
             "ingredients": o.ingredients,
             "is_dangerous": getattr(o, "is_dangerous", False),
+            "profit_per_plot_day": getattr(o, "profit_per_plot_day", 0.0),
+            "silver_per_focus": getattr(o, "silver_per_focus", 0.0),
+            "cycle_hours": getattr(o, "cycle_hours", 22.0),
+            "subsector": getattr(o, "subsector", ""),
+            "biome_bonus_active": getattr(o, "biome_bonus_active", False),
+            "output_qty": int(getattr(o, "output_qty", 1) or 1),
+            "has_lpb": (
+                (o.craft_city == "Brecilien" and (getattr(o, "subsector", "") == "potions" or category == "potions"))
+                or (o.craft_city == "Caerleon" and (getattr(o, "subsector", "") == "cooking" or category == "cooking"))
+                or (getattr(o, "rrr_used", 0.0) >= 0.24)
+            ),
             "type": "crafting",
             "category": category,
-            "category_key": "bm_crafting" if is_bm_craft else "crafting",
+            "category_key": (
+                "bm_crafting" if is_bm_craft
+                else "potions" if (getattr(o, "subsector", "") == "potions" or category == "potions")
+                else "cooking" if (getattr(o, "subsector", "") == "cooking" or category == "cooking" or any(k in str(o.item_id).upper() for k in ["_MEAL_", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH", "_SALAD", "_MEAT"]))
+                else "mounts" if (getattr(o, "subsector", "") == "mounts" or category == "mounts")
+                else "farming" if (getattr(o, "subsector", "") in ("farming", "crops", "herbs", "livestock") or category == "farming")
+                else "crafting"
+            ),
             "is_premium": getattr(self.engine, "is_premium", True),
             "tax_rate": getattr(self.engine, "tax", 0.04),
+            "manipulation_risk": getattr(o, "manipulation_risk", ""),
             "detected_at": datetime.utcnow().isoformat(),
         }
 

@@ -12,7 +12,9 @@ from app.alerts.bot import bot
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "disable_background_tasks", True)
     return TestClient(app)
 
 

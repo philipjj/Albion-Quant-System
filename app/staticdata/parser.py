@@ -99,6 +99,10 @@ class StaticDataParser:
                             en_name = loc_dict.get("EN-US", "")
                             if uid and en_name:
                                 self.items_formatted[uid] = en_name
+                                if "@" in uid:
+                                    base_uid = uid.split("@")[0]
+                                    if base_uid not in self.items_formatted:
+                                        self.items_formatted[base_uid] = en_name
             elif isinstance(formatted_data, dict):
                 for uid, item in formatted_data.items():
                     if isinstance(item, dict):
@@ -107,8 +111,16 @@ class StaticDataParser:
                             en_name = loc_dict.get("EN-US", "")
                             if uid and en_name:
                                 self.items_formatted[uid] = en_name
+                                if "@" in uid:
+                                    base_uid = uid.split("@")[0]
+                                    if base_uid not in self.items_formatted:
+                                        self.items_formatted[base_uid] = en_name
                     elif isinstance(item, str):
                         self.items_formatted[uid] = item
+                        if "@" in uid:
+                            base_uid = uid.split("@")[0]
+                            if base_uid not in self.items_formatted:
+                                self.items_formatted[base_uid] = item
             log.info(f"Loaded {len(self.items_formatted)} English localized item names.")
 
     @staticmethod
@@ -310,6 +322,22 @@ class StaticDataParser:
 
             self.parsed_items.append(item)
             seen_item_ids.add(unique_name)
+
+            # For raw/refined enchanted materials (e.g. T4_CLOTH_LEVEL1), also create alias T4_CLOTH_LEVEL1@1
+            if "_LEVEL" in unique_name and "@" not in unique_name:
+                try:
+                    e_lvl = int(unique_name.split("_LEVEL")[1][0])
+                    alias_id = f"{unique_name}@{e_lvl}"
+                    if alias_id not in seen_item_ids:
+                        alias_name = self.items_formatted.get(alias_id, name)
+                        alias_item = item.copy()
+                        alias_item["item_id"] = alias_id
+                        alias_item["name"] = alias_name
+                        alias_item["enchant"] = e_lvl
+                        self.parsed_items.append(alias_item)
+                        seen_item_ids.add(alias_id)
+                except (ValueError, IndexError):
+                    pass
 
         log.info(
             f"Parsed {len(self.parsed_items)} items and {len(self.parsed_recipes)} recipe ingredients."

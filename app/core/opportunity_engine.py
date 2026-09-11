@@ -328,7 +328,8 @@ def get_fallback_item_value(item_id: str = "") -> float:
 def is_price_valid(sell_min: int, buy_max: int, daily_volume: int = 0, item_id: str = "") -> bool:
     """
     Returns True if the price looks like a real market, not manipulation or corrupt test data.
-    Rejects troll buy orders, corrupt test values, and extreme orderbook manipulation ratios (> 4x).
+    Rejects troll buy orders, corrupt test values, and extreme orderbook manipulation ratios.
+    Whale / high-tier luxury equipment (T8.2+) and newly released Dragon items have dynamic spread ratio allowance up to 10.0x.
     """
     min_allowed = get_min_realistic_price(item_id) if item_id else MIN_PRICE
     if sell_min > 0:
@@ -338,9 +339,16 @@ def is_price_valid(sell_min: int, buy_max: int, daily_volume: int = 0, item_id: 
         if buy_max < min_allowed or buy_max > ABSOLUTE_MAX_PRICE:
             return False
         if sell_min > 0:
-            if (sell_min / buy_max) > 5.0:
+            id_up = str(item_id).upper()
+            is_whale_or_dragon = (
+                ("@2" in id_up or "@3" in id_up or "@4" in id_up or "_LEVEL2" in id_up or "_LEVEL3" in id_up or "_LEVEL4" in id_up)
+                and id_up.startswith("T8_")
+            ) or any(k in id_up for k in ("DRAGON", "DRAKE", "LEYFIN"))
+            max_ratio = 10.0 if is_whale_or_dragon else 5.0
+
+            if (sell_min / buy_max) > max_ratio:
                 return False
-            if (buy_max / sell_min) > 5.0:
+            if (buy_max / sell_min) > max_ratio:
                 return False
 
     return True
@@ -542,6 +550,13 @@ class CraftingOpportunity:
     profit_per_kg: float = 0.0
     score: float = 0.0
     is_dangerous: bool = False
+    profit_per_plot_day: float = 0.0
+    silver_per_focus: float = 0.0
+    cycle_hours: float = 22.0
+    subsector: str = ""
+    biome_bonus_active: bool = False
+    output_qty: int = 1
+    manipulation_risk: str = ""  # "" = safe, "low", "medium", "high"
 
 @dataclass
 class RefiningOpportunity:
@@ -1936,6 +1951,872 @@ class OpportunityScanner:
         results.sort(key=lambda x: x.score, reverse=True)
         return results
 
+    def _get_cheapest_feed_price(self, prices: dict, city: str, is_meat: bool = False) -> float:
+        """Returns the cheapest feed resource (crop or raw meat) in the given city."""
+        feed_ids = (
+            ["T3_MEAT", "T4_MEAT", "T5_MEAT", "T6_MEAT", "T7_MEAT", "T8_MEAT"]
+            if is_meat
+            else ["T1_CARROT", "T2_BEAN", "T3_WHEAT", "T4_TURNIP", "T5_CABBAGE", "T6_POTATO", "T7_CORN", "T8_PUMPKIN"]
+        )
+        best_price = float("inf")
+        for fid in feed_ids:
+            p = self._get_price(prices, fid, city, 1)
+            if p and p.get("sell_price_min", 0) > 0:
+                best_price = min(best_price, p["sell_price_min"])
+        if best_price == float("inf"):
+            return 350.0  # Factual fallback market average for low-tier crops/meat
+        return float(best_price)
+
+    def _scan_crops_and_herbs(
+        self,
+        prices: dict,
+        item_names: dict[str, str],
+        target_host_cities: list[str],
+        item_weights: dict[str, float] = None,
+    ) -> list[CraftingOpportunity]:
+        """
+        Scans biological Crop and Herb farming plots (9 squares per plot).
+        Applies official +10% Island Biome bonuses and unwatered/watered seed return rates.
+        """
+        from app.core.farming_constants import CROPS, HERBS, get_city_biome_farming_bonus
+
+        results = []
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
+
+        all_plants = []
+        for cid, meta in CROPS.items():
+            all_plants.append((cid, meta, "crops"))
+        for hid, meta in HERBS.items():
+            all_plants.append((hid, meta, "herbs"))
+
+        for item_id, meta, subsector in all_plants:
+            seed_id = meta["seed_id"]
+            base_yield = meta["base_yield"]  # 9.0 base crops
+            base_return = meta["base_return_pct"]
+            watered_return = meta["watered_return_pct"]
+            focus_cost = meta.get("base_focus_cost", 1000)
+
+            eff_return_pct = watered_return if self.use_focus else base_return
+
+            for island_host_city in target_host_cities:
+                seed_data = self._get_price(prices, seed_id, island_host_city, 1)
+                if not seed_data or seed_data.get("sell_price_min", 0) <= 0:
+                    # Try finding seed in other safe royal cities if not locally listed
+                    for alt_c in ROYAL_SAFE_CITIES:
+                        seed_data = self._get_price(prices, seed_id, alt_c, 1)
+                        if seed_data and seed_data.get("sell_price_min", 0) > 0:
+                            break
+
+                if not seed_data or seed_data.get("sell_price_min", 0) <= 0:
+                    continue
+
+                seed_price = seed_data["sell_price_min"]
+                seed_age = seed_data.get("data_age_seconds", 9999)
+
+                # Biome +10% yield bonus
+                biome_bonus = get_city_biome_farming_bonus(island_host_city, item_id)
+                effective_yield = base_yield * (1.0 + biome_bonus)
+
+                # Net seed cost per planted square
+                net_seed_cost_spot = seed_price * (1.0 - (eff_return_pct / 100.0))
+
+                # Silver per focus calculation: Focus benefit = unwatered cost - watered cost
+                cost_unwatered = seed_price * (1.0 - (base_return / 100.0))
+                cost_watered = seed_price * (1.0 - (watered_return / 100.0))
+                focus_benefit = cost_unwatered - cost_watered
+                silver_per_focus = round(focus_benefit / max(1, focus_cost), 2)
+
+                best_opp = None
+                for sell_city in ROYAL_SAFE_CITIES:
+                    sell_data = self._get_price(prices, item_id, sell_city, 1)
+                    if not sell_data:
+                        continue
+
+                    sell_price = sell_data.get("sell_price_min", 0)
+                    sell_age = sell_data.get("data_age_seconds", 9999)
+                    sell_vol = sell_data.get("volume_24h", 0)
+                    buy_max = sell_data.get("buy_price_max", 0)
+
+                    if sell_price <= 0 or sell_age > get_max_material_age_seconds(item_id, volume_24h=sell_vol):
+                        continue
+                    if not self.allow_zero_volume and sell_vol == 0:
+                        continue
+                    if sell_vol > 0 and sell_vol < min_vol:
+                        continue
+                    if not is_price_valid(sell_price, buy_max, item_id=item_id):
+                        continue
+                    if buy_max > 0 and sell_price > (buy_max * 3.5):
+                        continue
+
+                    trade_vol = self.default_trade_volume if self.use_slippage else 1
+                    effective_price = calculate_effective_price(sell_price, trade_vol, sell_vol, is_buy=False)
+                    safe_limit = calculate_safe_trade_limit(sell_vol, max_slippage_pct=0.03)
+
+                    # Revenue per plant spot (harvesting effective_yield crops)
+                    revenue_net_spot = (effective_price * effective_yield) * (1.0 - self.tax - self.setup_fee)
+                    spot_profit = revenue_net_spot - net_seed_cost_spot
+                    plot_profit_day = spot_profit * 9.0  # 9 spots per farm plot
+
+                    pct = (spot_profit / seed_price * 100.0) if seed_price > 0 else 0.0
+                    cost_basis = max(1.0, net_seed_cost_spot if net_seed_cost_spot > 0 else seed_price)
+                    roi = (spot_profit / cost_basis * 100.0)
+
+                    if spot_profit <= 0 and plot_profit_day <= 0:
+                        continue
+
+                    opp = CraftingOpportunity(
+                        item_id=item_id,
+                        item_name=meta.get("name", item_names.get(item_id, item_id)),
+                        craft_city=f"Personal Island ({island_host_city})",
+                        sell_city=sell_city,
+                        sell_mode="MARKET",
+                        material_cost_gross=round(seed_price, 0),
+                        rrr_used=eff_return_pct / 100.0,
+                        material_cost_net=round(max(0.0, net_seed_cost_spot), 0),
+                        station_fee=0.0,
+                        sell_price=effective_price,
+                        revenue_net=round(revenue_net_spot, 0),
+                        profit=round(spot_profit, 0),
+                        profit_pct=round(pct, 2),
+                        daily_volume=sell_vol,
+                        data_age_materials=seed_age,
+                        data_age_sell=sell_age,
+                        use_focus=self.use_focus,
+                        ingredients=[{
+                            "item_id": seed_id,
+                            "name": meta.get("seed_name", seed_id),
+                            "quantity": 1.0,
+                            "unit_price": seed_price,
+                            "buy_city": island_host_city,
+                            "seed_return_pct": eff_return_pct,
+                            "yield_per_spot": round(effective_yield, 2),
+                            "plot_yield": round(effective_yield * 9.0, 1),
+                        }],
+                        safe_limit=safe_limit,
+                        roi=round(roi, 2),
+                        profit_per_plot_day=round(plot_profit_day, 0),
+                        silver_per_focus=silver_per_focus,
+                        cycle_hours=meta.get("growth_hours", 22.0),
+                        subsector=subsector,
+                        biome_bonus_active=(biome_bonus > 0),
+                        output_qty=int(round(effective_yield)),
+                    )
+                    weight = item_weights.get(item_id, 0.0) if item_weights else 0.0
+                    opp.profit_per_kg = round(spot_profit / weight, 2) if weight > 0 else spot_profit
+                    opp.score = self._score_craft(opp)
+
+                    if best_opp is None or opp.score > best_opp.score:
+                        best_opp = opp
+
+                if best_opp:
+                    results.append(best_opp)
+        return results
+
+    def _scan_pasture_livestock(
+        self,
+        prices: dict,
+        item_names: dict[str, str],
+        target_host_cities: list[str],
+        item_weights: dict[str, float] = None,
+    ) -> list[CraftingOpportunity]:
+        """
+        Scans pasture livestock for both:
+        1. Butcher slaughter: adult animal -> 20 raw meat units (+10% biome bonus).
+        2. Daily animal produce: milk and eggs (2 units/day without slaughter).
+        """
+        from app.core.farming_constants import LIVESTOCK, get_city_biome_farming_bonus
+
+        results = []
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
+
+        for animal_key, meta in LIVESTOCK.items():
+            baby_id = meta["baby_id"]
+            meat_id = meta["meat_id"]
+            meat_yield = meta["meat_yield"]  # 20.0 base meat
+            produce_id = meta.get("produce_id")
+            produce_yield = meta.get("produce_daily_yield", 0.0)  # 2.0 base eggs/milk
+            feed_daily = meta.get("feed_daily", 10)
+            growth_hours = meta.get("growth_hours", 22.0)
+            growth_days = max(1, int(round(growth_hours / 22.0)))
+            base_offspring = meta.get("base_offspring_pct", 80.0)
+            nurtured_offspring = meta.get("nurtured_offspring_pct", 120.0)
+            focus_cost = meta.get("base_focus_cost", 1000)
+
+            eff_offspring = nurtured_offspring if self.use_focus else base_offspring
+
+            for island_host_city in target_host_cities:
+                baby_data = self._get_price(prices, baby_id, island_host_city, 1)
+                if not baby_data or baby_data.get("sell_price_min", 0) <= 0:
+                    for alt_c in ROYAL_SAFE_CITIES:
+                        baby_data = self._get_price(prices, baby_id, alt_c, 1)
+                        if baby_data and baby_data.get("sell_price_min", 0) > 0:
+                            break
+
+                if not baby_data or baby_data.get("sell_price_min", 0) <= 0:
+                    continue
+
+                baby_price = baby_data["sell_price_min"]
+                baby_age = baby_data.get("data_age_seconds", 9999)
+
+                # Daily feed cost (10 crops)
+                feed_unit_price = self._get_cheapest_feed_price(prices, island_host_city, is_meat=False)
+                feed_total_cost = feed_daily * feed_unit_price * growth_days
+
+                # Offspring return net baby cost
+                net_baby_cost = baby_price * (1.0 - (eff_offspring / 100.0))
+                total_growth_cost = max(0.0, net_baby_cost) + feed_total_cost
+
+                # Silver per focus
+                offspring_gain = baby_price * ((nurtured_offspring - base_offspring) / 100.0)
+                silver_per_focus = round(offspring_gain / max(1, focus_cost), 2)
+
+                # Biome +10% bonus
+                biome_bonus = get_city_biome_farming_bonus(island_host_city, meat_id)
+
+                # --- 1. BUTCHER SLAUGHTER (RAW MEAT) ---
+                effective_meat_yield = meat_yield * (1.0 + biome_bonus)
+                best_meat_opp = None
+                for sell_city in ROYAL_SAFE_CITIES:
+                    meat_data = self._get_price(prices, meat_id, sell_city, 1)
+                    if not meat_data:
+                        continue
+
+                    sell_price = meat_data.get("sell_price_min", 0)
+                    sell_age = meat_data.get("data_age_seconds", 9999)
+                    sell_vol = meat_data.get("volume_24h", 0)
+                    buy_max = meat_data.get("buy_price_max", 0)
+
+                    if sell_price <= 0 or sell_age > get_max_material_age_seconds(meat_id, volume_24h=sell_vol):
+                        continue
+                    if not self.allow_zero_volume and sell_vol == 0:
+                        continue
+                    if sell_vol > 0 and sell_vol < min_vol:
+                        continue
+                    if not is_price_valid(sell_price, buy_max, item_id=meat_id):
+                        continue
+                    if buy_max > 0 and sell_price > (buy_max * 3.5):
+                        continue
+
+                    trade_vol = self.default_trade_volume if self.use_slippage else 1
+                    effective_price = calculate_effective_price(sell_price, trade_vol, sell_vol, is_buy=False)
+                    safe_limit = calculate_safe_trade_limit(sell_vol, max_slippage_pct=0.03)
+
+                    revenue_net = (effective_price * effective_meat_yield) * (1.0 - self.tax - self.setup_fee)
+                    profit = revenue_net - total_growth_cost
+                    plot_profit_day = (profit / growth_days) * 9.0  # 9 animals per pasture
+                    pct = (profit / (baby_price + feed_total_cost) * 100.0) if (baby_price + feed_total_cost) > 0 else 0.0
+                    roi = (profit / max(1.0, total_growth_cost) * 100.0)
+
+                    if profit <= 0 and plot_profit_day <= 0:
+                        continue
+
+                    opp = CraftingOpportunity(
+                        item_id=meat_id,
+                        item_name=meta.get("meat_name", item_names.get(meat_id, meat_id)),
+                        craft_city=f"Personal Island ({island_host_city})",
+                        sell_city=sell_city,
+                        sell_mode="MARKET",
+                        material_cost_gross=round(baby_price + feed_total_cost, 0),
+                        rrr_used=eff_offspring / 100.0,
+                        material_cost_net=round(total_growth_cost, 0),
+                        station_fee=0.0,
+                        sell_price=effective_price,
+                        revenue_net=round(revenue_net, 0),
+                        profit=round(profit, 0),
+                        profit_pct=round(pct, 2),
+                        daily_volume=sell_vol,
+                        data_age_materials=baby_age,
+                        data_age_sell=sell_age,
+                        use_focus=self.use_focus,
+                        ingredients=[
+                            {"item_id": baby_id, "name": meta.get("baby_name", baby_id), "quantity": 1.0, "unit_price": baby_price, "buy_city": island_host_city},
+                            {"item_id": "T1_CARROT", "name": f"Feed Crops ({growth_days * feed_daily}x)", "quantity": float(growth_days * feed_daily), "unit_price": feed_unit_price, "buy_city": island_host_city},
+                        ],
+                        safe_limit=safe_limit,
+                        roi=round(roi, 2),
+                        profit_per_plot_day=round(plot_profit_day, 0),
+                        silver_per_focus=silver_per_focus,
+                        cycle_hours=growth_hours,
+                        subsector="livestock",
+                        biome_bonus_active=(biome_bonus > 0),
+                        output_qty=int(round(effective_meat_yield)),
+                    )
+                    weight = item_weights.get(meat_id, 0.0) if item_weights else 0.0
+                    opp.profit_per_kg = round(profit / weight, 2) if weight > 0 else profit
+                    opp.score = self._score_craft(opp)
+
+                    if best_meat_opp is None or opp.score > best_meat_opp.score:
+                        best_meat_opp = opp
+
+                if best_meat_opp:
+                    results.append(best_meat_opp)
+
+                # --- 2. PERIODIC PRODUCE (EGGS / MILK) ---
+                if produce_id and produce_yield > 0:
+                    produce_biome_bonus = get_city_biome_farming_bonus(island_host_city, produce_id)
+                    effective_produce_yield = produce_yield * (1.0 + produce_biome_bonus)
+                    daily_feed_only_cost = feed_daily * feed_unit_price
+
+                    best_prod_opp = None
+                    for sell_city in ROYAL_SAFE_CITIES:
+                        prod_data = self._get_price(prices, produce_id, sell_city, 1)
+                        if not prod_data:
+                            continue
+
+                        sell_price = prod_data.get("sell_price_min", 0)
+                        sell_age = prod_data.get("data_age_seconds", 9999)
+                        sell_vol = prod_data.get("volume_24h", 0)
+                        buy_max = prod_data.get("buy_price_max", 0)
+
+                        if sell_price <= 0 or sell_age > get_max_material_age_seconds(produce_id, volume_24h=sell_vol):
+                            continue
+                        if not self.allow_zero_volume and sell_vol == 0:
+                            continue
+                        if sell_vol > 0 and sell_vol < min_vol:
+                            continue
+                        if not is_price_valid(sell_price, buy_max, item_id=produce_id):
+                            continue
+
+                        trade_vol = self.default_trade_volume if self.use_slippage else 1
+                        effective_price = calculate_effective_price(sell_price, trade_vol, sell_vol, is_buy=False)
+                        safe_limit = calculate_safe_trade_limit(sell_vol, max_slippage_pct=0.03)
+
+                        revenue_net = (effective_price * effective_produce_yield) * (1.0 - self.tax - self.setup_fee)
+                        profit = revenue_net - daily_feed_only_cost
+                        plot_profit_day = profit * 9.0
+                        pct = (profit / daily_feed_only_cost * 100.0) if daily_feed_only_cost > 0 else 0.0
+                        roi = (profit / max(1.0, daily_feed_only_cost) * 100.0)
+
+                        if profit <= 0 and plot_profit_day <= 0:
+                            continue
+
+                        opp = CraftingOpportunity(
+                            item_id=produce_id,
+                            item_name=meta.get("produce_name", item_names.get(produce_id, produce_id)),
+                            craft_city=f"Personal Island ({island_host_city})",
+                            sell_city=sell_city,
+                            sell_mode="MARKET",
+                            material_cost_gross=round(daily_feed_only_cost, 0),
+                            rrr_used=0.0,
+                            material_cost_net=round(daily_feed_only_cost, 0),
+                            station_fee=0.0,
+                            sell_price=effective_price,
+                            revenue_net=round(revenue_net, 0),
+                            profit=round(profit, 0),
+                            profit_pct=round(pct, 2),
+                            daily_volume=sell_vol,
+                            data_age_materials=100,
+                            data_age_sell=sell_age,
+                            use_focus=self.use_focus,
+                            ingredients=[
+                                {"item_id": "T1_CARROT", "name": f"Daily Feed Crops ({feed_daily}x)", "quantity": float(feed_daily), "unit_price": feed_unit_price, "buy_city": island_host_city},
+                            ],
+                            safe_limit=safe_limit,
+                            roi=round(roi, 2),
+                            profit_per_plot_day=round(plot_profit_day, 0),
+                            silver_per_focus=0.0,
+                            cycle_hours=22.0,
+                            subsector="livestock",
+                            biome_bonus_active=(produce_biome_bonus > 0),
+                            output_qty=int(round(effective_produce_yield)),
+                        )
+                        weight = item_weights.get(produce_id, 0.0) if item_weights else 0.0
+                        opp.profit_per_kg = round(profit / weight, 2) if weight > 0 else profit
+                        opp.score = self._score_craft(opp)
+
+                        if best_prod_opp is None or opp.score > best_prod_opp.score:
+                            best_prod_opp = opp
+
+                    if best_prod_opp:
+                        results.append(best_prod_opp)
+
+        return results
+
+    def _scan_mount_raising(
+        self,
+        prices: dict,
+        item_names: dict[str, str],
+        target_host_cities: list[str],
+        item_weights: dict[str, float] = None,
+    ) -> list[CraftingOpportunity]:
+        """
+        Scans Mount raising & saddling (Baby -> Feed -> Saddler Materials -> Mount).
+        """
+        from app.core.farming_constants import MOUNTS, get_city_biome_farming_bonus
+
+        results = []
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
+
+        for mount_id, meta in MOUNTS.items():
+            baby_id = meta["baby_id"]
+            growth_days = meta.get("growth_days", 1)
+            growth_hours = meta.get("growth_hours", 22.0)
+            feed_daily = meta.get("feed_daily", 10)
+            feed_type = meta.get("feed_type", "crop")
+            saddling_ings = meta.get("saddling_ingredients", [])
+
+            for island_host_city in target_host_cities:
+                baby_data = self._get_price(prices, baby_id, island_host_city, 1)
+                if not baby_data or baby_data.get("sell_price_min", 0) <= 0:
+                    for alt_c in ROYAL_SAFE_CITIES:
+                        baby_data = self._get_price(prices, baby_id, alt_c, 1)
+                        if baby_data and baby_data.get("sell_price_min", 0) > 0:
+                            break
+
+                if not baby_data or baby_data.get("sell_price_min", 0) <= 0:
+                    continue
+
+                baby_price = baby_data["sell_price_min"]
+                baby_age = baby_data.get("data_age_seconds", 9999)
+
+                # Feed costs
+                feed_price = self._get_cheapest_feed_price(prices, island_host_city, is_meat=(feed_type == "meat"))
+                feed_total_cost = feed_daily * feed_price * growth_days
+
+                # Saddling materials costs
+                saddling_cost = 0.0
+                detailed_ings = [
+                    {"item_id": baby_id, "name": item_names.get(baby_id, baby_id), "quantity": 1.0, "unit_price": baby_price, "buy_city": island_host_city},
+                    {"item_id": "T1_CARROT" if feed_type == "crop" else "T3_MEAT", "name": f"Feed ({feed_daily * growth_days}x)", "quantity": float(feed_daily * growth_days), "unit_price": feed_price, "buy_city": island_host_city},
+                ]
+
+                has_all_materials = True
+                for ing in saddling_ings:
+                    ing_id = ing["item_id"]
+                    ing_qty = ing["quantity"]
+                    ing_data = self._get_price(prices, ing_id, island_host_city, 1)
+                    if not ing_data or ing_data.get("sell_price_min", 0) <= 0:
+                        for alt_c in ROYAL_SAFE_CITIES:
+                            ing_data = self._get_price(prices, ing_id, alt_c, 1)
+                            if ing_data and ing_data.get("sell_price_min", 0) > 0:
+                                break
+
+                    if not ing_data or ing_data.get("sell_price_min", 0) <= 0:
+                        has_all_materials = False
+                        break
+
+                    ing_price = ing_data["sell_price_min"]
+                    saddling_cost += ing_price * ing_qty
+                    detailed_ings.append({
+                        "item_id": ing_id,
+                        "name": item_names.get(ing_id, ing_id),
+                        "quantity": ing_qty,
+                        "unit_price": ing_price,
+                        "buy_city": island_host_city,
+                    })
+
+                if not has_all_materials:
+                    continue
+
+                total_cost = baby_price + feed_total_cost + saddling_cost
+                biome_bonus = get_city_biome_farming_bonus(island_host_city, mount_id)
+
+                best_opp = None
+                for sell_city in ROYAL_SAFE_CITIES:
+                    mount_data = self._get_price(prices, mount_id, sell_city, 1)
+                    if not mount_data:
+                        continue
+
+                    sell_price = mount_data.get("sell_price_min", 0)
+                    sell_age = mount_data.get("data_age_seconds", 9999)
+                    sell_vol = mount_data.get("volume_24h", 0)
+                    buy_max = mount_data.get("buy_price_max", 0)
+
+                    if sell_price <= 0 or sell_age > get_max_material_age_seconds(mount_id, volume_24h=sell_vol):
+                        continue
+                    if not self.allow_zero_volume and sell_vol == 0:
+                        continue
+                    if sell_vol > 0 and sell_vol < min_vol:
+                        continue
+                    if not is_price_valid(sell_price, buy_max, item_id=mount_id):
+                        continue
+                    if buy_max > 0 and sell_price > (buy_max * 3.5):
+                        continue
+
+                    trade_vol = self.default_trade_volume if self.use_slippage else 1
+                    effective_price = calculate_effective_price(sell_price, trade_vol, sell_vol, is_buy=False)
+                    safe_limit = calculate_safe_trade_limit(sell_vol, max_slippage_pct=0.03)
+
+                    revenue_net = effective_price * (1.0 - self.tax - self.setup_fee)
+                    profit = revenue_net - total_cost
+                    plot_profit_day = (profit / growth_days) * 9.0  # 9 pasture spots
+                    pct = (profit / total_cost * 100.0) if total_cost > 0 else 0.0
+                    roi = pct
+
+                    if profit <= 0 and plot_profit_day <= 0:
+                        continue
+
+                    opp = CraftingOpportunity(
+                        item_id=mount_id,
+                        item_name=meta.get("name", item_names.get(mount_id, mount_id)),
+                        craft_city=f"Personal Island ({island_host_city})",
+                        sell_city=sell_city,
+                        sell_mode="MARKET",
+                        material_cost_gross=round(total_cost, 0),
+                        rrr_used=0.0,
+                        material_cost_net=round(total_cost, 0),
+                        station_fee=0.0,  # 0 saddler fee on island
+                        sell_price=effective_price,
+                        revenue_net=round(revenue_net, 0),
+                        profit=round(profit, 0),
+                        profit_pct=round(pct, 2),
+                        daily_volume=sell_vol,
+                        data_age_materials=baby_age,
+                        data_age_sell=sell_age,
+                        use_focus=self.use_focus,
+                        ingredients=detailed_ings,
+                        safe_limit=safe_limit,
+                        roi=round(roi, 2),
+                        profit_per_plot_day=round(plot_profit_day, 0),
+                        silver_per_focus=0.0,
+                        cycle_hours=growth_hours,
+                        subsector="mounts",
+                        biome_bonus_active=(biome_bonus > 0),
+                    )
+                    weight = item_weights.get(mount_id, 0.0) if item_weights else 0.0
+                    opp.profit_per_kg = round(profit / weight, 2) if weight > 0 else profit
+                    opp.score = self._score_craft(opp)
+
+                    if best_opp is None or opp.score > best_opp.score:
+                        best_opp = opp
+
+                if best_opp:
+                    results.append(best_opp)
+        return results
+
+    def _scan_island_cooking_and_alchemy(
+        self,
+        prices: dict,
+        item_names: dict[str, str],
+        recipes: dict,
+        item_categories: dict[str, str],
+        item_values: dict[str, float],
+        target_host_cities: list[str],
+        local_sourcing: bool = True,
+        item_weights: dict[str, float] = None,
+    ) -> list[CraftingOpportunity]:
+        """
+        Scans Island Cookery and Alchemy workbenches (0 station usage fee, 0% base RRR / 37.11% focus RRR).
+        """
+        results = []
+        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
+        island_rrr = 0.37107 if self.use_focus else 0.0
+
+        for item_id, recipe in recipes.items():
+            item_id_upper = item_id.upper()
+            cat = (item_categories.get(item_id, "") or "").lower()
+            is_food_or_pot = (
+                any(k in item_id_upper for k in ["_MEAL_", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH", "_SALAD", "_POTION_"])
+                or cat in ("consumables", "cooking", "alchemy", "food", "potions")
+            )
+            if not is_food_or_pot:
+                continue
+
+            subsector = "potions" if ("_POTION_" in item_id_upper or "potion" in cat or "alchemy" in cat) else "cooking"
+            output_qty = 5 if subsector == "potions" else 10
+
+            for island_host_city in target_host_cities:
+                mat_cost, ing_details, mat_age = self._calc_material_cost(
+                    item_id, recipe, prices, island_host_city, quality=1, local_only=local_sourcing
+                )
+                if mat_cost <= 0:
+                    continue
+
+                material_cost_gross = mat_cost
+                material_cost_net = 0.0
+                for ing in ing_details:
+                    if ing.get("is_returnable", True):
+                        material_cost_net += ing["line_cost"] * (1.0 - island_rrr)
+                    else:
+                        material_cost_net += ing["line_cost"]
+
+                # 0 silver station usage fee on personal islands!
+                station_fee = 0.0
+                total_cost = material_cost_net + station_fee
+
+                best_opp = None
+                for sell_city in ROYAL_SAFE_CITIES + [CAERLEON, BRECILIEN]:
+                    sell_data = self._get_price(prices, item_id, sell_city, 1)
+                    if not sell_data:
+                        continue
+
+                    sell_price = sell_data.get("sell_price_min", 0)
+                    sell_age = sell_data.get("data_age_seconds", 9999)
+                    sell_vol = sell_data.get("volume_24h", 0)
+                    buy_max = sell_data.get("buy_price_max", 0)
+
+                    if sell_price <= 0 or sell_age > get_max_material_age_seconds(item_id, volume_24h=sell_vol):
+                        continue
+                    if not self.allow_zero_volume and sell_vol == 0:
+                        continue
+                    if sell_vol > 0 and sell_vol < min_vol:
+                        continue
+                    if not is_price_valid(sell_price, buy_max, item_id=item_id):
+                        continue
+                    if buy_max > 0 and sell_price > (buy_max * 3.5):
+                        continue
+
+                    trade_vol = self.default_trade_volume if self.use_slippage else 1
+                    effective_price = calculate_effective_price(sell_price, trade_vol, sell_vol, is_buy=False)
+                    safe_limit = calculate_safe_trade_limit(sell_vol, max_slippage_pct=0.03)
+
+                    # Batch revenue and profit (5x potions or 10x meals per craft)
+                    batch_revenue_net = (effective_price * output_qty) * (1.0 - self.tax - self.setup_fee)
+                    batch_profit = batch_revenue_net - total_cost
+                    pct = (batch_profit / material_cost_gross * 100.0) if material_cost_gross > 0 else 0.0
+                    roi = (batch_profit / total_cost * 100.0) if total_cost > 0 else 0.0
+
+                    if batch_profit < 1000 and (batch_profit * 10) < self.min_craft_profit:
+                        continue
+                    if pct < 5.0 or roi < self.min_roi:
+                        continue
+
+                    opp = CraftingOpportunity(
+                        item_id=item_id,
+                        item_name=item_names.get(item_id, item_id),
+                        craft_city=f"Personal Island ({island_host_city})",
+                        sell_city=sell_city,
+                        sell_mode="MARKET",
+                        material_cost_gross=round(material_cost_gross, 0),
+                        rrr_used=island_rrr,
+                        material_cost_net=round(material_cost_net, 0),
+                        station_fee=0.0,
+                        sell_price=effective_price,
+                        revenue_net=round(batch_revenue_net, 0),
+                        profit=round(batch_profit, 0),
+                        profit_pct=round(pct, 2),
+                        daily_volume=sell_vol,
+                        data_age_materials=mat_age,
+                        data_age_sell=sell_age,
+                        use_focus=self.use_focus,
+                        ingredients=ing_details,
+                        safe_limit=safe_limit,
+                        roi=round(roi, 2),
+                        profit_per_plot_day=round(batch_profit * 10, 0),  # 10 batch equivalent
+                        silver_per_focus=0.0,
+                        cycle_hours=0.0,  # instant bench craft
+                        subsector=subsector,
+                        biome_bonus_active=False,
+                        output_qty=output_qty,
+                    )
+                    weight = item_weights.get(item_id, 0.0) if item_weights else 0.0
+                    opp.profit_per_kg = round(batch_profit / weight, 2) if weight > 0 else batch_profit
+                    opp.score = self._score_craft(opp)
+
+                    if best_opp is None or opp.score > best_opp.score:
+                        best_opp = opp
+
+                if best_opp:
+                    results.append(best_opp)
+        return results
+
+    def scan_consumables(
+        self,
+        prices: dict,
+        item_names: dict[str, str],
+        recipes: dict,
+        item_categories: dict[str, str],
+        item_values: dict[str, float],
+        item_weights: dict[str, float] = None,
+    ) -> tuple[list[CraftingOpportunity], list[CraftingOpportunity]]:
+        """
+        Scans all verified Alchemy (Potions) and Cookery (Buff Meals) opportunities across:
+        1. City Crafting Stations:
+           - Potions: Brecilien (+15% LPB -> 24.8% base RRR / 47.9% focus RRR) and Royal Safe Cities (15.2% RRR).
+           - Cookery: Caerleon (+15% LPB -> 24.8% base RRR / 47.9% focus RRR) and Royal Safe Cities (15.2% RRR).
+        2. Personal Island Stations (0 silver station usage fee).
+        3. Authoritative Albion Online batch yields:
+           - Potions: 5 potions per craft batch.
+           - Meals / Food: 10 meals per craft batch.
+        Returns: (potion_opportunities, cooking_opportunities)
+        """
+        from app.core.market_utils import calculate_rrr
+
+        potion_results: list[CraftingOpportunity] = []
+        cooking_results: list[CraftingOpportunity] = []
+
+        min_vol = max(3, getattr(settings, "anti_bait_min_volume_consumable", 3))
+        all_sell_cities = ROYAL_SAFE_CITIES + [CAERLEON, BRECILIEN]
+
+        for item_id, recipe in recipes.items():
+            item_id_upper = item_id.upper()
+            cat = (item_categories.get(item_id, "") or "").lower()
+
+            is_potion = "_POTION_" in item_id_upper or "potion" in cat or "alchemy" in cat
+            is_food = (
+                any(k in item_id_upper for k in ["_MEAL_", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH", "_SALAD"])
+                or cat in ("cooking", "food")
+            )
+
+            if not is_potion and not is_food:
+                continue
+            if any(v in item_id_upper for v in ["UNIQUE_", "SKIN_", "FURNITURE", "TOKEN", "QUESTITEM", "_NON_TRADABLE", "NONTRADABLE", "_ARTEFACT_"]):
+                continue
+
+            output_qty = 5 if is_potion else 10
+            subsector = "potions" if is_potion else "cooking"
+            cat_key = "potion" if is_potion else "cooked_food"
+            preferred_city = "Brecilien" if is_potion else "Caerleon"
+
+            # Candidate crafting locations:
+            # 1. Preferred Bonus City (+15% LPB -> 24.8% RRR)
+            # 2. Other Royal Safe Cities (15.2% RRR)
+            # 3. Personal Island (0 station fee)
+            craft_candidates = [
+                (preferred_city, False),
+                ("Caerleon" if is_potion else "Brecilien", False),
+                ("Lymhurst", False),
+                ("Fort Sterling", False),
+                ("Bridgewatch", False),
+                ("Thetford", False),
+                ("Martlock", False),
+                (f"Personal Island ({preferred_city})", True),
+            ]
+
+            best_item_opp = None
+
+            for craft_loc, is_island in craft_candidates:
+                if is_island:
+                    craft_city_clean = craft_loc.replace("Personal Island (", "").replace(")", "").strip()
+                    craft_rrr = 0.37107 if self.use_focus else 0.0
+                    station_fee = 0.0
+                    is_biome_bonus = False
+                else:
+                    craft_city_clean = craft_loc
+                    craft_rrr = calculate_rrr(craft_city_clean, cat_key, tier=4, use_focus=self.use_focus)
+                    station_fee = 300.0  # standard nutrition/usage fee estimate per craft batch
+                    is_biome_bonus = (craft_city_clean == preferred_city)
+
+                mat_cost_gross, ing_details, mat_age = self._calc_material_cost(
+                    item_id, recipe, prices, craft_city_clean, quality=1, local_only=False
+                )
+                if mat_cost_gross <= 0:
+                    continue
+
+                mat_cost_net = 0.0
+                for ing in ing_details:
+                    if ing.get("is_returnable", True):
+                        mat_cost_net += ing["line_cost"] * (1.0 - craft_rrr)
+                    else:
+                        mat_cost_net += ing["line_cost"]
+
+                total_cost = mat_cost_net + station_fee
+
+                # ── Anti-Manipulation: Cross-city outlier check on sell prices ──
+                sell_price_map = {}
+                for sc in all_sell_cities:
+                    sd = self._get_price(prices, item_id, sc, 1)
+                    if sd and sd.get("sell_price_min", 0) > 0:
+                        sell_price_map[sc] = sd["sell_price_min"]
+                cleaned_sell = cross_city_outlier_check(sell_price_map) if len(sell_price_map) >= 2 else sell_price_map
+
+                for sell_city in all_sell_cities:
+                    sell_data = self._get_price(prices, item_id, sell_city, 1)
+                    if not sell_data:
+                        continue
+
+                    sell_price = sell_data.get("sell_price_min", 0)
+                    sell_age = sell_data.get("data_age_seconds", 9999)
+                    sell_vol = sell_data.get("volume_24h", 0)
+                    buy_max = sell_data.get("buy_price_max", 0)
+
+                    if sell_price <= 0 or sell_age > get_max_material_age_seconds(item_id, volume_24h=sell_vol):
+                        continue
+                    if not is_price_valid(sell_price, buy_max, daily_volume=sell_vol, item_id=item_id):
+                        continue
+
+                    # ── Anti-Manipulation: Apply cross-city outlier cleaned price ──
+                    outlier_cleaned_price = cleaned_sell.get(sell_city, 0)
+                    if outlier_cleaned_price <= 0:
+                        continue  # Flagged as extreme outlier
+                    if outlier_cleaned_price != sell_price:
+                        sell_price = outlier_cleaned_price  # Anchored to median
+
+                    # ── Anti-Manipulation: Pool price sanity (anchor stale single-unit dumps) ──
+                    history_avg = sell_data.get("avg_price_24h", 0) or sell_data.get("history_avg_price", 0)
+                    if history_avg > 0:
+                        sell_price = pool_price_sanity(sell_price, history_avg, sell_vol)
+                        if sell_price <= 0:
+                            continue
+
+                    # ── Anti-Manipulation: Volume floor for consumables (configurable, default 3) ──
+                    if sell_vol < min_vol and sell_vol > 0:
+                        continue  # Too illiquid, likely bait
+                    if sell_vol == 0 and not self.allow_zero_volume:
+                        continue
+
+                    # ── Anti-Manipulation: Tighter spread check for consumables ──
+                    # Healthy consumable spreads are < 50%; > 2.5x is a strong bait signal
+                    manip_risk = ""
+                    if buy_max > 0 and sell_price > (buy_max * 2.5):
+                        continue  # Extreme spread = likely manipulation
+                    elif buy_max > 0 and sell_price > (buy_max * 1.5):
+                        manip_risk = "medium"  # Wide spread, borderline
+                    elif sell_vol > 0 and sell_vol < 5:
+                        manip_risk = "low"  # Low liquidity, exercise caution
+
+                    effective_vol = sell_vol if sell_vol > 0 else 10
+                    trade_vol = self.default_trade_volume if self.use_slippage else 1
+                    effective_price = calculate_effective_price(sell_price, trade_vol, effective_vol, is_buy=False)
+                    safe_limit = calculate_safe_trade_limit(effective_vol, max_slippage_pct=0.03)
+
+                    # Batch revenue and profit (5x potions or 10x meals per craft)
+                    batch_revenue_net = (effective_price * output_qty) * (1.0 - self.tax - self.setup_fee)
+                    batch_profit = batch_revenue_net - total_cost
+                    pct = (batch_profit / mat_cost_gross * 100.0) if mat_cost_gross > 0 else 0.0
+                    roi = (batch_profit / total_cost * 100.0) if total_cost > 0 else 0.0
+
+                    if batch_profit < 1000 and (batch_profit * 10) < self.min_craft_profit:
+                        continue
+                    if pct < 5.0 or roi < self.min_roi:
+                        continue
+
+                    opp = CraftingOpportunity(
+                        item_id=item_id,
+                        item_name=item_names.get(item_id, item_id),
+                        craft_city=craft_loc,
+                        sell_city=sell_city,
+                        sell_mode="MARKET",
+                        material_cost_gross=round(mat_cost_gross, 0),
+                        rrr_used=craft_rrr,
+                        material_cost_net=round(mat_cost_net, 0),
+                        station_fee=station_fee,
+                        sell_price=effective_price,
+                        revenue_net=round(batch_revenue_net, 0),
+                        profit=round(batch_profit, 0),
+                        profit_pct=round(pct, 2),
+                        daily_volume=sell_vol,
+                        data_age_materials=mat_age,
+                        data_age_sell=sell_age,
+                        use_focus=self.use_focus,
+                        ingredients=ing_details,
+                        safe_limit=safe_limit,
+                        roi=round(roi, 2),
+                        profit_per_plot_day=round(batch_profit * 10, 0),
+                        silver_per_focus=0.0,
+                        cycle_hours=0.0,
+                        subsector=subsector,
+                        biome_bonus_active=is_biome_bonus,
+                        output_qty=output_qty,
+                        manipulation_risk=manip_risk,
+                    )
+                    weight = item_weights.get(item_id, 0.0) if item_weights else 0.0
+                    opp.profit_per_kg = round(batch_profit / weight, 2) if weight > 0 else batch_profit
+                    opp.score = self._score_craft(opp)
+
+                    if best_item_opp is None or opp.score > best_item_opp.score:
+                        best_item_opp = opp
+
+            if best_item_opp:
+                if is_potion:
+                    potion_results.append(best_item_opp)
+                else:
+                    cooking_results.append(best_item_opp)
+
+        potion_results.sort(key=lambda x: x.score, reverse=True)
+        cooking_results.sort(key=lambda x: x.score, reverse=True)
+        return potion_results, cooking_results
+
     def scan_island(
         self,
         prices: dict,
@@ -1946,158 +2827,40 @@ class OpportunityScanner:
         item_weights: dict[str, float] = None,
     ) -> list[CraftingOpportunity]:
         """
-        Scans Island farming, herb gardens, pasture livestock, butcher, meals, and potions.
-        Supports official +10% Island Biome Local Production Bonuses per host city.
-        Only buy seeds/animals/produce and sell outputs in Safe Royal Cities.
+        Scans Island operations using factual Albion Online mechanics (as of September 2026):
+        1. Biological Crop & Herb plots (average 9.0 yield, +10% city biome bonus, unwatered/watered seed return rates).
+        2. Pasture Livestock (10 crops/day feed, daily milk/eggs produce, and 20-meat Butcher slaughter yield).
+        3. Mount Raising & Saddling (Babies -> Feed -> Saddler refined resources -> Finished Mount).
+        4. Island Cooking & Alchemy (0 station usage fee on personal islands vs city cartel taxes).
         """
-        from app.core.market_utils import get_island_farming_bonus
-        results = []
-        min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
-
-        FARM_KEYWORDS = (
-            "_SEED", "_CROP", "_HERB", "_MILK", "_BUTTER", "_EGG", "_FLOUR",
-            "_FOAL", "_CALF", "_PIG", "_SHEEP", "_GOAT", "_CHICKEN", "_GOOSE",
-            "_CARROT", "_BEAN", "_WHEAT", "_TURNIP", "_CABBAGE", "_POTATO", "_CORN", "_PUMPKIN",
-            "_FARM_", "_MEAT", "_STEW", "_SOUP", "_PIE", "_OMELETTE", "_ROAST", "_SANDWICH",
-            "_SALAD", "_FISH", "_ALCOHOL", "_EXTRACT", "_BREAD", "_POTION_", "_MEAL_",
-            "_MOUNT", "MOUNT_", "_BABY", "_GROWN", "_PUP", "_CUB", "_FAWN", "_CHICK",
-            "_GOSLING", "_LAMB", "_PIGLET", "_KID", "_AGARIC", "_COMFREY", "_BURDOCK",
-            "_TEASEL", "_FOXGLOVE", "_YARROW", "_MULLEIN"
-        )
-
-        island_rrr = 0.37107 if self.use_focus else 0.0  # 0% base, 37.11% with focus
-
-        # Determine island host cities to scan: user configured home city or all Royal Cities
         user_island_city = getattr(settings, "island_home_city", None)
-        if user_island_city and user_island_city in ROYAL_SAFE_CITIES:
+        all_island_cities = ["Bridgewatch", "Fort Sterling", "Lymhurst", "Martlock", "Thetford", "Caerleon", "Brecilien"]
+        if user_island_city and user_island_city in all_island_cities:
             target_host_cities = [user_island_city]
         else:
-            target_host_cities = ROYAL_SAFE_CITIES
+            target_host_cities = all_island_cities
 
         local_sourcing = getattr(settings, "island_local_sourcing_only", True)
 
-        for item_id, recipe in recipes.items():
-            item_id_upper = item_id.upper()
-            cat = (item_categories.get(item_id, "") or "").lower()
-            is_island = any(k in item_id_upper for k in FARM_KEYWORDS) or cat in (
-                "farming", "crops", "herbs", "livestock", "animals", "consumables", "cooking", "alchemy", "food", "potions", "mounts", "mount"
-            )
-            if not is_island:
-                continue
+        results = []
 
-            for island_host_city in target_host_cities:
-                # 1. Calculate material cost
-                mat_cost, ing_details, mat_age = self._calc_material_cost(
-                    item_id, recipe, prices, island_host_city, quality=1, local_only=local_sourcing
-                )
-                if mat_cost <= 0:
-                    continue
+        # 1. Biological Crops and Herb Gardens
+        crop_opps = self._scan_crops_and_herbs(prices, item_names, target_host_cities, item_weights)
+        results.extend(crop_opps)
 
-                material_cost_gross = mat_cost
-                ingredient_details = ing_details
+        # 2. Pasture Livestock (Produce + 20-meat Butcher slaughter)
+        livestock_opps = self._scan_pasture_livestock(prices, item_names, target_host_cities, item_weights)
+        results.extend(livestock_opps)
 
-                material_cost_net = 0.0
-                for ing in ingredient_details:
-                    if ing.get("is_returnable"):
-                        material_cost_net += ing["line_cost"] * (1.0 - island_rrr)
-                    else:
-                        material_cost_net += ing["line_cost"]
+        # 3. Mount Raising & Saddling
+        mount_opps = self._scan_mount_raising(prices, item_names, target_host_cities, item_weights)
+        results.extend(mount_opps)
 
-                item_val = item_values.get(item_id, 0.0) if item_values else 0.0
-                if item_val <= 0:
-                    item_val = get_fallback_item_value(item_id)
-                station_tax = getattr(settings, "station_tax_per_100_nutrition", 500.0)
-                station_fee = calculate_station_fee(item_val, station_tax) if ("_MEAL_" in item_id_upper or "_POTION_" in item_id_upper or "_MEAT" in item_id_upper) else 0.0
-                total_cost = material_cost_net + station_fee
-
-                # Biome +10% Yield multiplier (e.g. +10% bonus yield)
-                biome_bonus = get_island_farming_bonus(island_host_city, item_id)
-                yield_multiplier = 1.0 + biome_bonus
-
-                # Sell in Safe Royal Cities (local island host market or transport to best market)
-                island_sell_map = {}
-                for sell_city in ROYAL_SAFE_CITIES:
-                    p = self._get_price(prices, item_id, sell_city, 1)
-                    if p and p.get("sell_price_min", 0) > 0:
-                        island_sell_map[sell_city] = p["sell_price_min"]
-
-                cleaned_island_sell = cross_city_outlier_check(island_sell_map)
-
-                best_opp = None
-                for sell_city in ROYAL_SAFE_CITIES:
-                    if cleaned_island_sell.get(sell_city, 0) == 0:
-                        continue
-
-                    sell_data = self._get_price(prices, item_id, sell_city, 1)
-                    if not sell_data:
-                        continue
-
-                    sell_price = sell_data.get("sell_price_min", 0)
-                    sell_age = sell_data.get("data_age_seconds", 9999)
-                    sell_vol = sell_data.get("volume_24h", 0)
-                    buy_max = sell_data.get("buy_price_max", 0)
-
-                    if sell_price <= 0 or sell_age > get_max_material_age_seconds(item_id, volume_24h=sell_vol) or ((not self.allow_zero_volume and sell_vol == 0) or (sell_vol > 0 and sell_vol < min_vol)):
-                        continue
-                    if not is_price_valid(sell_price, buy_max, item_id=item_id):
-                        continue
-
-                    # Anti-troll bid anchor check: ask price cannot be detached from buyer bids
-                    if buy_max > 0 and sell_price > (buy_max * 3.5):
-                        continue
-
-                    # High cost liquidity check
-                    if total_cost > 50_000 and sell_vol < 1 and not self.allow_zero_volume:
-                        continue
-
-                    trade_vol = self.default_trade_volume if self.use_slippage else 1
-                    effective_price = calculate_effective_price(sell_price, trade_vol, sell_vol, is_buy=False)
-                    safe_limit = calculate_safe_trade_limit(sell_vol, max_slippage_pct=0.03)
-
-                    # Revenue with Biome Bonus Yield: output * (1 + biome_bonus) * (1 - tax - setup)
-                    revenue_net = (effective_price * yield_multiplier) * (1.0 - self.tax - self.setup_fee)
-                    profit = revenue_net - total_cost
-                    pct = (profit / material_cost_gross * 100) if material_cost_gross > 0 else 0
-                    roi = (profit / total_cost * 100) if total_cost > 0 else 0
-
-                    # Realistic safe Royal City island farming/potion margins ceiling
-                    max_island_roi = getattr(settings, "max_island_roi_pct", 150.0)
-                    if pct > max_island_roi or roi > max_island_roi:
-                        continue
-
-                    # Allow batch profit scaling (e.g. 100x potion/food batch)
-                    if (profit >= self.min_craft_profit or profit * 100 >= self.min_craft_profit) and pct >= 5.0 and roi >= self.min_roi:
-                        opp = CraftingOpportunity(
-                            item_id=item_id,
-                            item_name=item_names.get(item_id, item_id),
-                            craft_city=f"Personal Island ({island_host_city})",
-                            sell_city=sell_city,
-                            sell_mode="MARKET",
-                            material_cost_gross=round(material_cost_gross, 0),
-                            rrr_used=island_rrr,
-                            material_cost_net=round(material_cost_net, 0),
-                            station_fee=round(station_fee, 0),
-                            sell_price=effective_price,
-                            revenue_net=round(revenue_net, 0),
-                            profit=round(profit, 0),
-                            profit_pct=round(pct, 2),
-                            daily_volume=sell_vol,
-                            data_age_materials=mat_age,
-                            data_age_sell=sell_age,
-                            use_focus=self.use_focus,
-                            ingredients=ingredient_details,
-                            safe_limit=safe_limit,
-                        )
-                        opp.roi = roi
-                        weight = item_weights.get(item_id, 0.0) if item_weights else 0.0
-                        opp.profit_per_kg = round(profit / weight, 2) if weight > 0 else profit
-                        opp.score = self._score_craft(opp)
-
-                        if best_opp is None or opp.score > best_opp.score:
-                            best_opp = opp
-
-                if best_opp:
-                    results.append(best_opp)
+        # 4. Island Cooking & Alchemy (0% Station Fee)
+        cooking_alchemy_opps = self._scan_island_cooking_and_alchemy(
+            prices, item_names, recipes, item_categories, item_values, target_host_cities, local_sourcing, item_weights
+        )
+        results.extend(cooking_alchemy_opps)
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results
@@ -2768,10 +3531,10 @@ class OpportunityScanner:
             total += line_cost
             max_age = max(max_age, best_age)
 
-            is_returnable = False
-            if "ARTIFACT" not in ing_id:
-                if any(r in ing_id for r in ["PLANKS", "CLOTH", "LEATHER", "BAR", "METALBAR", "WOOD", "ORE", "HIDE", "FIBER", "ROCK", "STONE", "BLOCK"]):
-                    is_returnable = True
+            is_returnable = True
+            ing_upper = ing_id.upper()
+            if any(x in ing_upper for x in ["ARTEFACT", "ARTIFACT", "TOKEN", "QUESTITEM", "SIGIL", "_BP"]):
+                is_returnable = False
 
             ing_name = getattr(self, "_item_names", {}).get(ing_id, ing_id)
             ingredients.append({
