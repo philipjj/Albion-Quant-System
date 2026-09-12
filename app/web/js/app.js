@@ -2312,9 +2312,32 @@ window.openDetailModal = function(globalIdx, catKey) {
   const modalHeadline = document.getElementById('modal-headline');
   if (modalHeadline) modalHeadline.textContent = `${opp.item_name || itemId} (${tier}${enchantLabel})`;
 
+  const prevScroll = modalBody ? modalBody.scrollTop : 0;
+
   modalBody.innerHTML = `
     <div class="modal-dossier-grid">
       
+      <!-- Full-Width Orderbook Execution Depth & Sizing Controller -->
+      <div class="dossier-card" style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 1rem; margin-bottom: 0.25rem; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(245, 158, 11, 0.25); flex-wrap: wrap; gap: 0.75rem;">
+        <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+          <span style="font-size: 0.72rem; font-weight: 800; color: var(--text-gold); text-transform: uppercase; letter-spacing: 0.05em;">TRADE EXECUTION DEPTH & SIZING:</span>
+          <span class="volume-cap-lbl font-mono" style="font-size: 0.74rem;">Orderbook Safe Limit: <strong style="color: var(--accent-gold-bright); font-size: 0.85rem;">${m.safeLimit}x</strong></span>
+          ${m.isOverSafeLimit ? `<span style="font-size: 0.7rem; color: #f87171; font-weight: 700; background: rgba(248, 113, 113, 0.15); padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(248, 113, 113, 0.3);">⚠️ Over Depth (~${m.slippagePct}% slippage)</span>` : ''}
+        </div>
+        <div style="display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;">
+          <span style="font-size: 0.72rem; color: var(--text-muted);">Depth:</span>
+          <div class="volume-stepper" style="border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(0, 0, 0, 0.5);">
+            <button class="vol-step-btn" onclick="modalStepVolume(${globalIdx}, '${catKey || ''}', -1)" title="Decrease depth by 1" style="padding: 0.25rem 0.65rem; font-size: 0.95rem; font-weight: 800; color: #fff;">−</button>
+            <input type="number" class="vol-input font-mono" value="${qty}" min="1" max="10000" onchange="modalSetVolume(${globalIdx}, '${catKey || ''}', this.value)" style="width: 52px; font-size: 0.88rem; color: #facc15; font-weight: 800; text-align: center;" />
+            <button class="vol-step-btn" onclick="modalStepVolume(${globalIdx}, '${catKey || ''}', 1)" title="Increase depth by 1" style="padding: 0.25rem 0.65rem; font-size: 0.95rem; font-weight: 800; color: #fff;">+</button>
+          </div>
+          <button class="vol-step-btn ${qty === 1 ? 'active' : ''}" style="border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 0.28rem 0.65rem; font-size: 0.76rem;" onclick="modalSetVolume(${globalIdx}, '${catKey || ''}', 1)">1x</button>
+          <button class="vol-step-btn ${qty === 5 ? 'active' : ''}" style="border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 0.28rem 0.65rem; font-size: 0.76rem;" onclick="modalSetVolume(${globalIdx}, '${catKey || ''}', 5)">5x</button>
+          <button class="vol-step-btn ${qty === 10 ? 'active' : ''}" style="border: 1px solid rgba(255,255,255,0.12); border-radius: 4px; padding: 0.28rem 0.65rem; font-size: 0.76rem;" onclick="modalSetVolume(${globalIdx}, '${catKey || ''}', 10)">10x</button>
+          <button class="vol-step-btn ${qty === m.safeLimit ? 'active' : ''}" style="border: 1px solid rgba(245,158,11,0.3); border-radius: 4px; padding: 0.28rem 0.7rem; font-size: 0.76rem; color: var(--accent-gold-bright);" onclick="modalSetVolume(${globalIdx}, '${catKey || ''}', ${m.safeLimit})" title="Max safe orderbook depth">Max (${m.safeLimit}x)</button>
+        </div>
+      </div>
+
       <!-- Left Column: Trade Corridor & Financial Summary -->
       <div class="modal-col-summary">
         
@@ -2359,9 +2382,20 @@ window.openDetailModal = function(globalIdx, catKey) {
           </div>
         </div>
 
-        <!-- Financial Summary Card -->
+        <!-- Financial Summary Card (Financial Metrics & Math) -->
         <div class="dossier-card">
-          <div class="dossier-card-title">FINANCIAL METRICS & YIELD</div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; flex-wrap: wrap; gap: 0.4rem;">
+            <div class="dossier-card-title" style="margin-bottom: 0;">FINANCIAL METRICS & YIELD</div>
+            <div style="display: flex; align-items: center; gap: 0.35rem;">
+              <span class="volume-cap-lbl font-mono" style="font-size: 0.68rem; color: var(--text-muted);">Depth:</span>
+              <div class="volume-stepper" style="border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(0, 0, 0, 0.4);">
+                <button class="vol-step-btn" onclick="modalStepVolume(${globalIdx}, '${catKey || ''}', -1)" title="Decrease execution depth" style="font-weight: 800; padding: 0.2rem 0.55rem; font-size: 0.85rem; color: #fff;">−</button>
+                <input type="number" class="vol-input font-mono" value="${qty}" min="1" max="10000" onchange="modalSetVolume(${globalIdx}, '${catKey || ''}', this.value)" style="width: 44px; color: #facc15; font-weight: 700; text-align: center;" />
+                <button class="vol-step-btn" onclick="modalStepVolume(${globalIdx}, '${catKey || ''}', 1)" title="Increase execution depth" style="font-weight: 800; padding: 0.2rem 0.55rem; font-size: 0.85rem; color: #fff;">+</button>
+                <button class="vol-step-btn ${qty === m.safeLimit ? 'active' : ''}" onclick="modalSetVolume(${globalIdx}, '${catKey || ''}', ${m.safeLimit})" title="Size to top safe depth" style="padding: 0.2rem 0.5rem; font-size: 0.72rem; color: var(--accent-gold-bright); border-left: 1px solid rgba(255,255,255,0.1);">Max</button>
+              </div>
+            </div>
+          </div>
           <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
             <div>
               <div style="font-size: 0.64rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Batch Net Profit (${qty}x${(opp.output_qty && opp.output_qty > 1) ? ` Batch / ${qty * opp.output_qty}x Items` : ''})</div>
@@ -2394,11 +2428,22 @@ window.openDetailModal = function(globalIdx, catKey) {
 
       </div>
 
-      <!-- Right Column: Sourcing Recipe & Execution Math -->
+      <!-- Right Column: Sourcing Recipe & Execution Math (Blueprint Section) -->
       <div class="modal-col-math">
         
         <div class="dossier-card">
-          <div class="dossier-card-title">EXECUTION BLUEPRINT & SOURCING</div>
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.6rem; flex-wrap: wrap; gap: 0.4rem;">
+            <div class="dossier-card-title" style="margin-bottom: 0;">EXECUTION BLUEPRINT & SOURCING</div>
+            <div style="display: flex; align-items: center; gap: 0.35rem;">
+              <span class="volume-cap-lbl font-mono" style="font-size: 0.68rem; color: var(--text-muted);">Depth:</span>
+              <div class="volume-stepper" style="border: 1px solid rgba(245, 158, 11, 0.35); background: rgba(0, 0, 0, 0.4);">
+                <button class="vol-step-btn" onclick="modalStepVolume(${globalIdx}, '${catKey || ''}', -1)" title="Decrease blueprint batch depth" style="font-weight: 800; padding: 0.2rem 0.55rem; font-size: 0.85rem; color: #fff;">−</button>
+                <input type="number" class="vol-input font-mono" value="${qty}" min="1" max="10000" onchange="modalSetVolume(${globalIdx}, '${catKey || ''}', this.value)" style="width: 44px; color: #facc15; font-weight: 700; text-align: center;" />
+                <button class="vol-step-btn" onclick="modalStepVolume(${globalIdx}, '${catKey || ''}', 1)" title="Increase blueprint batch depth" style="font-weight: 800; padding: 0.2rem 0.55rem; font-size: 0.85rem; color: #fff;">+</button>
+                <button class="vol-step-btn ${qty === m.safeLimit ? 'active' : ''}" onclick="modalSetVolume(${globalIdx}, '${catKey || ''}', ${m.safeLimit})" title="Size to top safe depth" style="padding: 0.2rem 0.5rem; font-size: 0.72rem; color: var(--accent-gold-bright); border-left: 1px solid rgba(255,255,255,0.1);">Max</button>
+              </div>
+            </div>
+          </div>
           ${blueprintHtml}
         </div>
 
@@ -2412,7 +2457,34 @@ window.openDetailModal = function(globalIdx, catKey) {
     </div>
   `;
 
+  if (modalBody && prevScroll > 0) {
+    modalBody.scrollTop = prevScroll;
+  }
+
   modal.classList.add('open');
+};
+
+window.modalStepVolume = function(globalIdx, catKey, delta) {
+  const list = (state.filteredList && state.filteredList.length > 0) ? state.filteredList : getFilteredOpportunities();
+  const opp = list[globalIdx];
+  if (!opp) return;
+  const oppKey = `${opp.item_id}_${globalIdx}`;
+  const current = state.volumeOverrides[oppKey] !== undefined ? state.volumeOverrides[oppKey] : (opp.safe_limit || 1);
+  const next = Math.max(1, current + delta);
+  state.volumeOverrides[oppKey] = next;
+  updateCardMetricsInPlace(oppKey, next);
+  openDetailModal(globalIdx, catKey);
+};
+
+window.modalSetVolume = function(globalIdx, catKey, val) {
+  const list = (state.filteredList && state.filteredList.length > 0) ? state.filteredList : getFilteredOpportunities();
+  const opp = list[globalIdx];
+  if (!opp) return;
+  const oppKey = `${opp.item_id}_${globalIdx}`;
+  const next = Math.max(1, parseInt(val) || 1);
+  state.volumeOverrides[oppKey] = next;
+  updateCardMetricsInPlace(oppKey, next);
+  openDetailModal(globalIdx, catKey);
 };
 
 window.closeDetailModal = function() {

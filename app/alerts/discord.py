@@ -817,7 +817,7 @@ class DiscordAlerter:
                 },
                 {
                     "name": "✨ Components Required",
-                    "value": f"• Base: **{base_name}{base_q_str}** (`{base_city}`)\n• Material: {opp.get('material_qty', 1)}x **{mat_name}**\n• Safe Batch: **{opp.get('safe_limit', 0):,} units**",
+                    "value": f"• Base: **{base_full_title}{base_q_str}** (`{base_city}`)\n• Material: {opp.get('material_qty', 1)}x **{mat_name}**\n• Safe Batch: **{opp.get('safe_limit', 0):,} units**",
                     "inline": True,
                 },
             ],
