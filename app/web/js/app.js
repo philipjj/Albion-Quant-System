@@ -1009,16 +1009,25 @@ const KNOWN_ITEM_NAMES = {
 
 function formatItemName(rawId) {
   if (!rawId) return '';
-  let clean = rawId.split('@')[0];
-  if (KNOWN_ITEM_NAMES[clean]) return KNOWN_ITEM_NAMES[clean];
-  if (KNOWN_ITEM_NAMES[rawId]) return KNOWN_ITEM_NAMES[rawId];
-  if (/^T\d+_/.test(clean)) {
+  const parts = String(rawId).split('@');
+  const clean = parts[0];
+  const enchant = (parts.length > 1 && parts[1] && parts[1] !== '0') ? `.${parts[1]}` : '';
+
+  let name = '';
+  if (KNOWN_ITEM_NAMES[rawId]) {
+    return KNOWN_ITEM_NAMES[rawId];
+  } else if (KNOWN_ITEM_NAMES[clean]) {
+    name = KNOWN_ITEM_NAMES[clean];
+  } else if (/^T\d+_/.test(clean)) {
     const tier = clean.slice(0, 2);
     const rest = clean.slice(3).replace(/_/g, ' ').toLowerCase();
     const capitalized = rest.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-    return `${tier} ${capitalized}`;
+    return enchant ? `${tier}${enchant} ${capitalized}` : `${tier} ${capitalized}`;
+  } else {
+    name = clean.replace(/_/g, ' ');
   }
-  return clean.replace(/_/g, ' ');
+
+  return enchant ? `${name} ${enchant}` : name;
 }
 
 function updateTabCounts() {
@@ -2011,6 +2020,16 @@ window.openDetailModal = function(globalIdx, catKey) {
     const baseId = opp.base_item_id || itemId.split('@')[0];
     const basePrice = Number(opp.base_price || 0);
     const totalBaseCost = basePrice * qty;
+    const baseAge = Number(opp.data_age_base || opp.data_age_buy || 0);
+    const isBaseStale = baseAge > 1800; // > 30 minutes
+
+    const baseTierMatch = baseId.match(/^T(\d+)/i);
+    const baseTierNum = baseTierMatch ? baseTierMatch[1] : '4';
+    const baseTier = `T${baseTierNum}`;
+    const baseEnchantMatch = baseId.match(/@(\d+)/);
+    const baseEnchant = baseEnchantMatch ? baseEnchantMatch[1] : '0';
+    const baseEnchantLabel = baseEnchant !== '0' ? `.${baseEnchant}` : '.0';
+    const targetTierLabel = `${tier}${enchantLabel}`;
 
     const materials = (opp.ingredients && opp.ingredients.length > 0) ? opp.ingredients : [{
       item_id: opp.material_id || (itemId.startsWith('T') ? `T${itemId[1]}_SOUL` : 'T4_SOUL'),
@@ -2046,16 +2065,42 @@ window.openDetailModal = function(globalIdx, catKey) {
       `;
     }).join('');
 
+    const matSummaryText = materials.map(m => `${(Number(m.quantity || m.qty || 1) * qty).toLocaleString()}x ${m.name || formatItemName(m.item_id)}`).join(' + ');
+
     blueprintHtml = `
-      <h4 style="margin-top: 1.25rem; font-size: 0.9rem; color: var(--accent-gold-bright); font-family: 'Outfit', sans-serif;">🔮 Artifact Foundry Enchanting Recipe (${qty}x Batch):</h4>
+      <h4 style="margin-top: 1.25rem; font-size: 0.9rem; color: var(--accent-gold-bright); font-family: 'Outfit', sans-serif;">
+        🔮 Artifact Foundry Enchanting: Upgrade ${baseTier}${baseEnchantLabel} ➔ ${targetTierLabel} (${qty}x Batch)
+      </h4>
+
+      <!-- Visual Step Pipeline -->
+      <div style="margin-top: 0.4rem; margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; background: rgba(0, 0, 0, 0.25); padding: 0.45rem 0.75rem; border-radius: 6px; font-size: 0.73rem; border: 1px solid var(--border-subtle); flex-wrap: wrap;">
+        <span style="font-weight: 700; color: #94A3B8;">Required Upgrade Flow:</span>
+        <span class="badge-tag badge-tier tier-color-t${baseTierNum}">Buy ${baseTier}${baseEnchantLabel} Base Item</span>
+        <span style="color: var(--accent-gold);">➔</span>
+        <span style="color: var(--accent-cyan); font-weight: 600;">+ ${matSummaryText}</span>
+        <span style="color: var(--accent-gold);">➔</span>
+        <span class="badge-tag badge-tier tier-color-t${tierNum}">Produces ${targetTierLabel} (${qty}x)</span>
+      </div>
+
       <div style="margin-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem;">
         <!-- Base Item -->
-        <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-1); padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid var(--border-subtle);">
+        <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-1); padding: 0.6rem 0.8rem; border-radius: 6px; border: 1px solid ${isBaseStale ? 'rgba(234, 179, 8, 0.4)' : 'var(--border-subtle)'};">
           <div style="display: flex; align-items: center; gap: 0.6rem;">
             <img src="${getItemIconUrl(baseId, opp.base_quality || quality, 64)}" style="width: 32px; height: 32px; border-radius: 4px;" loading="lazy" decoding="async" onerror="handleIconError(this, '${baseId}', ${opp.base_quality || quality})" />
             <div>
-              <div style="font-weight: 700; font-size: 0.84rem; color: #fff;">${formatItemName(baseId)} (Base Item)</div>
-              <div style="font-size: 0.7rem; color: var(--text-muted);">Sourced at: <strong>${srcCity}</strong> @ ${fmtK(basePrice)} silver</div>
+              <div style="font-weight: 700; font-size: 0.84rem; color: #fff; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+                <span class="badge-tag badge-tier tier-color-t${baseTierNum}" style="font-size: 0.72rem; padding: 1px 6px;">${baseTier}${baseEnchantLabel}</span>
+                <span>${formatItemName(baseId)}</span>
+                <span style="font-size: 0.72rem; color: var(--accent-gold-bright); font-weight: 600;">(Base Item — Sourced as ${baseTier}${baseEnchantLabel})</span>
+              </div>
+              <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+                Sourced at: <strong>${srcCity}</strong> @ ${fmtK(basePrice)} silver &bull; Scanned: <strong style="color: ${isBaseStale ? '#facc15' : '#7ee787'};">${fmtAge(baseAge)}</strong>
+              </div>
+              ${isBaseStale ? `
+                <div style="margin-top: 3px; font-size: 0.68rem; color: #facc15;">
+                  ⚠️ Scanned ${fmtAge(baseAge)} ago: Verify <strong>${srcCity}</strong> market stock in-game first to ensure ${baseTier}${baseEnchantLabel} is available at this price!
+                </div>
+              ` : ''}
             </div>
           </div>
           <div style="text-align: right;">
@@ -2063,11 +2108,23 @@ window.openDetailModal = function(globalIdx, catKey) {
             <div style="font-size: 0.7rem; color: var(--text-secondary);">${fmtK(totalBaseCost)} silver</div>
           </div>
         </div>
+
         <!-- Enchanting Materials -->
         ${materialsHtml}
       </div>
-      <div style="margin-top: 0.5rem; font-size: 0.72rem; color: var(--accent-cyan); background: rgba(56, 189, 248, 0.08); padding: 0.45rem 0.75rem; border-radius: 5px; border: 1px solid rgba(56, 189, 248, 0.2);">
-        ⚡ <strong>Execution:</strong> Buy base item and materials in <strong>${srcCity}</strong> ➔ Walk to local Artifact Foundry (0% loss risk, instant enchant) ➔ List or Sell at <strong>${dstCity}</strong> for <strong>${fmtK(m.unitRevenue)}</strong> silver.
+
+      <!-- Fail-Safe Execution Checklist -->
+      <div style="margin-top: 0.65rem; background: rgba(234, 179, 8, 0.09); border: 1px solid rgba(234, 179, 8, 0.3); padding: 0.6rem 0.8rem; border-radius: 6px; font-size: 0.73rem; color: #fde047;">
+        <div style="font-weight: 700; display: flex; align-items: center; gap: 0.35rem; margin-bottom: 0.3rem;">
+          <span>⚡</span>
+          <span>FAIL-SAFE EXECUTION CHECKLIST (Follow in this exact order):</span>
+        </div>
+        <ol style="margin: 0.2rem 0 0 1.2rem; padding: 0; line-height: 1.5; color: #E2E8F0;">
+          <li><strong>Check ${isBm ? 'Black Market' : dstCity} Buy Order in-game first:</strong> Confirm target buy order for <strong>${fmtK(m.unitRevenue)} s</strong> (${targetTierLabel}) is active.</li>
+          <li><strong>Check ${srcCity} Regular Market Stock:</strong> Verify that the <strong>${baseTier}${baseEnchantLabel}</strong> base item is in stock at <strong>${fmtK(basePrice)} s</strong> <em>BEFORE</em> purchasing any enchanting materials!</li>
+          <li><strong>Buy Base Item + Materials:</strong> Once stock at both ends is verified, purchase the ${baseTier}${baseEnchantLabel} base item and ${qty > 1 ? `${qty}x batch of ` : ''}enchanting materials in <strong>${srcCity}</strong>.</li>
+          <li><strong>Enchant & Sell:</strong> Walk to the Artifact Foundry in <strong>${srcCity}</strong> (0% loss risk, instant enchant ➔ ${targetTierLabel}), then sell to <strong>${dstCity}</strong> for <strong>+${fmtProfit(m.batchProfit)} s</strong> net profit.</li>
+        </ol>
       </div>
     `;
   }

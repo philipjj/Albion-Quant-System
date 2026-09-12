@@ -894,5 +894,41 @@ def test_scan_crafting_cheaper_on_other_royal_market_rejected(scanner):
     assert len(opps) == 0, "Crafting when item is cheaper to buy pre-crafted on any royal market must be rejected"
 
 
+def test_enchant_to_dict_preserves_base_item_tier_and_name():
+    """Verify UnifiedScanner._enchant_to_dict includes base_tier, base_enchant, and base_item_name."""
+    from app.core.scanner_integration import UnifiedScanner
+    from app.core.opportunity_engine import EnchantingOpportunity
+
+    scanner = UnifiedScanner()
+    opp = EnchantingOpportunity(
+        target_item_id="T8_CAPEITEM_FW_BRECILIEN@2",
+        target_item_name="Elder's Brecilien Cape .2",
+        base_item_id="T8_CAPEITEM_FW_BRECILIEN@1",
+        base_price=1_670_000,
+        material_id="T8_SOUL",
+        material_qty=96,
+        material_price=9000,
+        bm_buy_price=3_200_000,
+        net_profit=600_000,
+        profit_pct=23.5,
+        total_cost=2_534_000,
+        safe_limit=1,
+        roi=23.5,
+        quality=1,
+        base_quality=1,
+        base_city="Caerleon",
+        sell_city="Black Market",
+    )
+
+    d = scanner._enchant_to_dict(opp, "capes")
+    assert d["base_tier"] == "T8"
+    assert d["base_enchant"] == 1
+    assert d["base_enchant_label"] == ".1"
+    assert "T8_CAPEITEM_FW_BRECILIEN@1" in d["base_item_id"]
+    assert d["base_item_name"] != ""
+    assert d["base_price"] == 1_670_000
+
+
+
 
 

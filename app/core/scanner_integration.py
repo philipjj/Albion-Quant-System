@@ -153,16 +153,14 @@ class UnifiedScanner:
             is_bp_valid = (bp_max is not None and bp_max > 0)
 
             if quality in city_dict:
-                # If existing entry has a 0 or a troll price (< min_realistic), but older entry has a valid realistic price, preserve realistic price!
-                if city_dict[quality]["sell_price_min"] < min_realistic and is_sp_valid:
-                    city_dict[quality]["sell_price_min"] = sp_min
-                    city_dict[quality]["data_age_seconds"] = int(effective_age)
-                    city_dict[quality]["_ts"] = captured_at
-                if city_dict[quality]["buy_price_max"] == 0 and is_bp_valid:
+                # Do NOT overwrite 0 or out-of-stock sell prices with older snapshots!
+                # If the latest snapshot has sell_price_min == 0, the item was bought out/out of stock in this city.
+                # Only preserve buy_price_max for non-BM cities if buy orders were omitted in a sell-only snapshot:
+                if not is_bm and city_dict[quality]["buy_price_max"] == 0 and is_bp_valid:
                     city_dict[quality]["buy_price_max"] = bp_max
                 if vol_24h and city_dict[quality]["volume_24h"] == 0:
                     city_dict[quality]["volume_24h"] = vol_24h
-                continue  # Already processed this quality level
+                continue  # Already processed this quality level with the freshest snapshot
 
             city_dict[quality] = {
                 "sell_price_min": sp_min if is_sp_valid else 0,
@@ -838,14 +836,32 @@ class UnifiedScanner:
     def _enchant_to_dict(self, o, category: str) -> dict[str, Any]:
         base_c = getattr(o, "base_city", "Caerleon")
         sell_c = getattr(o, "sell_city", "Black Market" if base_c == "Caerleon" else base_c)
+        base_id = o.base_item_id
+        base_tier = "T4"
+        base_enchant = 0
+        if "@" in base_id:
+            try:
+                base_enchant = int(base_id.split("@")[1])
+            except ValueError:
+                base_enchant = 0
+        if base_id.startswith("T") and len(base_id) > 1 and base_id[1].isdigit():
+            base_tier = f"T{base_id[1]}"
+
+        base_quality = getattr(o, "base_quality", o.quality)
+        base_item_name = self._enhance_name(base_id, base_id, base_quality)
+
         return {
             "item_id": o.target_item_id,
             "target_item_id": o.target_item_id,
             "item_name": self._enhance_name(o.target_item_id, o.target_item_name, getattr(o, "quality", 1)),
             "base_item_id": o.base_item_id,
+            "base_item_name": base_item_name,
+            "base_tier": base_tier,
+            "base_enchant": base_enchant,
+            "base_enchant_label": f".{base_enchant}" if base_enchant > 0 else ".0",
             "base_price": o.base_price,
             "base_city": base_c,
-            "base_quality": getattr(o, "base_quality", o.quality),
+            "base_quality": base_quality,
             "material_id": o.material_id,
             "material_qty": o.material_qty,
             "material_price": o.material_price,

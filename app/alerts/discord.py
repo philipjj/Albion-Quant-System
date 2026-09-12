@@ -730,7 +730,23 @@ class DiscordAlerter:
         else:
             margin = (profit / sell_p * 100.0) if sell_p > 0 else 0.0
 
-        base_name = opp.get("base_item_id", "").replace("_", " ").title()
+        base_item_id = opp.get("base_item_id", "")
+        base_tier_str = opp.get("base_tier", "")
+        base_ench_str = opp.get("base_enchant_label", "")
+        if not base_tier_str and base_item_id.startswith("T") and len(base_item_id) > 1:
+            base_tier_str = f"T{base_item_id[1]}"
+            if "@" in base_item_id:
+                base_ench_str = f".{base_item_id.split('@')[1]}"
+            else:
+                base_ench_str = ".0"
+
+        base_clean = base_item_id.split("@")[0]
+        base_name_pretty = opp.get("base_item_name") or base_clean.replace("_", " ").title()
+        if base_tier_str and not base_name_pretty.startswith(base_tier_str):
+            base_full_title = f"{base_tier_str}{base_ench_str} {base_name_pretty}"
+        else:
+            base_full_title = base_name_pretty
+
         mat_name = opp.get("material_id", "").replace("_", " ").title()
         base_city = opp.get("base_city", opp.get("source_city", "Caerleon"))
         dest_city = opp.get("destination_city", opp.get("sell_city", "Black Market" if base_city == "Caerleon" else base_city))
@@ -791,7 +807,7 @@ class DiscordAlerter:
             "fields": [
                 {
                     "name": "💰 Enchanting Financial Math",
-                    "value": f"Base Item Cost: **{fmt_k(opp.get('base_price', 0))}** (`{base_city}`)\nMaterial Cost: **{mat_unit_str}** x {opp.get('material_qty', 1)} (**{fmt_k(mat_unit * opp.get('material_qty', 1))}**)\n{sell_field_str}\nNet Profit: **+{fmt_k(profit)}**",
+                    "value": f"Base Item ({base_full_title}{base_q_str}): **{fmt_k(opp.get('base_price', 0))}** (`{base_city}` - Scanned {age_base})\nMaterial Cost: **{mat_unit_str}** x {opp.get('material_qty', 1)} (**{fmt_k(mat_unit * opp.get('material_qty', 1))}**)\n{sell_field_str}\nNet Profit: **+{fmt_k(profit)}**\n-# ⚠️ *Check {base_city} stock for {base_tier_str}{base_ench_str} before buying materials!*",
                     "inline": False,
                 },
                 {
