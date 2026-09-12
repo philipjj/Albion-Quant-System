@@ -412,8 +412,8 @@ def is_opportunity_dismissed(o: dict, cat_k: str, now_ts: float) -> bool:
     return False
 
 
-def set_latest_opportunities_cache(cache_dict: dict[str, list[dict]]):
-    """Updates global in-memory cache with fresh scan results from scheduler or API worker."""
+def set_latest_opportunities_cache(cache_dict: dict[str, list[dict]], db: Session | None = None):
+    """Updates global in-memory cache with fresh scan results using stateful reconciliation and fill detection."""
     global _LATEST_OPPORTUNITIES_CACHE, _LATEST_SCAN_TIME
     now_ts = datetime.utcnow().timestamp()
     dismissed = getattr(state, "dismissed_opportunities", {})
@@ -421,16 +421,16 @@ def set_latest_opportunities_cache(cache_dict: dict[str, list[dict]]):
     active_dismissed = {k: v for k, v in dismissed.items() if v > now_ts}
     state.dismissed_opportunities = active_dismissed
 
-    filtered_cache = {}
-    for cat_k, opp_list in cache_dict.items():
-        filtered_cache[cat_k] = [
-            o for o in opp_list
-            if not is_opportunity_dismissed(o, cat_k, now_ts)
-        ]
-
-    _LATEST_OPPORTUNITIES_CACHE = filtered_cache
-    total_records = sum(len(v) for k, v in filtered_cache.items() if k != "island")
-    log.info(f"[CACHE] Updated live opportunities cache with {total_records} records.")
+    from app.core.reconciliation import reconcile_opportunities_cache
+    _LATEST_OPPORTUNITIES_CACHE = reconcile_opportunities_cache(
+        existing_cache=_LATEST_OPPORTUNITIES_CACHE,
+        incoming_cache=cache_dict,
+        db=db,
+        server=settings.active_server.value,
+    )
+    _LATEST_SCAN_TIME = datetime.utcnow().isoformat()
+    total_records = sum(len(v) for k, v in _LATEST_OPPORTUNITIES_CACHE.items() if k != "island")
+    log.info(f"[CACHE] Reconciled live opportunities cache: {total_records} active records preserved.")
 
 
 @router.post("/scan")
@@ -513,7 +513,7 @@ async def trigger_live_scan(
         mounts = [o for o in island if o.get("category_key") == "mounts"]
         farming = [o for o in island if o.get("category_key") == "farming" or (o not in potions and o not in cooking and o not in mounts)]
 
-        _LATEST_OPPORTUNITIES_CACHE = {
+        raw_new_cache = {
             "bm_arbitrage": bm_arb,
             "bm_enchanting": bm_enchant,
             "bm_market_making": bm_mm,
@@ -530,6 +530,13 @@ async def trigger_live_scan(
             "mounts": mounts,
             "island": island,
         }
+        from app.core.reconciliation import reconcile_opportunities_cache
+        _LATEST_OPPORTUNITIES_CACHE = reconcile_opportunities_cache(
+            existing_cache=_LATEST_OPPORTUNITIES_CACHE,
+            incoming_cache=raw_new_cache,
+            db=db,
+            server=settings.active_server.value,
+        )
         _LATEST_SCAN_TIME = datetime.utcnow().isoformat()
 
     total_opps = sum(len(v) for k, v in _LATEST_OPPORTUNITIES_CACHE.items() if k != "island")

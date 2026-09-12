@@ -35,8 +35,8 @@ class QuantScheduler:
         max_age_seconds = settings.alert_cooldown_minutes * 60 * 2
         now = datetime.utcnow()
         stale_keys = [
-            k for k, ts in self._alert_history.items()
-            if (now - ts).total_seconds() > max_age_seconds
+            k for k, val in self._alert_history.items()
+            if (now - (val[0] if isinstance(val, tuple) else val)).total_seconds() > max_age_seconds
         ]
         for k in stale_keys:
             del self._alert_history[k]
@@ -112,23 +112,24 @@ class QuantScheduler:
                 mounts = [o for o in island if o.get("category_key") == "mounts"]
                 farming = [o for o in island if o.get("category_key") == "farming" or (o not in potions and o not in cooking and o not in mounts)]
 
-                set_latest_opportunities_cache({
-                    "bm_arbitrage": bm_arb,
-                    "bm_enchanting": bm_enchant,
-                    "bm_market_making": bm_mm,
-                    "arbitrage": arb,
-                    "crafting": craft,
-                    "refining": refine,
-                    "market_making": mm,
-                    "enchanting": enchant,
-                    "transmutation": transmute,
-                    "quality_inversion": quality,
-                    "potions": potions,
-                    "cooking": cooking,
-                    "farming": farming,
-                    "mounts": mounts,
-                    "island": island,
-                })
+                with get_db_session() as db_session:
+                    set_latest_opportunities_cache({
+                        "bm_arbitrage": bm_arb,
+                        "bm_enchanting": bm_enchant,
+                        "bm_market_making": bm_mm,
+                        "arbitrage": arb,
+                        "crafting": craft,
+                        "refining": refine,
+                        "market_making": mm,
+                        "enchanting": enchant,
+                        "transmutation": transmute,
+                        "quality_inversion": quality,
+                        "potions": potions,
+                        "cooking": cooking,
+                        "farming": farming,
+                        "mounts": mounts,
+                        "island": island,
+                    }, db=db_session)
             except Exception as e:
                 log.warning(f"[SCHEDULER] Memory cache update warning: {e}")
 
@@ -231,9 +232,17 @@ class QuantScheduler:
 
                 fresh_for_alerts = []
                 for key, o in valid_for_ui:
+                    curr_profit = float(o.get("estimated_profit", o.get("profit", 0)))
                     if key in self._alert_history:
-                        last_time = self._alert_history[key]
-                        if (now_time - last_time).total_seconds() < cooldown_seconds:
+                        hist_val = self._alert_history[key]
+                        if isinstance(hist_val, tuple):
+                            last_time, last_profit = hist_val
+                        else:
+                            last_time, last_profit = hist_val, 0.0
+
+                        # Re-alert on Discord only if profit jumped by >= 15% or cooldown elapsed
+                        has_profit_jump = (last_profit > 0 and (curr_profit - last_profit) / last_profit >= 0.15)
+                        if (now_time - last_time).total_seconds() < cooldown_seconds and not has_profit_jump:
                             continue
                     fresh_for_alerts.append((key, o))
 
@@ -247,7 +256,7 @@ class QuantScheduler:
                         items.sort(key=lambda x: x[1].get(sort_key, x[1].get("estimated_profit", 0)), reverse=True)
                         for key, o in items[:10]:
                             alert_final.append(o)
-                            self._alert_history[key] = now_time
+                            self._alert_history[key] = (now_time, float(o.get("estimated_profit", o.get("profit", 0))))
                     alert_final.sort(key=lambda x: (x.get("category", "Unknown"), -x.get(sort_key, x.get("estimated_profit", 0))))
                 
                 return ui_final, alert_final
@@ -344,33 +353,10 @@ class QuantScheduler:
                 sort_key="estimated_profit"
             )
 
-            # Sync fresh filtered opportunities to WebApp memory cache cumulatively across P1 -> P6
+            # Sync fresh filtered opportunities to WebApp memory cache using stateful reconciliation
             try:
                 import app.api.system as system_api
-
-                is_first_partition = (partition_idx == 0)
-
-                def _merge_cumulative_opps(existing_list: list[dict], new_list: list[dict], reset_sweep: bool = False) -> list[dict]:
-                    def _opp_key(o: dict) -> str:
-                        item_id = str(o.get("item_id") or o.get("target_item_id") or "")
-                        src = str(o.get("craft_city") or o.get("buy_city") or o.get("source_city") or "")
-                        dst = str(o.get("sell_city") or o.get("destination_city") or "")
-                        q = str(o.get("quality") or o.get("buy_quality") or 1)
-                        return f"{item_id}:{src}:{dst}:{q}"
-
-                    merged = {}
-                    if not reset_sweep:
-                        for o in existing_list:
-                            merged[_opp_key(o)] = o
-
-                    for o in new_list:
-                        o["scanned_partition"] = partition_idx + 1
-                        o["scanned_at"] = datetime.utcnow().isoformat()
-                        merged[_opp_key(o)] = o
-
-                    res = list(merged.values())
-                    res.sort(key=lambda x: x.get("score", x.get("ev_score", x.get("net_profit", x.get("profit", 0)))), reverse=True)
-                    return res
+                from app.core.reconciliation import reconcile_opportunities_cache
 
                 new_partition_cache = {
                     "bm_arbitrage": ui_bm_arb,
@@ -386,10 +372,12 @@ class QuantScheduler:
                     "island": ui_island,
                 }
 
-                for cat_key, incoming_items in new_partition_cache.items():
-                    existing_items = system_api._LATEST_OPPORTUNITIES_CACHE.get(cat_key, [])
-                    system_api._LATEST_OPPORTUNITIES_CACHE[cat_key] = _merge_cumulative_opps(
-                        existing_items, incoming_items, reset_sweep=is_first_partition
+                with get_db_session() as db_session:
+                    system_api._LATEST_OPPORTUNITIES_CACHE = reconcile_opportunities_cache(
+                        existing_cache=system_api._LATEST_OPPORTUNITIES_CACHE,
+                        incoming_cache=new_partition_cache,
+                        db=db_session,
+                        server=settings.active_server.value,
                     )
 
                 system_api._LATEST_SCAN_TIME = datetime.utcnow().isoformat()

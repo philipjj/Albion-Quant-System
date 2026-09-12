@@ -943,9 +943,75 @@ window.resetAllFilters = function() {
   showToast('All active filters reset');
 };
 
+const KNOWN_ITEM_NAMES = {
+  // Rare Fish
+  'T7_FISH_FRESHWATER_FOREST_RARE': 'Deadwater Eel',
+  'T8_FISH_FRESHWATER_HIGHLANDS_RARE': 'Puremist Snapper',
+  'T7_FISH_FRESHWATER_SWAMP_RARE': 'Dustcrawler Crab',
+  'T8_FISH_FRESHWATER_SWAMP_RARE': 'Ghostclaws Crab',
+  'T7_FISH_SALTWATER_ALL_RARE': 'Blackbog Clam',
+  'T8_FISH_SALTWATER_ALL_RARE': 'Kraken',
+  'T6_FISH_FRESHWATER_FOREST_RARE': 'Thunderfall Eel',
+  'T5_FISH_FRESHWATER_FOREST_RARE': 'Redspring Eel',
+  'T3_FISH_FRESHWATER_FOREST_RARE': 'Greenriver Eel',
+  'T7_FISH_FRESHWATER_MOUNTAIN_RARE': 'Frostpeak Salmon',
+  'T8_FISH_FRESHWATER_MOUNTAIN_RARE': 'Whitefog Snapper',
+  'T7_FISH_FRESHWATER_STEPPE_RARE': 'Stonestream Lurch',
+  'T8_FISH_FRESHWATER_STEPPE_RARE': 'Sunken City Carp',
+  'T7_FISH_FRESHWATER_HIGHLANDS_RARE': 'Deepwater Bream',
+  // Common Fish
+  'T1_FISH_FRESHWATER_ALL_COMMON': 'Common Rudd',
+  'T2_FISH_FRESHWATER_ALL_COMMON': 'Striped Carp',
+  'T3_FISH_FRESHWATER_ALL_COMMON': 'Albion Perch',
+  'T4_FISH_FRESHWATER_ALL_COMMON': 'Bluescale Pike',
+  'T5_FISH_FRESHWATER_ALL_COMMON': 'Spotted Trout',
+  'T6_FISH_FRESHWATER_ALL_COMMON': 'Brightscale Zander',
+  'T7_FISH_FRESHWATER_ALL_COMMON': 'Danglemouth Catfish',
+  'T8_FISH_FRESHWATER_ALL_COMMON': 'River Sturgeon',
+  // Farming & Crops
+  'T1_CARROT': 'Carrots',
+  'T2_BEAN': 'Beans',
+  'T3_WHEAT': 'Wheat',
+  'T4_TURNIP': 'Turnips',
+  'T5_CABBAGE': 'Cabbage',
+  'T6_POTATO': 'Potatoes',
+  'T7_CORN': 'Corn',
+  'T8_PUMPKIN': 'Pumpkin',
+  // Herbs
+  'T2_AGARIC': 'Arcane Agaric',
+  'T3_COMFREY': 'Brightleaf Comfrey',
+  'T4_BURDOCK': 'Crenellated Burdock',
+  'T5_TEASEL': 'Dragon Teasel',
+  'T6_FOXGLOVE': 'Elusive Foxglove',
+  'T7_MULLEIN': 'Fire Lily',
+  'T8_YARROW': 'Ghirshill Yarrow',
+  // Livestock & Animal Produce
+  'T3_MEAT': 'Raw Chicken',
+  'T4_MEAT': 'Raw Goat',
+  'T5_MEAT': 'Raw Goose',
+  'T6_MEAT': 'Raw Mutton',
+  'T7_MEAT': 'Raw Pork',
+  'T8_MEAT': 'Raw Beef',
+  'T3_EGG': "Hen's Egg",
+  'T5_EGG': "Goose Egg",
+  'T4_MILK': "Goat's Milk",
+  'T6_MILK': "Sheep's Milk",
+  'T8_MILK': "Cow's Milk",
+  'T4_BUTTER': "Goat's Butter",
+  'T6_BUTTER': "Sheep's Butter",
+  'T8_BUTTER': "Cow's Butter",
+  'T6_ALCOHOL': 'Potato Schnapps',
+  'T7_ALCOHOL': 'Corn Hooch',
+  'T8_ALCOHOL': 'Pumpkin Moonshine',
+  'T4_FLOUR': 'Flour',
+  'T4_BREAD': 'Bread',
+};
+
 function formatItemName(rawId) {
   if (!rawId) return '';
   let clean = rawId.split('@')[0];
+  if (KNOWN_ITEM_NAMES[clean]) return KNOWN_ITEM_NAMES[clean];
+  if (KNOWN_ITEM_NAMES[rawId]) return KNOWN_ITEM_NAMES[rawId];
   if (/^T\d+_/.test(clean)) {
     const tier = clean.slice(0, 2);
     const rest = clean.slice(3).replace(/_/g, ' ').toLowerCase();
@@ -1144,10 +1210,12 @@ function renderCardsView(pageSlice, offset) {
   if (pageSlice.length === 0) {
     const activeFilters = getActiveFiltersList();
     let currentTabTotal = 0;
+    let globalTotalOpps = 0;
+    for (const k in state.opportunities) {
+      if (Array.isArray(state.opportunities[k])) globalTotalOpps += state.opportunities[k].length;
+    }
     if (state.activeTab === 'all') {
-      for (const k in state.opportunities) {
-        if (Array.isArray(state.opportunities[k])) currentTabTotal += state.opportunities[k].length;
-      }
+      currentTabTotal = globalTotalOpps;
     } else {
       currentTabTotal = (state.opportunities[state.activeTab] || []).length;
     }
@@ -1155,24 +1223,52 @@ function renderCardsView(pageSlice, offset) {
     const catMeta = getCategoryMeta(state.activeTab);
     const catLabel = state.activeTab === 'all' ? 'total' : catMeta.label;
 
+    let icon = '🔍';
     let emptyTitle = 'No opportunities matched these filters';
     let emptySub = 'Adjust search filters or click "Scan Now".';
+    let actionBtnHtml = '';
 
-    if (currentTabTotal > 0 && activeFilters.length > 0) {
+    if (globalTotalOpps === 0) {
+      if (state.isScanning) {
+        icon = '📡';
+        emptyTitle = 'Market Scan in Progress...';
+        emptySub = 'Evaluating orderbooks across Royal Cities, Caerleon, and Black Market.';
+      } else {
+        icon = '⚡';
+        emptyTitle = 'Terminal Ready — Initiate Live Market Scan';
+        emptySub = 'Connect to Albion Online live data or click "Scan Now" to calculate real-time trade corridors.';
+        actionBtnHtml = `
+          <button class="btn-scan-primary" style="margin-top: 1.25rem; padding: 0.55rem 1.6rem; font-size: 0.85rem;" onclick="triggerScan()">
+            ⚡ Scan Now
+          </button>
+        `;
+      }
+    } else if (currentTabTotal === 0) {
+      icon = '📦';
+      emptyTitle = `No active opportunities in ${catLabel}`;
+      emptySub = 'Run a fresh scan or check other market categories in the sidebar.';
+      actionBtnHtml = `
+        <button class="btn-scan-primary" style="margin-top: 1.25rem; padding: 0.55rem 1.6rem; font-size: 0.85rem;" onclick="triggerScan()">
+          ⚡ Run Fresh Scan
+        </button>
+      `;
+    } else if (activeFilters.length > 0) {
+      icon = '🔍';
       emptyTitle = `${currentTabTotal} ${catLabel} opportunities exist, but are hidden by active filters`;
       emptySub = `Active Filters: <strong style="color: var(--accent-gold-bright);">${activeFilters.join(' • ')}</strong>`;
+      actionBtnHtml = `
+        <button class="btn-scan-primary" style="margin-top: 1.25rem; padding: 0.45rem 1.25rem; font-size: 0.8rem; background: var(--accent-gold); color: #000; font-weight: 700; border-radius: 6px; cursor: pointer; border: none;" onclick="resetAllFilters()">
+          🧹 Clear Active Filters
+        </button>
+      `;
     }
 
     container.innerHTML = `
       <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: var(--text-muted);">
-        <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">🔍</div>
-        <h3 style="color: #fff; font-size: 1.1rem;">${emptyTitle}</h3>
-        <p style="font-size: 0.85rem; margin-top: 0.35rem; color: #a0aec0;">${emptySub}</p>
-        ${activeFilters.length > 0 ? `
-          <button class="btn-scan-primary" style="margin-top: 1.25rem; padding: 0.45rem 1.25rem; font-size: 0.8rem; background: var(--accent-gold); color: #000; font-weight: 700; border-radius: 6px; cursor: pointer; border: none;" onclick="resetAllFilters()">
-            🧹 Clear Active Filters
-          </button>
-        ` : ''}
+        <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">${icon}</div>
+        <h3 style="color: #fff; font-size: 1.15rem; font-weight: 700;">${emptyTitle}</h3>
+        <p style="font-size: 0.85rem; margin-top: 0.4rem; color: #a0aec0;">${emptySub}</p>
+        ${actionBtnHtml}
       </div>
     `;
     return;
@@ -1211,6 +1307,36 @@ function renderCardsView(pageSlice, offset) {
       const stars = '★'.repeat(quality);
       const iconUrl = getItemIconUrl(itemId, quality, 64);
 
+      const isFarming = (opp.subsector === 'crops' || opp.subsector === 'herbs' || opp.subsector === 'farming' || opp.category_key === 'farming');
+      const isLivestock = (opp.subsector === 'livestock' || opp.category_key === 'livestock');
+      const isIslandAgri = (isFarming || isLivestock) && opp.profit_per_plot_day > 0;
+      const isCooking = (opp.category_key === 'cooking' || opp.subsector === 'cooking');
+      const isPotion = (opp.category_key === 'potions' || opp.subsector === 'potions' || opp.subsector === 'alchemy');
+      const isCrafting = (opp.type === 'crafting' || opp.category_key === 'crafting' || opp.category_key === 'bm_crafting');
+      const isRefining = (opp.type === 'refining' || opp.category_key === 'refining' || opp.category_key === 'bm_refining');
+
+      let srcRole = 'SOURCE / BUY';
+      let dstRole = isBm ? 'DEST / BLACK MARKET' : 'DEST / SELL';
+      if (isLivestock) {
+        srcRole = 'SOURCE / BABY & FEED';
+        dstRole = 'DEST / PRODUCE & MEAT';
+      } else if (isFarming) {
+        srcRole = 'SOURCE / SEEDS';
+        dstRole = 'DEST / HARVEST CROP';
+      } else if (isPotion) {
+        srcRole = 'SOURCE / HERBS & FLUIDS';
+        dstRole = `DEST / BATCH (${opp.output_qty || 5}x POTIONS)`;
+      } else if (isCooking) {
+        srcRole = 'SOURCE / INGREDIENTS';
+        dstRole = `DEST / BATCH (${opp.output_qty || 10}x MEALS)`;
+      } else if (isCrafting) {
+        srcRole = `SOURCE / WORKSHOP (${srcCity})`;
+        dstRole = isBm ? 'DEST / BLACK MARKET' : 'DEST / MARKET GEAR';
+      } else if (isRefining) {
+        srcRole = `SOURCE / REFINERY (${srcCity})`;
+        dstRole = 'DEST / REFINED RESOURCES';
+      }
+
       html += `
         <div class="opp-card tier-t${tierNum}" data-key="${oppKey}" data-item-id="${itemId.toUpperCase()}">
           
@@ -1234,6 +1360,7 @@ function renderCardsView(pageSlice, offset) {
                 <span id="fresh-badge-${oppKey}" class="badge-tag badge-freshness ${opp.freshness_tier === 'candidate' ? 'fresh-amber' : 'fresh-green'}" title="${opp.freshness_label || 'Data Freshness'} • Sourced: ${srcCity} (${fmtAge(baseAge || effAge)}) ➔ Dest: ${dstCity} (${fmtAge(bmAge || sellAge || effAge)})">
                   <span class="pulse-dot"></span>${opp.freshness_tier === 'candidate' ? '🟡 Candidate (Verify)' : '🟢 Verified (<45m)'}
                 </span>
+                ${opp.is_persisted_alert ? `<span class="badge-tag" style="background: rgba(163, 113, 247, 0.18); color: #d2a8ff; border: 1px solid rgba(163, 113, 247, 0.35);" title="Active unfulfilled order reconfirmed across scans">⚡ Active Order</span>` : ''}
               </div>
             </div>
           </div>
@@ -1243,7 +1370,7 @@ function renderCardsView(pageSlice, offset) {
             <div class="profit-hero-left">
               <span class="profit-hero-label">Net Profit (${m.qty}x ${(opp.output_qty && opp.output_qty > 1) ? `Batch [${m.qty * opp.output_qty}x items]` : 'Batch'})</span>
               <span class="profit-hero-val font-mono" style="color: ${m.batchProfit >= 0 ? 'var(--accent-emerald)' : 'var(--accent-danger)'};" id="profit-${oppKey}">${fmtProfit(m.batchProfit)}</span>
-              ${opp.profit_per_plot_day ? `<div style="font-size: 0.72rem; color: var(--accent-gold-bright); font-family: 'JetBrains Mono', monospace; margin-top: 0.2rem;">🌾 Plot/Day: +${fmtK(opp.profit_per_plot_day)} s (9 spots)</div>` : ''}
+              ${isIslandAgri ? `<div style="font-size: 0.72rem; color: var(--accent-gold-bright); font-family: 'JetBrains Mono', monospace; margin-top: 0.2rem;">🌾 Plot/Day: +${fmtK(opp.profit_per_plot_day)} s (9 spots)</div>` : ''}
             </div>
             <div class="profit-hero-right">
               <span class="roi-badge-pill font-mono" id="roi-${oppKey}">+${m.batchRoi}% ROI</span>
@@ -1255,7 +1382,7 @@ function renderCardsView(pageSlice, offset) {
           <!-- Route Visual Lane -->
           <div class="card-route-lane">
             <div class="route-lane-node">
-              <span class="node-role-lbl">${opp.subsector === 'livestock' ? 'SOURCE / ANIMAL' : (opp.profit_per_plot_day ? 'SOURCE / SEED' : 'SOURCE / BUY')}</span>
+              <span class="node-role-lbl">${srcRole}</span>
               <span class="node-city" style="color: ${CITY_COLORS[srcCity] || '#fff'};">${srcCity}</span>
               <span class="node-price font-mono">${fmtK(m.unitCost)} silver</span>
               ${baseAge > 0 ? `<span class="node-age-sub font-mono">Listed: ${fmtAge(baseAge)}</span>` : ''}
@@ -1265,7 +1392,7 @@ function renderCardsView(pageSlice, offset) {
               <span class="route-lane-zone-tag">${zoneMeta.type}</span>
             </div>
             <div class="route-lane-node" style="text-align: right;">
-              <span class="node-role-lbl">${opp.subsector === 'livestock' ? 'DEST / MEAT YIELD' : (opp.profit_per_plot_day ? 'DEST / HARVEST' : 'DEST / SELL')}</span>
+              <span class="node-role-lbl">${dstRole}</span>
               <span class="node-city" style="color: ${CITY_COLORS[dstCity] || '#ffd700'};">${dstCity}</span>
               <span class="node-price font-mono" style="color: var(--accent-gold-bright);">${(opp.output_qty && opp.output_qty > 1) ? `${fmtK(opp._rawSellPrice || Math.round(m.unitRevenue / opp.output_qty))} s × ${opp.output_qty} = ${fmtK(m.unitRevenue)}` : `${fmtK(m.unitRevenue)} silver`}</span>
               ${bmAge > 0 ? `<span class="node-age-sub font-mono" style="color: var(--accent-emerald);">BM Order: ${fmtAge(bmAge)}</span>` : ''}
@@ -1318,7 +1445,15 @@ function renderTableView(pageSlice, offset) {
   if (!tbody) return;
 
   if (pageSlice.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 3rem; color: var(--text-muted);">No matching opportunities found.</td></tr>`;
+    let emptyMsg = 'No matching opportunities found for the selected filters.';
+    let globalTotalOpps = 0;
+    for (const k in state.opportunities) {
+      if (Array.isArray(state.opportunities[k])) globalTotalOpps += state.opportunities[k].length;
+    }
+    if (globalTotalOpps === 0) {
+      emptyMsg = 'Terminal Ready — Click "⚡ Scan Now" in the topbar to ingest markets and compute trade routes.';
+    }
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align: center; padding: 4rem 1rem; color: var(--text-muted); font-size: 0.9rem;">${emptyMsg}</td></tr>`;
     return;
   }
 
@@ -1837,6 +1972,37 @@ window.openDetailModal = function(globalIdx, catKey) {
   const isDangerous = isLethalRoute(opp, srcCity, dstCity);
   const zoneMeta = getRouteZoneMeta(opp, srcCity, dstCity);
 
+  const isFarming = (opp.subsector === 'crops' || opp.subsector === 'herbs' || opp.subsector === 'farming' || opp.category_key === 'farming');
+  const isLivestock = (opp.subsector === 'livestock' || opp.category_key === 'livestock');
+  const isIslandAgri = (isFarming || isLivestock) && opp.profit_per_plot_day > 0;
+  const isCooking = (opp.category_key === 'cooking' || opp.subsector === 'cooking');
+  const isPotion = (opp.category_key === 'potions' || opp.subsector === 'potions' || opp.subsector === 'alchemy');
+  const isCrafting = (opp.type === 'crafting' || opp.category_key === 'crafting' || opp.category_key === 'bm_crafting');
+  const isRefining = (opp.type === 'refining' || opp.category_key === 'refining' || opp.category_key === 'bm_refining');
+  const outputQty = Number(opp.output_qty || 1);
+
+  let modalSrcRole = 'ORIGIN / BUY';
+  let modalDstRole = isBm ? 'DEST / BLACK MARKET' : 'DEST / SELL';
+  if (isLivestock) {
+    modalSrcRole = 'ORIGIN / BABY & FEED';
+    modalDstRole = 'DEST / PRODUCE & MEAT';
+  } else if (isIslandAgri) {
+    modalSrcRole = 'ORIGIN / SEEDS & PLOT';
+    modalDstRole = 'DEST / HARVESTED CROP';
+  } else if (isPotion) {
+    modalSrcRole = 'ORIGIN / HERBS & FLUIDS';
+    modalDstRole = `DEST / BATCH (${outputQty}x POTIONS)`;
+  } else if (isCooking) {
+    modalSrcRole = 'ORIGIN / INGREDIENTS';
+    modalDstRole = `DEST / BATCH (${outputQty}x MEALS)`;
+  } else if (isCrafting) {
+    modalSrcRole = `ORIGIN / WORKSHOP (${srcCity})`;
+    modalDstRole = isBm ? 'DEST / BLACK MARKET' : 'DEST / MARKET GEAR';
+  } else if (isRefining) {
+    modalSrcRole = `ORIGIN / REFINERY (${srcCity})`;
+    modalDstRole = 'DEST / REFINED RESOURCES';
+  }
+
   // ─── Dynamic Recipe / Blueprint Breakdown for All Categories ───
   let blueprintHtml = '';
 
@@ -1906,9 +2072,7 @@ window.openDetailModal = function(globalIdx, catKey) {
     `;
   }
   // 2. Crafting, Refining & Island Farming
-  else if (opp.profit_per_plot_day > 0 || (opp.ingredients && opp.ingredients.length > 0)) {
-    const isIslandAgri = opp.profit_per_plot_day > 0;
-    const outputQty = Number(opp.output_qty || 1);
+  else if (isIslandAgri || (opp.ingredients && opp.ingredients.length > 0)) {
     const isConsumable = !isIslandAgri && (cat.includes('potion') || cat.includes('cooking') || outputQty > 1);
     const hasLpb = opp.has_lpb || (cat.includes('potion') && srcCity === 'Brecilien') || (cat.includes('cooking') && srcCity === 'Caerleon');
     const rrrPct = (Number(opp.rrr_used || (hasLpb ? 0.248 : 0.152)) * 100).toFixed(1);
@@ -2118,7 +2282,7 @@ window.openDetailModal = function(globalIdx, catKey) {
           <div class="dossier-card-title">TRADE ROUTE CORRIDOR</div>
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.6rem; background: rgba(0,0,0,0.35); padding: 0.8rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
             <div>
-              <span style="font-size: 0.62rem; color: var(--text-gold); font-weight: 700; text-transform: uppercase;">ORIGIN / BUY</span>
+              <span style="font-size: 0.62rem; color: var(--text-gold); font-weight: 700; text-transform: uppercase;">${modalSrcRole}</span>
               <div style="font-size: 0.96rem; font-weight: 800; color: ${CITY_COLORS[srcCity] || '#fff'};">${srcCity}</div>
               <div class="font-mono" style="font-size: 0.76rem; color: #94A3B8;">${fmtK(m.unitCost)} s</div>
             </div>
@@ -2127,7 +2291,7 @@ window.openDetailModal = function(globalIdx, catKey) {
               <div style="margin-top: 2px;"><span class="route-lane-zone-tag">${zoneMeta.type}</span></div>
             </div>
             <div style="text-align: right;">
-              <span style="font-size: 0.62rem; color: var(--text-gold); font-weight: 700; text-transform: uppercase;">DEST / SELL</span>
+              <span style="font-size: 0.62rem; color: var(--text-gold); font-weight: 700; text-transform: uppercase;">${modalDstRole}</span>
               <div style="font-size: 0.96rem; font-weight: 800; color: ${CITY_COLORS[dstCity] || '#ffd700'};">${dstCity}</div>
               <div class="font-mono" style="font-size: 0.76rem; color: var(--accent-gold-bright);">${fmtK(m.unitRevenue)} s</div>
             </div>

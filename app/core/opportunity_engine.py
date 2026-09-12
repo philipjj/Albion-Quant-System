@@ -93,40 +93,41 @@ from app.core.freshness import (
 def get_max_allowed_bm_age_seconds(item_id: str, bm_price: float) -> int:
     """
     Calculates realistic Black Market buy order lifespan based on capital barrier to entry and item tier.
-    Dual-segment calibrated for lethal Red Zone / Black Market delivery routes:
-    - Low-tier items (T4.0-T5.1, < 60k): 1.5 hours (5,400s)
-    - Mid-tier items (60k - 150k): 2.0 hours (7,200s)
-    - T6 items (150k - 500k): 3.0 hours (10,800s)
-    - T7 items (500k - 1.5M): 6.0 hours (21,600s)
-    - T8 items (1.5M - 4M): 8.0 hours (28,800s)
-    - Elite (.3 / 4M - 8M): 16.0 hours (57,600s)
-    - Whale (8M - 20M / T8.4): 24.0 hours (86,400s)
-    - Ultra-Whale (> 20M): 48.0 hours (172,800s)
+    Calibrated persistence ladder:
+    - Ultra-Whale (> 20M or T8.4): 48.0 hours (172,800s)
+    - T7.1 to T8.3+ and all T8 items (500k - 20M): 24.0 hours (86,400s)
+    - T6.1 to T7.0 & High-Value Artifact weapons (e.g. Demonfang): 12.0 hours (43,200s)
+    - Mid-tier items (T6.0, T5.2, 100k - 200k): 6.0 hours (21,600s)
+    - Low-tier fast turnover items (T4.0-T5.1, < 100k): 3.0 hours (10,800s)
     """
     upper = str(item_id).upper()
 
-    # 1. Whale / Ultra-High Value (> 20M, T8.4, or Whale price)
-    is_tier_8_4 = "@4" in upper or "LEVEL4" in upper or (upper.startswith("T8_") and ("@3" in upper or "@4" in upper))
-    if bm_price >= 20_000_000:
+    # 1. Ultra-Whale (> 20M or T8.4 Pristine)
+    is_tier_8_4 = "@4" in upper or "LEVEL4" in upper or (upper.startswith("T8_") and ("@4" in upper))
+    if bm_price >= 20_000_000 or is_tier_8_4:
         return 172_800    # 48.0 hours (2 days)
-    if bm_price >= 8_000_000 or is_tier_8_4:
+
+    # 2. T7.1 to T8.3 and all T8 items (User Approved 24h Persistence)
+    is_t8 = upper.startswith("T8_")
+    is_t7_enchanted = upper.startswith("T7_") and any(e in upper for e in ["@1", "@2", "@3", "_LEVEL1", "_LEVEL2", "_LEVEL3"])
+    if is_t8 or is_t7_enchanted or bm_price >= 800_000:
         return 86_400     # 24.0 hours (1 day)
-    if bm_price >= 4_000_000 or "@3" in upper:
-        return 57_600     # 16.0 hours
 
-    # 2. High Capital Tiers (T8.0-T8.2, T7.2-T7.3, 500k - 4M silver)
-    if bm_price >= 1_500_000 or upper.startswith("T8_"):
-        return 28_800     # 8.0 hours
-    elif bm_price >= 500_000 or (upper.startswith("T7_") and ("@1" in upper or "@2" in upper)):
+    # 3. T6.1 to T7.0 & High-Value Artifact Equipment (e.g. Master's Demonfang, Hell/Keeper/Avalon gear)
+    is_t7_flat = upper.startswith("T7_")
+    is_t6_enchanted = upper.startswith("T6_") and any(e in upper for e in ["@1", "@2", "@3", "_LEVEL1", "_LEVEL2", "_LEVEL3"])
+    is_artifact = any(a in upper for a in ["_HELL", "_KEEPER", "_UNDEAD", "_MORGANA", "_AVALON", "_ROYAL", "ARTEFACT"])
+    if is_t7_flat or is_t6_enchanted or (upper.startswith("T6_") and is_artifact) or bm_price >= 200_000:
+        return 43_200     # 12.0 hours
+
+    # 4. Mid-Tier (T6.0, T5.2, 100k - 200k)
+    is_t6 = upper.startswith("T6_")
+    is_t5_enchanted = upper.startswith("T5_") and any(e in upper for e in ["@2", "@3", "_LEVEL2", "_LEVEL3"])
+    if is_t6 or is_t5_enchanted or bm_price >= 100_000:
         return 21_600     # 6.0 hours
-    elif bm_price >= 150_000 or upper.startswith("T6_"):
-        return 10_800     # 3.0 hours
 
-    # 3. Low-Mid Capital Tiers (T4.0-T5.2, < 150k silver)
-    if bm_price >= 60_000 or upper.startswith("T5_"):
-        return 7_200      # 2.0 hours
-    else:
-        return 5_400      # 1.5 hours (90 min)
+    # 5. Low-Tier Fast Turnover (T4.0-T5.1, < 100k)
+    return 10_800         # 3.0 hours
 
 RAW_REFINED_KEYWORDS = (
     "_ORE", "_HIDE", "_FIBER", "_WOOD", "_ROCK",
@@ -845,6 +846,7 @@ class OpportunityScanner:
             if refining_local_sourcing_only is not None
             else getattr(settings, "refining_local_sourcing_only", False)
         )
+        self._item_names: dict[str, str] = {}
 
 
     @property
@@ -1769,6 +1771,7 @@ class OpportunityScanner:
         100% Safe Blue/Yellow Continent: Standard marketplace sales tax applies.
         """
         results = []
+        self._item_names = item_names or {}
         min_vol = max(1, getattr(settings, "anti_bait_min_volume", 1))
 
         from app.core.market_utils import get_item_crafting_subcategory
@@ -2634,6 +2637,7 @@ class OpportunityScanner:
 
         potion_results: list[CraftingOpportunity] = []
         cooking_results: list[CraftingOpportunity] = []
+        self._item_names = item_names or {}
 
         min_vol = max(3, getattr(settings, "anti_bait_min_volume_consumable", 3))
         all_sell_cities = ROYAL_SAFE_CITIES + [CAERLEON, BRECILIEN]
@@ -2792,7 +2796,7 @@ class OpportunityScanner:
                         ingredients=ing_details,
                         safe_limit=safe_limit,
                         roi=round(roi, 2),
-                        profit_per_plot_day=round(batch_profit * 10, 0),
+                        profit_per_plot_day=0.0,
                         silver_per_focus=0.0,
                         cycle_hours=0.0,
                         subsector=subsector,
@@ -2882,6 +2886,7 @@ class OpportunityScanner:
         from app.core.market_utils import calculate_rrr, get_refining_category
 
         results = []
+        self._item_names = item_names or {}
         min_vol = getattr(settings, "anti_bait_min_volume_materials", 20)
         local_only = getattr(state, "refining_local_sourcing_only", getattr(self, "refining_local_sourcing_only", False))
 
@@ -3536,7 +3541,20 @@ class OpportunityScanner:
             if any(x in ing_upper for x in ["ARTEFACT", "ARTIFACT", "TOKEN", "QUESTITEM", "SIGIL", "_BP"]):
                 is_returnable = False
 
-            ing_name = getattr(self, "_item_names", {}).get(ing_id, ing_id)
+            names_map = getattr(self, "_item_names", {})
+            ing_name = names_map.get(ing_id)
+            if not ing_name and "@" in ing_id:
+                ing_name = names_map.get(ing_id.split("@")[0])
+            if not ing_name and "_LEVEL" in ing_id:
+                ing_name = names_map.get(ing_id.split("_LEVEL")[0])
+            if not ing_name:
+                clean = ing_id.split("@")[0]
+                if clean.startswith("T") and len(clean) > 3 and clean[1].isdigit() and clean[2] == "_":
+                    tier_str = clean[:2]
+                    rest = clean[3:].replace("_", " ").title()
+                    ing_name = f"{tier_str} {rest}"
+                else:
+                    ing_name = ing_id.replace("_", " ").title()
             ingredients.append({
                 "item_id": ing_id,
                 "name": ing_name,

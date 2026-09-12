@@ -193,11 +193,13 @@ if not WEB_DIR.exists():
 
 
 class CachedStaticFiles(StaticFiles):
-    """StaticFiles handler that attaches Cache-Control headers for instant local loading."""
+    """StaticFiles handler that attaches Cache-Control headers for instant local loading and no stale scripts."""
     async def get_response(self, path: str, scope):
         response = await super().get_response(path, scope)
         if response.status_code == 200:
-            response.headers["Cache-Control"] = "public, max-age=86400, must-revalidate"
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
         return response
 
 
@@ -231,7 +233,11 @@ async def serve_dashboard(request: Request):
     is_browser = "text/html" in accept or "Mozilla" in ua or request.url.path == "/dashboard"
     
     if is_browser and index_file.exists():
-        return FileResponse(str(index_file))
+        response = FileResponse(str(index_file))
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     return {"message": "Albion Quant Trading System API", "status": "online"}
 
 
